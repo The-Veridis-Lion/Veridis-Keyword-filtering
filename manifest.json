@@ -1,0 +1,9 @@
+{
+    "display_name": "八股词去除",
+    "loading_order": 10,
+    "js": "index.js",
+    "css": "style.css",
+    "author": "The-Veridis-Lion",
+    "version": "1.0.0",
+    "description": "切除显示与编辑框中的屏蔽词，防止 AI 复读。"
+}
