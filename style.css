@@ -1,64 +1,128 @@
+/* --- 屏蔽词汇管理 CSS (包含深度屏蔽按钮 + 完美移动端适配) --- */
+
+:root {
+    --bl-accent-color: var(--SmartThemeQuoteColor, rgba(148, 0, 211, 0.7));
+    --bl-accent-color-hover: var(--SmartThemeQuoteColor, rgba(148, 0, 211, 1));
+    --bl-danger-color: #ff4757;
+    --bl-background-popup: var(--SmartThemeBlurTintColor, rgba(255, 255, 255, 1)); 
+    --bl-background-secondary: rgba(0, 0, 0, 0.05);
+    --bl-border-color: var(--SmartThemeBorderColor, #dee2e6);
+    --bl-text-primary: var(--SmartThemeBodyColor, #343a40); 
+    --bl-text-secondary: #868e96; 
+    --bl-input-bg: var(--SmartThemeInputBackground, #ffffff); 
+}
+
+#bl-wand-btn { cursor: pointer !important; }
+
 #bl-purifier-popup {
     position: fixed !important;
-    top: 50% !important; left: 50% !important;
-    transform: translate(-50%, -50%) !important;
-    width: 360px !important;
-    /* 新增：防止内边距把弹窗撑得超出屏幕 */
-    box-sizing: border-box !important;
-    background: var(--SmartThemeBlurTintColor, #fff) !important;
-    border: 1px solid var(--SmartThemeBorderColor, #ccc) !important;
+    top: 10vh !important; 
+    left: 50% !important;
+    transform: translateX(-50%) !important; 
+    
+    width: 90% !important;
+    max-width: 420px !important;
+    max-height: 80vh !important;
+    overflow-y: auto !important; 
+    
+    background: var(--bl-background-popup) !important;
+    border: 1px solid var(--bl-border-color) !important;
     border-radius: 12px !important;
     z-index: 999999 !important;
-    padding: 20px !important;
-    box-shadow: 0 8px 32px rgba(0,0,0,0.3) !important;
-    display: none;
-    color: var(--SmartThemeBodyColor, #000) !important;
-    backdrop-filter: blur(10px) !important;
-}
-
-.bl-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px solid var(--SmartThemeBorderColor); padding-bottom: 8px; }
-.bl-title { font-size: 16px; font-weight: bold; margin: 0; }
-.bl-close { cursor: pointer; font-size: 24px; background: none; border: none; color: inherit; line-height: 1; margin: 0; padding: 0; }
-
-.bl-input-group { display: flex; gap: 8px; margin-bottom: 15px; }
-.bl-input { 
-    flex: 1; padding: 8px !important; border-radius: 6px !important; 
-    border: 1px solid var(--SmartThemeBorderColor) !important; 
-    background: var(--SmartThemeInputBackground) !important; 
-    color: var(--SmartThemeBodyColor) !important; 
-    /* 新增：防止输入框挤变形 */
+    padding: 20px 25px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+    
+    display: none; 
+    flex-direction: column !important;
+    gap: 15px !important; /* 缩小一点间距给底部按钮留空间 */
     box-sizing: border-box !important;
-}
-.bl-add-btn { padding: 5px 15px; background: var(--SmartThemeQuoteColor, #7e57c2); color: #fff; border: none; border-radius: 6px; cursor: pointer; white-space: nowrap; }
-
-#bl-tags-container { 
-    max-height: 100px; overflow-y: auto; padding: 8px; background: rgba(0,0,0,0.05); 
-    border-radius: 6px; display: flex; flex-wrap: wrap; gap: 6px; 
-}
-.bl-tag { 
-    display: flex; align-items: center; padding: 3px 8px; background: var(--SmartThemeButtonBackgroundColor); 
-    border-radius: 4px; font-size: 12px; border: 1px solid var(--SmartThemeBorderColor); 
-}
-.bl-tag span { margin-left: 8px; color: #ff6b6b; cursor: pointer; font-weight: bold; }
-
-#bl-wand-btn {
-    cursor: pointer;
-    display: flex;
-    align-items: center;
-    color: inherit;
-    gap: 8px;
+    
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    animation: blFadeIn 0.3s ease-out !important;
 }
 
-/* --- 新增：专门解决手机端被吞到屏幕上/下面的问题 --- */
+@keyframes blFadeIn {
+    from { opacity: 0; transform: translateX(-50%) scale(0.95); }
+    to { opacity: 1; transform: translateX(-50%) scale(1); }
+}
+
+#bl-purifier-popup .bl-header {
+    display: flex !important; justify-content: space-between !important; align-items: center !important;
+    padding-bottom: 12px !important; border-bottom: 1px solid var(--bl-border-color) !important; margin: 0 !important;
+}
+#bl-purifier-popup .bl-title { font-size: 18px !important; font-weight: bold !important; margin: 0 !important; color: var(--bl-text-primary) !important; }
+#bl-purifier-popup .bl-close {
+    background: none !important; border: none !important; color: var(--bl-text-secondary) !important;
+    font-size: 28px !important; line-height: 1 !important; cursor: pointer !important; transition: color 0.2s ease !important;
+    padding: 0 !important; margin-left: 10px !important;
+}
+#bl-purifier-popup .bl-close:hover { color: var(--bl-danger-color) !important; }
+
+#bl-purifier-popup .bl-input-group { display: flex !important; gap: 10px !important; width: 100% !important; }
+#bl-purifier-popup .bl-input {
+    flex: 1 !important; width: 100% !important; padding: 10px 15px !important; border-radius: 8px !important;
+    border: 1px solid var(--bl-border-color) !important; background-color: var(--bl-input-bg) !important;
+    color: var(--bl-text-primary) !important; font-size: 16px !important; box-sizing: border-box !important; outline: none !important;
+}
+#bl-purifier-popup .bl-input:focus { border-color: var(--bl-accent-color) !important; }
+
+#bl-purifier-popup .bl-add-btn {
+    display: inline-flex !important; justify-content: center !important; align-items: center !important;
+    padding: 10px 16px !important; border-radius: 8px !important; border: none !important; font-size: 14px !important; font-weight: 500 !important;
+    cursor: pointer !important; white-space: nowrap !important; background-color: var(--bl-accent-color) !important; color: white !important;
+}
+
+#bl-purifier-popup #bl-tags-container {
+    max-height: 160px !important; overflow-y: auto !important; padding: 15px !important;
+    background: var(--bl-background-secondary) !important; border-radius: 8px !important; display: flex !important; flex-wrap: wrap !important; gap: 10px !important;
+    scrollbar-width: none !important; 
+}
+#bl-purifier-popup #bl-tags-container::-webkit-scrollbar { display: none !important; }
+
+#bl-purifier-popup .bl-tag {
+    display: inline-flex !important; align-items: center !important; padding: 6px 12px !important; border-radius: 6px !important;
+    background-color: var(--bl-input-bg) !important; color: var(--bl-text-primary) !important; font-weight: 500 !important;
+    border: 1px solid var(--bl-border-color) !important; font-size: 13px !important; box-shadow: 0 1px 3px rgba(0,0,0,0.05) !important;
+}
+#bl-purifier-popup .bl-tag span {
+    margin-left: 8px !important; color: var(--bl-text-secondary) !important; cursor: pointer !important; font-size: 16px !important; font-weight: bold !important; line-height: 1 !important;
+}
+#bl-purifier-popup .bl-tag span:hover { color: var(--bl-danger-color) !important; }
+
+/* --- 恢复底部“深度屏蔽”按钮样式 --- */
+#bl-purifier-popup .bl-footer {
+    margin-top: 5px !important;
+    padding-top: 15px !important;
+    border-top: 1px solid var(--bl-border-color) !important;
+}
+#bl-purifier-popup .bl-deep-clean-btn {
+    width: 100% !important;
+    padding: 12px !important;
+    background: var(--bl-danger-color) !important;
+    color: white !important;
+    border: none !important;
+    border-radius: 8px !important;
+    font-size: 15px !important;
+    font-weight: bold !important;
+    cursor: pointer !important;
+    transition: opacity 0.2s !important;
+    display: flex !important;
+    justify-content: center !important;
+    align-items: center !important;
+    gap: 8px !important;
+}
+#bl-purifier-popup .bl-deep-clean-btn:hover { opacity: 0.8 !important; }
+
+/* --- 手机端微调 (确保按钮不超出屏幕) --- */
 @media screen and (max-width: 600px) {
-    #bl-purifier-popup {
-        width: 90% !important;
-        /* 强制固定在距离屏幕顶部 30% 的安全位置 */
-        top: 30vh !important;
-        /* 仅保留水平居中 */
-        transform: translateX(-50%) !important;
-        /* 限制最大高度，防止内容太多挡住键盘，多余部分可滚动 */
-        max-height: 75vh !important;
-        overflow-y: auto !important;
+    #bl-purifier-popup { 
+        padding: 15px 20px !important; 
+        width: 92% !important; 
+        top: 15vh !important; 
+        transform: translateX(-50%) !important; 
     }
+    #bl-purifier-popup .bl-input { font-size: 14px !important; padding: 8px 12px !important; }
+    #bl-purifier-popup .bl-add-btn { padding: 8px 14px !important; }
+    #bl-purifier-popup .bl-deep-clean-btn { padding: 10px !important; font-size: 14px !important; }
 }
