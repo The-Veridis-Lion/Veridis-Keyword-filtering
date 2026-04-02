@@ -126,3 +126,53 @@
     #bl-purifier-popup .bl-add-btn { padding: 8px 14px !important; }
     #bl-purifier-popup .bl-deep-clean-btn { padding: 10px !important; font-size: 14px !important; }
 }
+
+/* --- 新增：批量添加弹窗样式 --- */
+#bl-batch-popup {
+    position: fixed !important;
+    top: 15vh !important; 
+    left: 50% !important;
+    transform: translateX(-50%) !important; 
+    width: 90% !important;
+    max-width: 420px !important;
+    background: var(--bl-background-popup) !important;
+    border: 1px solid var(--bl-border-color) !important;
+    border-radius: 12px !important;
+    z-index: 9999999 !important; /* 层级略高于主弹窗，确保覆盖 */
+    padding: 20px 25px !important;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+    display: none; 
+    flex-direction: column !important;
+    box-sizing: border-box !important;
+    backdrop-filter: blur(16px) !important;
+    -webkit-backdrop-filter: blur(16px) !important;
+    animation: blFadeIn 0.3s ease-out !important;
+}
+
+#bl-batch-popup .bl-header {
+    display: flex !important; justify-content: space-between !important; align-items: center !important;
+    padding-bottom: 12px !important; border-bottom: 1px solid var(--bl-border-color) !important; margin: 0 !important;
+}
+#bl-batch-popup .bl-title { font-size: 18px !important; font-weight: bold !important; margin: 0 !important; color: var(--bl-text-primary) !important; }
+#bl-batch-popup .bl-close {
+    background: none !important; border: none !important; color: var(--bl-text-secondary) !important;
+    font-size: 28px !important; line-height: 1 !important; cursor: pointer !important; transition: color 0.2s ease !important;
+    padding: 0 !important; margin-left: 10px !important;
+}
+#bl-batch-popup .bl-close:hover { color: var(--bl-danger-color) !important; }
+
+#bl-batch-textarea {
+    width: 100% !important;
+    padding: 10px 15px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--bl-border-color) !important;
+    background-color: var(--bl-input-bg) !important;
+    color: var(--bl-text-primary) !important;
+    font-size: 14px !important;
+    box-sizing: border-box !important;
+    outline: none !important;
+    resize: vertical !important;
+    min-height: 120px !important;
+    font-family: inherit !important;
+}
+#bl-batch-textarea:focus { border-color: var(--bl-accent-color) !important; }
