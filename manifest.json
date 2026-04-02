@@ -4,6 +4,6 @@
     "js": "index.js",
     "css": "style.css",
     "author": "The-Veridis-Lion",
-    "version": "2.0.0",
+    "version": "2.1.0",
     "description": "切除显示与编辑框中的屏蔽词，防止 AI 复读。"
 }
