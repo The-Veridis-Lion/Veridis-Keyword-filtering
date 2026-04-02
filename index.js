@@ -210,6 +210,7 @@ function setupUI() {
             </div>`);
     }
     if (!$('#bl-purifier-popup').length) {
+        // 修改了此处的 HTML，在原“添加”按钮旁边加入“批量”按钮
         $('body').append(`
             <div id="bl-purifier-popup">
                 <div class="bl-header">
@@ -219,6 +220,7 @@ function setupUI() {
                 <div class="bl-input-group">
                     <input type="text" id="bl-input-field" class="bl-input" placeholder="输入屏蔽词...">
                     <button id="bl-add-btn" class="bl-add-btn">添加</button>
+                    <button id="bl-batch-open-btn" class="bl-add-btn" style="background-color: var(--bl-text-secondary); padding: 10px 12px;" title="批量导入">批量</button>
                 </div>
                 <div id="bl-tags-container"></div>
                 <div class="bl-footer">
@@ -226,9 +228,28 @@ function setupUI() {
                 </div>
             </div>`);
     }
+    
+    // 新增：批量添加专属弹窗的 DOM 注入
+    if (!$('#bl-batch-popup').length) {
+        $('body').append(`
+            <div id="bl-batch-popup">
+                <div class="bl-header">
+                    <h3 class="bl-title">批量添加屏蔽词</h3>
+                    <button id="bl-batch-close-btn" class="bl-close">&times;</button>
+                </div>
+                <div style="margin-top: 15px;">
+                    <textarea id="bl-batch-textarea" placeholder="支持空格、逗号、顿号或换行分隔。\\n允许带有引号，如：'你好'，'病态'，'极其'" rows="5"></textarea>
+                </div>
+                <div class="bl-footer" style="display: flex; gap: 10px; border-top: none; padding-top: 15px;">
+                    <button id="bl-batch-submit-btn" class="bl-add-btn" style="flex: 1;">确认导入</button>
+                    <button id="bl-batch-cancel-btn" class="bl-deep-clean-btn" style="flex: 1; background: var(--bl-text-secondary); margin: 0;">取消</button>
+                </div>
+            </div>`);
+    }
 }
 
 function bindEvents() {
+    // --- 原有功能的事件绑定（保持不变） ---
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => { renderTags(); $('#bl-purifier-popup').fadeIn(200); });
     $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => $('#bl-purifier-popup').fadeOut(200));
     $(document).off('click', '#bl-add-btn').on('click', '#bl-add-btn', () => {
@@ -249,6 +270,47 @@ function bindEvents() {
     $(document).off('click', '#bl-deep-clean-btn').on('click', '#bl-deep-clean-btn', () => {
         if(confirm("将执行深度扫描清理数据库及缓存。屏蔽列表已锁定保护。是否继续？")) performDeepCleanse();
     });
+
+    // --- 新增：批量添加功能的事件绑定 ---
+    $(document).off('click', '#bl-batch-open-btn').on('click', '#bl-batch-open-btn', () => {
+        $('#bl-batch-textarea').val(''); // 打开时清空上次输入
+        $('#bl-batch-popup').fadeIn(200);
+    });
+    
+    const closeBatchPopup = () => $('#bl-batch-popup').fadeOut(200);
+    $(document).off('click', '#bl-batch-close-btn').on('click', '#bl-batch-close-btn', closeBatchPopup);
+    $(document).off('click', '#bl-batch-cancel-btn').on('click', '#bl-batch-cancel-btn', closeBatchPopup);
+    
+    $(document).off('click', '#bl-batch-submit-btn').on('click', '#bl-batch-submit-btn', () => {
+        const rawText = $('#bl-batch-textarea').val();
+        if (!rawText.trim()) return closeBatchPopup(); // 空内容直接关闭
+        
+        // 核心解析逻辑：
+        // 1. 将所有中英文单/双引号替换为空格（防止词汇粘连）
+        const noQuotes = rawText.replace(/['"‘’”“”]/g, ' ');
+        // 2. 按照空格、英/中文逗号、顿号、换行符进行分割
+        const words = noQuotes.split(/[\s,，、\n]+/);
+        
+        let hasNewWord = false;
+        words.forEach(w => {
+            const cleanWord = w.trim();
+            // 过滤空字符串并进行查重处理
+            if (cleanWord && !extension_settings[extensionName].bannedWords.includes(cleanWord)) {
+                extension_settings[extensionName].bannedWords.push(cleanWord);
+                hasNewWord = true;
+            }
+        });
+        
+        // 如果有新词加入，执行与单独添加相同的保存、渲染和清理逻辑
+        if (hasNewWord) {
+            saveSettingsDebounced();
+            renderTags();
+            performGlobalCleanse();
+        }
+        closeBatchPopup();
+    });
+
+    // 监听事件
     eventSource.removeListener(event_types.MESSAGE_EDITED, performGlobalCleanse);
     eventSource.on(event_types.MESSAGE_EDITED, () => setTimeout(performGlobalCleanse, 100));
     eventSource.on(event_types.GENERATION_ENDED, performGlobalCleanse);
