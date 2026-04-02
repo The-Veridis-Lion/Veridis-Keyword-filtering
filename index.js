@@ -2,26 +2,70 @@ import { extension_settings } from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata } from "../../../../script.js";
 
 const extensionName = "ultimate_purifier";
-const defaultSettings = { bannedWords: [] };
+const defaultSettings = { rules: [] };
+
+// 性能优化：缓存正则与映射字典，避免高频 DOM 变动时重复计算
+let cachedRegex = null;
+let wordToRuleMap = {};
+let isRegexDirty = true; 
 
 /**
- * 构建屏蔽词正则，按长度倒序排列以优化匹配
+ * 智能分词处理器：剥离引号并按中英符号分割
  */
-function getPurifyRegex() {
-    const words = extension_settings[extensionName]?.bannedWords || [];
-    if (!words.length) return null;
-    const sorted = [...words].sort((a, b) => b.length - a.length);
-    const escaped = sorted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-    return new RegExp(`(${escaped.join('|')})`, 'gmu');
+function parseInputToWords(text) {
+    if (!text) return [];
+    const noQuotes = text.replace(/['"‘’”“”]/g, ' ');
+    return noQuotes.split(/[\s,，、\n]+/).map(w => w.trim()).filter(w => w);
 }
 
 /**
- * 递归洗刷对象中的字符串属性，支持循环引用保护
+ * 构建多对多超级正则及映射字典
+ */
+function getPurifyRegex() {
+    if (!isRegexDirty) return cachedRegex;
+
+    const rules = extension_settings[extensionName]?.rules || [];
+    wordToRuleMap = {};
+    let allTargets = [];
+
+    rules.forEach(rule => {
+        rule.targets.forEach(t => {
+            if (t) {
+                allTargets.push(t);
+                wordToRuleMap[t] = rule.replacements; // 将目标词映射到它的替换词数组
+            }
+        });
+    });
+
+    if (!allTargets.length) {
+        cachedRegex = null;
+    } else {
+        // 按长度倒序排列，防止短词截断长词（如优先匹配“极其”，后匹配“极”）
+        const sorted = [...allTargets].sort((a, b) => b.length - a.length);
+        const escaped = sorted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
+        cachedRegex = new RegExp(`(${escaped.join('|')})`, 'gmu');
+    }
+    
+    isRegexDirty = false;
+    return cachedRegex;
+}
+
+/**
+ * 核心替换回调：随机抽取替换词
+ */
+function dynamicReplacer(match) {
+    const reps = wordToRuleMap[match];
+    if (!reps || reps.length === 0) return ''; // 没有替换词，直接删除
+    const randIndex = Math.floor(Math.random() * reps.length); // 随机抽取
+    return reps[randIndex];
+}
+
+/**
+ * 递归洗刷对象
  */
 function safeDeepScrub(rootObj, regex, isGlobalSettings = false) {
     let changes = 0;
     if (!rootObj || typeof rootObj !== 'object') return changes;
-    
     const stack = [rootObj];
     const seen = new Set(); 
 
@@ -33,12 +77,10 @@ function safeDeepScrub(rootObj, regex, isGlobalSettings = false) {
         try {
             for (let key in current) {
                 if (Object.prototype.hasOwnProperty.call(current, key)) {
-                    // 若为插件全局设置，跳过当前插件自身的配置项，防止屏蔽列表被清空
-                    if (isGlobalSettings && key === extensionName) continue;
-
+                    if (isGlobalSettings && key === extensionName) continue; // 保护自身配置
                     const val = current[key];
                     if (typeof val === 'string') {
-                        const cleaned = val.replace(regex, '');
+                        const cleaned = val.replace(regex, dynamicReplacer);
                         if (val !== cleaned) {
                             current[key] = cleaned;
                             changes++;
@@ -54,17 +96,11 @@ function safeDeepScrub(rootObj, regex, isGlobalSettings = false) {
 }
 
 /**
- * 扫描并清理指定 DOM 树下的文本节点、注释节点及输入控件
+ * 扫描并清理指定 DOM
  */
 function purifyDOM(rootNode, regex) {
     if (!rootNode) return;
-
-    const walker = document.createTreeWalker(
-        rootNode, 
-        NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, 
-        null, 
-        false
-    );
+    const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, null, false);
     
     let node;
     while (node = walker.nextNode()) {
@@ -73,9 +109,8 @@ function purifyDOM(rootNode, regex) {
             if (parent.id === 'send_textarea' || (parent.classList && parent.classList.contains('edit_textarea'))) continue;
             if (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))) continue;
         }
-
         const original = node.nodeValue || '';
-        const cleaned = original.replace(regex, '');
+        const cleaned = original.replace(regex, dynamicReplacer);
         if (original !== cleaned) node.nodeValue = cleaned;
     }
 
@@ -85,31 +120,23 @@ function purifyDOM(rootNode, regex) {
         if (rootNode.querySelectorAll) inputs.push(...Array.from(rootNode.querySelectorAll('input, textarea')));
 
         inputs.forEach(input => {
-            if (input.id === 'send_textarea' || input.classList.contains('edit_textarea')) return;
-            if (document.activeElement === input) return; 
+            if (input.id === 'send_textarea' || input.classList.contains('edit_textarea') || document.activeElement === input) return;
             const originalVal = input.value || '';
-            const cleanedVal = originalVal.replace(regex, '');
+            const cleanedVal = originalVal.replace(regex, dynamicReplacer);
             if (originalVal !== cleanedVal) input.value = cleanedVal;
         });
     }
 }
 
-/**
- * 执行全屏及内存对话数据的即时清理
- */
 function performGlobalCleanse() {
     const regex = getPurifyRegex();
     if (!regex) return;
-
     let chatChanged = false;
     if (window.chat && Array.isArray(window.chat)) {
         window.chat.forEach(msg => {
             if (msg.mes) {
-                const cleaned = msg.mes.replace(regex, '');
-                if (msg.mes !== cleaned) {
-                    msg.mes = cleaned;
-                    chatChanged = true;
-                }
+                const cleaned = msg.mes.replace(regex, dynamicReplacer);
+                if (msg.mes !== cleaned) { msg.mes = cleaned; chatChanged = true; }
             }
         });
     }
@@ -117,23 +144,15 @@ function performGlobalCleanse() {
     purifyDOM(document.getElementById('chat'), regex);
 }
 
-/**
- * 深度清理函数：遍历所有数据库、元数据及扩展缓存，完成后刷新页面
- */
 async function performDeepCleanse() {
     const regex = getPurifyRegex();
-    if (!regex) {
-        alert("请先添加屏蔽词。");
-        return;
-    }
+    if (!regex) { alert("请先添加屏蔽规则。"); return; }
 
     $('body').append(`
-        <div id="bl-loading-overlay" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:9999999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:white;font-family:sans-serif;backdrop-filter:blur(5px);">
-            <h2 style="margin-bottom:20px;font-size:20px;">正在执行深度扫描与清理...</h2>
-            <p>正在同步数据到磁盘，请稍候。</p>
+        <div id="bl-loading-overlay" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:9999999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:white;backdrop-filter:blur(5px);">
+            <h2>正在执行深度扫描与映射替换...</h2>
         </div>
     `);
-
     await new Promise(r => setTimeout(r, 100));
 
     try {
@@ -147,23 +166,18 @@ async function performDeepCleanse() {
             if (saveChatPromise instanceof Promise) await saveChatPromise;
             saveSettingsDebounced(); 
             await new Promise(r => setTimeout(r, 2000)); 
-            $('#bl-loading-overlay').remove();
-            alert(`清理完成，共移除 ${scrubbedItems} 处匹配项。页面即将刷新。`);
+            alert(`清理完成，共处理 ${scrubbedItems} 处匹配项。页面即将刷新。`);
             location.reload(); 
         } else {
             $('#bl-loading-overlay').remove();
-            alert("未发现匹配残留。");
+            alert("未发现需要替换的数据残留。");
         }
     } catch (e) {
-        console.error("Deep cleanse failed:", e);
         $('#bl-loading-overlay').remove();
-        alert("清理过程中发生错误，请查看控制台。");
+        alert("清理失败，请查看控制台。");
     }
 }
 
-/**
- * 初始化实时监听器：监控 DOM 变化及流式输出
- */
 function initRealtimeInterceptor() {
     const chatObserver = new MutationObserver((mutations) => {
         const regex = getPurifyRegex();
@@ -171,14 +185,14 @@ function initRealtimeInterceptor() {
         mutations.forEach(m => {
             m.addedNodes.forEach(node => {
                 if (node.nodeType === 3 || node.nodeType === 8) { 
-                    const cleaned = node.nodeValue.replace(regex, '');
+                    const cleaned = node.nodeValue.replace(regex, dynamicReplacer);
                     if (node.nodeValue !== cleaned) node.nodeValue = cleaned;
                 } else if (node.nodeType === 1) { 
                     purifyDOM(node, regex);
                 }
             });
             if (m.type === 'characterData') {
-                const cleaned = m.target.nodeValue.replace(regex, '');
+                const cleaned = m.target.nodeValue.replace(regex, dynamicReplacer);
                 if (m.target.nodeValue !== cleaned) m.target.nodeValue = cleaned;
             }
         });
@@ -191,7 +205,7 @@ function initRealtimeInterceptor() {
         if (regex && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA' || e.target.isContentEditable)) {
             let val = e.target.value || e.target.innerText;
             if (val && val.match(regex)) {
-                const cleaned = val.replace(regex, '');
+                const cleaned = val.replace(regex, dynamicReplacer);
                 if (e.target.value !== undefined) {
                     const pos = e.target.selectionStart;
                     e.target.value = cleaned;
@@ -205,126 +219,120 @@ function initRealtimeInterceptor() {
 function setupUI() {
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
-            <div id="bl-wand-btn" title="屏蔽词管理">
-                <i class="fa-solid fa-eraser fa-fw"></i><span>屏蔽词管理</span>
+            <div id="bl-wand-btn" title="词汇映射管理">
+                <i class="fa-solid fa-language fa-fw"></i><span>词汇映射</span>
             </div>`);
     }
     if (!$('#bl-purifier-popup').length) {
-        // 修改了此处的 HTML，在原“添加”按钮旁边加入“批量”按钮
         $('body').append(`
             <div id="bl-purifier-popup">
                 <div class="bl-header">
-                    <h3 class="bl-title">屏蔽词设置</h3>
+                    <h3 class="bl-title">全局屏蔽与映射规则</h3>
                     <button id="bl-close-btn" class="bl-close">&times;</button>
                 </div>
-                <div class="bl-input-group">
-                    <input type="text" id="bl-input-field" class="bl-input" placeholder="输入屏蔽词...">
-                    <button id="bl-add-btn" class="bl-add-btn">添加</button>
-                    <button id="bl-batch-open-btn" class="bl-add-btn" style="background-color: var(--bl-text-secondary); padding: 10px 12px;" title="批量导入">批量</button>
+                <div class="bl-rule-builder">
+                    <textarea id="bl-target-input" class="bl-textarea" placeholder="输入目标词 (必填，支持批量，逗号/空格分隔)" rows="2"></textarea>
+                    <div class="bl-rule-arrow">⬇️ 随机替换为 ⬇️</div>
+                    <textarea id="bl-rep-input" class="bl-textarea" placeholder="输入替换词 (可选，支持批量)。不填则直接删除目标词" rows="2"></textarea>
+                    <button id="bl-add-rule-btn" class="bl-add-rule-btn">添加规则组</button>
                 </div>
-                <div id="bl-tags-container"></div>
+                <div id="bl-tags-container" style="margin-top:15px;"></div>
                 <div class="bl-footer">
-                    <button id="bl-deep-clean-btn" class="bl-deep-clean-btn">深度屏蔽</button>
-                </div>
-            </div>`);
-    }
-    
-    // 新增：批量添加专属弹窗的 DOM 注入
-    if (!$('#bl-batch-popup').length) {
-        $('body').append(`
-            <div id="bl-batch-popup">
-                <div class="bl-header">
-                    <h3 class="bl-title">批量添加屏蔽词</h3>
-                    <button id="bl-batch-close-btn" class="bl-close">&times;</button>
-                </div>
-                <div style="margin-top: 15px;">
-                    <textarea id="bl-batch-textarea" placeholder="支持空格、逗号、顿号或换行分隔。\\n允许带有引号，如：'你好'，'病态'，'极其'" rows="5"></textarea>
-                </div>
-                <div class="bl-footer" style="display: flex; gap: 10px; border-top: none; padding-top: 15px;">
-                    <button id="bl-batch-submit-btn" class="bl-add-btn" style="flex: 1;">确认导入</button>
-                    <button id="bl-batch-cancel-btn" class="bl-deep-clean-btn" style="flex: 1; background: var(--bl-text-secondary); margin: 0;">取消</button>
+                    <button id="bl-deep-clean-btn" class="bl-deep-clean-btn">深度屏蔽与替换</button>
                 </div>
             </div>`);
     }
 }
 
 function bindEvents() {
-    // --- 原有功能的事件绑定（保持不变） ---
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => { renderTags(); $('#bl-purifier-popup').fadeIn(200); });
     $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => $('#bl-purifier-popup').fadeOut(200));
-    $(document).off('click', '#bl-add-btn').on('click', '#bl-add-btn', () => {
-        const val = $('#bl-input-field').val().trim();
-        if (val && !extension_settings[extensionName].bannedWords.includes(val)) {
-            extension_settings[extensionName].bannedWords.push(val);
-            $('#bl-input-field').val('');
+    
+    $(document).off('click', '#bl-add-rule-btn').on('click', '#bl-add-rule-btn', () => {
+        const targets = parseInputToWords($('#bl-target-input').val());
+        const replacements = parseInputToWords($('#bl-rep-input').val());
+
+        if (targets.length > 0) {
+            extension_settings[extensionName].rules.push({ targets, replacements });
+            $('#bl-target-input').val('');
+            $('#bl-rep-input').val('');
+            isRegexDirty = true; // 标记正则需要重新生成
             saveSettingsDebounced();
             renderTags();
             performGlobalCleanse(); 
         }
     });
-    $(document).off('click', '.bl-tag span').on('click', '.bl-tag span', function() {
-        extension_settings[extensionName].bannedWords.splice($(this).data('index'), 1);
+
+    $(document).off('click', '.bl-tag-del').on('click', '.bl-tag-del', function() {
+        extension_settings[extensionName].rules.splice($(this).data('index'), 1);
+        isRegexDirty = true;
         saveSettingsDebounced();
         renderTags();
     });
+
     $(document).off('click', '#bl-deep-clean-btn').on('click', '#bl-deep-clean-btn', () => {
-        if(confirm("将执行深度扫描清理数据库及缓存。屏蔽列表已锁定保护。是否继续？")) performDeepCleanse();
+        if(confirm("将执行全局深度替换，规则列表已锁定保护。是否继续？")) performDeepCleanse();
     });
 
-    // --- 新增：批量添加功能的事件绑定 ---
-    $(document).off('click', '#bl-batch-open-btn').on('click', '#bl-batch-open-btn', () => {
-        $('#bl-batch-textarea').val(''); // 打开时清空上次输入
-        $('#bl-batch-popup').fadeIn(200);
-    });
-    
-    const closeBatchPopup = () => $('#bl-batch-popup').fadeOut(200);
-    $(document).off('click', '#bl-batch-close-btn').on('click', '#bl-batch-close-btn', closeBatchPopup);
-    $(document).off('click', '#bl-batch-cancel-btn').on('click', '#bl-batch-cancel-btn', closeBatchPopup);
-    
-    $(document).off('click', '#bl-batch-submit-btn').on('click', '#bl-batch-submit-btn', () => {
-        const rawText = $('#bl-batch-textarea').val();
-        if (!rawText.trim()) return closeBatchPopup(); // 空内容直接关闭
-        
-        // 核心解析逻辑：
-        // 1. 将所有中英文单/双引号替换为空格（防止词汇粘连）
-        const noQuotes = rawText.replace(/['"‘’”“”]/g, ' ');
-        // 2. 按照空格、英/中文逗号、顿号、换行符进行分割
-        const words = noQuotes.split(/[\s,，、\n]+/);
-        
-        let hasNewWord = false;
-        words.forEach(w => {
-            const cleanWord = w.trim();
-            // 过滤空字符串并进行查重处理
-            if (cleanWord && !extension_settings[extensionName].bannedWords.includes(cleanWord)) {
-                extension_settings[extensionName].bannedWords.push(cleanWord);
-                hasNewWord = true;
-            }
-        });
-        
-        // 如果有新词加入，执行与单独添加相同的保存、渲染和清理逻辑
-        if (hasNewWord) {
-            saveSettingsDebounced();
-            renderTags();
-            performGlobalCleanse();
-        }
-        closeBatchPopup();
-    });
-
-    // 监听事件
     eventSource.removeListener(event_types.MESSAGE_EDITED, performGlobalCleanse);
     eventSource.on(event_types.MESSAGE_EDITED, () => setTimeout(performGlobalCleanse, 100));
     eventSource.on(event_types.GENERATION_ENDED, performGlobalCleanse);
 }
 
 function renderTags() {
-    const words = extension_settings[extensionName].bannedWords || [];
-    $('#bl-tags-container').html(words.map((w, i) => `<div class="bl-tag">${w}<span data-index="${i}">&times;</span></div>`).join('') || '<div style="opacity:0.5; width:100%; text-align:center; font-size:12px;">无数据</div>');
+    const rules = extension_settings[extensionName].rules || [];
+    const html = rules.map((r, i) => {
+        // 取消截断限制，直接获取完整字符串
+        const fullTargets = r.targets.join(', ');
+        const fullReps = r.replacements.length > 0 ? r.replacements.join(', ') : '无 (直接删除)';
+        
+        return `<div class="bl-tag" title="目标:\n${fullTargets}\n\n替换为:\n${fullReps}">
+            <div class="bl-tag-layout">
+                <div class="bl-tag-scroll-box bl-tag-left">
+                    <b style="color:var(--bl-danger-color)">${fullTargets}</b>
+                </div>
+                <div class="bl-tag-arrow">➔</div>
+                <div class="bl-tag-scroll-box bl-tag-right">
+                    <b style="color:var(--bl-accent-color)">${fullReps}</b>
+                </div>
+            </div>
+            <div class="bl-tag-del" data-index="${i}" title="删除规则">&times;</div>
+        </div>`;
+    }).join('');
+    
+    $('#bl-tags-container').html(html || '<div style="opacity:0.5; width:100%; text-align:center; font-size:12px; padding: 10px 0;">当前无规则</div>');
+}
+
+/**
+ * 自动数据迁移：将旧版的 bannedWords 无损升级为 3.0 的 rules 架构
+ */
+function migrateOldData() {
+    const settings = extension_settings[extensionName];
+    if (settings && settings.bannedWords) {
+        if (settings.bannedWords.length > 0) {
+            settings.rules = settings.rules || [];
+            // 将所有旧版屏蔽词归为一个“直接删除”的规则组
+            settings.rules.push({
+                targets: [...settings.bannedWords],
+                replacements: []
+            });
+        }
+        delete settings.bannedWords;
+        isRegexDirty = true;
+        saveSettingsDebounced();
+        console.log("[Ultimate Purifier] 已成功将旧版数据迁移至 v3.0");
+    }
 }
 
 let isBooted = false;
 jQuery(() => {
     if (isBooted) return;
     extension_settings[extensionName] = extension_settings[extensionName] || { ...defaultSettings };
+    
+    // 执行数据迁移
+    migrateOldData();
+    if (!extension_settings[extensionName].rules) extension_settings[extensionName].rules = [];
+
     const boot = () => {
         if (isBooted) return;
         isBooted = true;
