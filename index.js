@@ -274,9 +274,15 @@ function bindEvents() {
         if(confirm("将执行全局深度替换，规则列表已锁定保护。是否继续？")) performDeepCleanse();
     });
 
-    eventSource.removeListener(event_types.MESSAGE_EDITED, performGlobalCleanse);
-    eventSource.on(event_types.MESSAGE_EDITED, () => setTimeout(performGlobalCleanse, 100));
-    eventSource.on(event_types.GENERATION_ENDED, performGlobalCleanse);
+// --- 修复：全面接管酒馆的核心渲染事件，并增加 300ms 延迟等待 Markdown 解析完成 ---
+    const delayedCleanse = () => setTimeout(performGlobalCleanse, 300); 
+    
+    // 只要有任何触发文本重新渲染的行为，立刻进行补刀清理
+    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, delayedCleanse);     // 手动编辑后
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedCleanse); // 收到新消息后
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedCleanse); // AI 生成完全停止后
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedCleanse);     // 切换多分支回答后
+    if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, delayedCleanse);         // 切换聊天文档后
 }
 
 function renderTags() {
