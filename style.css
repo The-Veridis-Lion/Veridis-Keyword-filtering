@@ -1,4 +1,4 @@
-/* --- 屏蔽词汇管理 CSS (重构版：带编辑面板) --- */
+/* --- 屏蔽词汇管理 CSS (重构版：对齐优化版) --- */
 
 :root {
     --bl-accent-color: var(--SmartThemeQuoteColor, rgba(148, 0, 211, 0.7));
@@ -16,48 +16,47 @@
 
 #bl-purifier-popup {
     position: fixed !important;
-    top: 10vh !important; 
+    top: 8vh !important; 
     left: 50% !important;
     transform: translateX(-50%) !important; 
     
     width: 90% !important;
-    max-width: 420px !important;
-    max-height: 80vh !important;
+    max-width: 680px !important; 
+    max-height: 85vh !important; 
     flex-direction: column !important; 
     
     background: var(--bl-background-popup) !important;
     border: 1px solid var(--bl-border-color) !important;
-    border-radius: 12px !important;
+    border-radius: 16px !important; 
     z-index: 999999 !important;
-    padding: 20px 25px !important;
-    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15) !important;
+    padding: 30px 35px !important; 
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15) !important;
     box-sizing: border-box !important;
     
-    backdrop-filter: blur(16px) !important;
-    -webkit-backdrop-filter: blur(16px) !important;
+    backdrop-filter: blur(20px) !important;
+    -webkit-backdrop-filter: blur(20px) !important;
 }
 
 #bl-purifier-popup .bl-header {
     display: flex !important; justify-content: space-between !important; align-items: center !important;
-    padding-bottom: 12px !important; border-bottom: 1px solid var(--bl-border-color) !important; margin: 0 !important;
+    padding-bottom: 18px !important; border-bottom: 1px solid var(--bl-border-color) !important; margin: 0 !important;
 }
-#bl-purifier-popup .bl-title { font-size: 18px !important; font-weight: bold !important; margin: 0 !important; color: var(--bl-text-primary) !important; }
+#bl-purifier-popup .bl-title { font-size: 28px !important; font-weight: bold !important; margin: 0 !important; color: var(--bl-text-primary) !important; } 
 #bl-purifier-popup .bl-close {
     background: none !important; border: none !important; color: var(--bl-text-secondary) !important;
-    font-size: 28px !important; line-height: 1 !important; cursor: pointer !important; transition: color 0.2s ease !important;
+    font-size: 36px !important; line-height: 1 !important; cursor: pointer !important; transition: color 0.2s ease !important;
     padding: 0 !important; margin-left: 10px !important;
 }
 #bl-purifier-popup .bl-close:hover { color: var(--bl-danger-color) !important; }
 
-/* 通用输入框样式 */
 .bl-input, .bl-textarea {
     width: 100% !important;
-    padding: 10px 12px !important;
-    border-radius: 8px !important;
+    padding: 14px 16px !important;
+    border-radius: 10px !important;
     border: 1px solid var(--bl-border-color) !important;
     background: var(--bl-input-bg) !important;
     color: var(--bl-text-primary) !important;
-    font-size: 14px !important;
+    font-size: 18px !important; 
     box-sizing: border-box !important;
     outline: none !important;
     font-family: inherit !important;
@@ -65,47 +64,45 @@
 .bl-textarea { resize: vertical !important; }
 .bl-input:focus, .bl-textarea:focus { border-color: var(--bl-accent-color) !important; }
 
-/* 新增规则按钮 */
 .bl-add-rule-btn {
-    padding: 10px !important;
-    border-radius: 8px !important;
+    padding: 14px !important;
+    border-radius: 10px !important;
     border: none !important;
     background-color: var(--bl-accent-color) !important;
     color: white !important;
     font-weight: bold !important;
+    font-size: 17px !important;
     cursor: pointer !important;
     transition: opacity 0.2s !important;
 }
 .bl-add-rule-btn:hover { opacity: 0.8 !important; }
 
-/* 深度屏蔽底部按钮 */
 #bl-purifier-popup .bl-footer {
     margin-top: auto !important;
-    padding-top: 15px !important;
+    padding-top: 20px !important;
     border-top: 1px solid var(--bl-border-color) !important;
 }
 .bl-deep-clean-btn {
     width: 100% !important;
-    padding: 12px !important;
+    padding: 16px !important;
     background: var(--bl-danger-color) !important;
     color: white !important;
     border: none !important;
-    border-radius: 8px !important;
-    font-size: 15px !important;
+    border-radius: 10px !important;
+    font-size: 18px !important; 
     font-weight: bold !important;
     cursor: pointer !important;
     transition: opacity 0.2s !important;
     display: flex !important; justify-content: center !important; align-items: center !important;
-    gap: 8px !important;
+    gap: 10px !important;
 }
 .bl-deep-clean-btn:hover { opacity: 0.8 !important; }
 
-/* ================== 工具栏样式 ================== */
 .bl-icon-btn {
-    padding: 6px 10px !important;
-    font-size: 14px !important;
+    padding: 10px 15px !important;
+    font-size: 16px !important;
     line-height: 1 !important;
-    border-radius: 6px !important;
+    border-radius: 8px !important;
     background: var(--bl-background-secondary) !important;
     border: 1px solid var(--bl-border-color) !important;
     cursor: pointer !important;
@@ -119,34 +116,33 @@
 }
 .bl-tool-btn {
     flex: 1 1 0% !important; 
-    padding: 8px 0 !important; 
-    border-radius: 6px !important;
+    padding: 12px 0 !important; 
+    border-radius: 8px !important;
     border: 1px solid var(--bl-border-color) !important;
     background: var(--bl-background-secondary) !important;
     color: var(--bl-text-primary) !important;
     cursor: pointer !important;
-    font-size: 13px !important; 
-    font-weight: 500 !important;
+    font-size: 15px !important; 
+    font-weight: 600 !important;
     text-align: center !important;
     transition: background 0.2s, opacity 0.2s !important;
     white-space: nowrap !important; 
 }
 .bl-tool-btn:hover { background: var(--bl-border-color) !important; opacity: 0.9 !important; }
 
-/* ================== 规则卡片样式 (重构为多行结构) ================== */
-#bl-tags-container::-webkit-scrollbar, #bl-edit-subrules-container::-webkit-scrollbar { width: 6px; }
-#bl-tags-container::-webkit-scrollbar-thumb, #bl-edit-subrules-container::-webkit-scrollbar-thumb { background: var(--bl-border-color); border-radius: 3px; }
+#bl-tags-container::-webkit-scrollbar, #bl-edit-subrules-container::-webkit-scrollbar { width: 8px; }
+#bl-tags-container::-webkit-scrollbar-thumb, #bl-edit-subrules-container::-webkit-scrollbar-thumb { background: var(--bl-border-color); border-radius: 4px; }
 
 .bl-rule-card {
     display: flex !important;
-    flex-direction: column !important; /* 改为垂直排版 */
+    flex-direction: column !important; 
     align-items: stretch !important;
     width: 100% !important;
-    padding: 12px 14px !important;
+    padding: 18px 20px !important; 
     background: var(--bl-input-bg) !important;
     border: 1px solid var(--bl-border-color) !important;
-    border-radius: 8px !important;
-    margin-bottom: 8px !important;
+    border-radius: 10px !important;
+    margin-bottom: 12px !important;
     box-sizing: border-box !important;
     transition: border-color 0.2s !important;
 }
@@ -155,61 +151,86 @@
 .bl-rule-card-header {
     display: flex !important;
     justify-content: space-between !important;
-    align-items: center !important;
+    align-items: flex-start !important; 
     width: 100% !important;
 }
 
 .bl-rule-name { 
     font-weight: bold !important; 
-    font-size: 14px !important; 
+    font-size: 18px !important; 
     color: var(--bl-text-primary) !important; 
     margin: 0 !important; 
+    line-height: 1.4 !important;
+    display: flex !important; 
+    align-items: flex-start !important; 
+    /* --- 新增：强制换行，防止长文本撑破 flex 布局 --- */
+    word-break: break-all !important; 
 }
 
-/* 移除原来的一行省略限制，允许显示多行列表 */
 .bl-rule-preview { 
-    font-size: 12px !important; 
+    font-size: 15px !important; 
     color: var(--bl-text-secondary) !important; 
-    margin-top: 8px !important;
-    padding-top: 8px !important;
+    margin-top: 12px !important;
+    padding-top: 12px !important;
     border-top: 1px dashed var(--bl-border-color) !important;
+    line-height: 1.5 !important;
 }
 
-.bl-rule-actions { display: flex !important; gap: 6px !important; align-items: center !important; margin-left:10px !important; }
+.bl-rule-actions { 
+    display: flex !important; 
+    gap: 10px !important; 
+    align-items: center !important; 
+    margin-left: 10px !important; 
+    margin-top: 2px !important; 
+}
+
 .bl-rule-edit, .bl-rule-del {
     background: var(--bl-background-secondary) !important;
     border: 1px solid var(--bl-border-color) !important;
-    border-radius: 6px !important;
+    border-radius: 8px !important;
     cursor: pointer !important;
-    padding: 6px 8px !important;
+    padding: 8px 12px !important;
     display: flex !important;
     align-items: center !important;
     justify-content: center !important;
     transition: all 0.2s !important;
     color: var(--bl-text-primary) !important;
 }
-.bl-rule-edit { font-size: 12px !important; }
-.bl-rule-del { font-size: 14px !important; color: var(--bl-text-secondary) !important;}
+.bl-rule-edit { font-size: 15px !important; }
+.bl-rule-del { font-size: 18px !important; color: var(--bl-text-secondary) !important;}
 .bl-rule-edit:hover { background: var(--bl-accent-color) !important; border-color: var(--bl-accent-color) !important; color: white !important;}
 .bl-rule-del:hover { background: var(--bl-danger-color) !important; border-color: var(--bl-danger-color) !important; color: white !important; }
 
-/* 徽章样式 */
+/* ================== 徽章样式 ================== */
 .bl-badge {
-    padding: 2px 6px !important;
-    border-radius: 4px !important;
-    font-size: 10px !important;
-    margin-right: 6px !important;
-    font-weight: bold !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 4px 10px !important;
+    border-radius: 4px !important; 
+    font-size: 14px !important;   
+    margin-right: 12px !important;
+    font-weight: 800 !important;
+    color: white !important;
+    min-width: 50px !important;    
+    line-height: 1 !important;
+    margin-top: 3px !important; 
+    /* --- 新增：强制徽章不缩小，彻底锁死对齐位置 --- */
+    flex-shrink: 0 !important;
 }
-.bl-badge-text { background: var(--bl-text-secondary) !important; color: white !important; }
-.bl-badge-regex { background: var(--bl-accent-color) !important; color: white !important; }
-/* 新增：简易模式徽章 */
-.bl-badge-simple { background: #0984e3 !important; color: white !important; }
+
+.bl-badge-text { background: #868e96 !important; } 
+.bl-badge-regex { background: var(--bl-accent-color) !important; }
+.bl-badge-simple { background: #0984e3 !important; }
 
 /* --- 手机端微调 --- */
 @media screen and (max-width: 600px) {
-    #bl-purifier-popup { padding: 15px 20px !important; width: 92% !important; top: 12vh !important; }
+    #bl-purifier-popup { padding: 15px 20px !important; width: 92% !important; top: 12vh !important; max-width: 420px !important; border-radius: 12px !important;}
+    #bl-purifier-popup .bl-title { font-size: 18px !important; }
+    .bl-input, .bl-textarea { font-size: 14px !important; padding: 10px 12px !important;}
     .bl-tool-btn { font-size: 12px !important; padding: 7px 0 !important; }
     .bl-rule-card { padding: 8px 10px !important; }
     .bl-rule-name { font-size: 13px !important; }
+    .bl-rule-preview { font-size: 12px !important; }
+    .bl-badge { font-size: 11px !important; padding: 3px 6px !important; min-width: 40px !important; margin-right: 8px !important; margin-top: 2px !important;}
 }
