@@ -42,7 +42,7 @@ function buildProcessors() {
                         wordToReplacements[t] = sub.replacements; 
                     }
                 });
-        } else if (mode === 'regex') {
+            } else if (mode === 'regex') {
                 sub.targets.forEach(t => {
                     if (t) {
                         try {
@@ -105,7 +105,8 @@ function buildProcessors() {
                     }
                 });
             }
-    });
+        }); // 完美闭合 subRulesToProcess.forEach
+    }); // 完美闭合 rules.forEach
 
     if (textTargets.length > 0) {
         const uniqueTargets = [...new Set(textTargets)];
@@ -153,7 +154,6 @@ function applyReplacements(originalText) {
     });
     return text;
 }
-}
 
 function isProtectedNode(node) {
     if (!node || !node.closest) return false;
@@ -166,14 +166,11 @@ function isProtectedNode(node) {
 
     // 3. 精确枚举
     const promptIds = [
-        // 系统自带
         'system_prompt', 'post_history_prompt', 'floating_prompt', 
         'nsfw_prompt', 'author_note', 'jailbreak_prompt',
         'chat_completions_system_prompt', 'chat_completions_jailbreak_prompt',
-        // Prompt Manager 预设
         'completion_prompt_manager_popup_entry_form_prompt',
         'completion_prompt_manager_popup_entry_form_name',
-        // 角色卡特写
         'description_textarea', 'personality_textarea', 'scenario_textarea', 
         'mes_example_textarea', 'first_mes_textarea', 'creator_notes_textarea'
     ];
@@ -183,7 +180,7 @@ function isProtectedNode(node) {
     if (node.id && node.id.startsWith('world_entry_content_')) return true;
     if (node.tagName === 'TEXTAREA' && node.name === 'comment') return true;
 
-    // 除此之外一律不保护！User 人设、主发送框等将保持实时净化
+    // 除此之外一律不保护！
     return false;
 }
 
@@ -312,13 +309,12 @@ function performGlobalCleanse() {
 }
 
 async function performDeepCleanse() {
-    buildProcessors(); // 构建当前的屏蔽规则处理器
+    buildProcessors(); 
     if (activeProcessors.length === 0) { 
         alert("没有开启的屏蔽规则，无需清理。"); 
         return; 
     }
 
-    // 显示清理中的遮罩层
     $('body').append(`
         <div id="bl-loading-overlay" style="position:fixed;top:0;left:0;width:100vw;height:100vh;background:rgba(0,0,0,0.85);z-index:9999999;display:flex;flex-direction:column;justify-content:center;align-items:center;color:white;backdrop-filter:blur(5px);">
             <h2 style="margin-bottom:20px;font-size:20px;"><i class="fas fa-spinner fa-spin"></i> 正在执行全方位深度清理 (包含角色卡与世界书)...</h2>
@@ -330,40 +326,32 @@ async function performDeepCleanse() {
     try {
         let scrubbedItems = 0;
         
-        // 1. 清理当前聊天记录与元数据
         if (chat && Array.isArray(chat)) scrubbedItems += safeDeepScrub(chat, false);
         if (typeof chat_metadata === 'object' && chat_metadata !== null) scrubbedItems += safeDeepScrub(chat_metadata, false);
         
-        // 2. 清理插件配置 (排除插件自身的屏蔽规则，防止自残)
         if (typeof extension_settings === 'object' && extension_settings !== null) {
             scrubbedItems += safeDeepScrub(extension_settings, true);
         }
 
-        // 3. 清理内存中的所有角色卡数据 (Character Cards)
         if (typeof window.characters !== 'undefined' && Array.isArray(window.characters)) {
             scrubbedItems += safeDeepScrub(window.characters, false);
         }
         
-        // 4. 清理内存中的所有世界书词条 (World Info)
         if (typeof window.world_info !== 'undefined' && window.world_info !== null) {
             scrubbedItems += safeDeepScrub(window.world_info, false);
         }
         
-        // 5. 清理 User 自身的人设设定 (Persona)
         if (typeof window.power_user !== 'undefined' && window.power_user !== null) {
             if (window.power_user.personas) {
                 scrubbedItems += safeDeepScrub(window.power_user.personas, false);
             }
         }
 
-        // 只有在产生实际修改时才触发保存并刷新
         if (scrubbedItems > 0) {
             const saveChatPromise = saveChat();
             if (saveChatPromise instanceof Promise) await saveChatPromise;
             
-            saveSettingsDebounced(); // 触发设置保存
-            
-            // 等待 ST 后端同步完成
+            saveSettingsDebounced(); 
             await new Promise(r => setTimeout(r, 2000)); 
             $('#bl-loading-overlay').remove();
             
@@ -407,14 +395,9 @@ function initRealtimeInterceptor() {
 
     document.addEventListener('input', (e) => {
         const el = e.target;
-        
-        // 只处理输入框元素
         if (!['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
-
-        // 1. 判断是否处于“预设/Prompt”保护区
         if (isProtectedNode(el)) return;
 
-        // 2. 角色卡、User、主聊天框等全部执行净化！
         buildProcessors();
         if (activeProcessors.length === 0) return;
 
@@ -422,7 +405,6 @@ function initRealtimeInterceptor() {
         const cleanedVal = applyReplacements(originalVal);
         
         if (originalVal !== cleanedVal) {
-            // 记录一下光标位置，防止净化瞬间光标跳到最后面
             const start = el.selectionStart;
             el.value = cleanedVal;
             try { el.setSelectionRange(start, start); } catch(err){}
@@ -574,12 +556,11 @@ function renderTags() {
         const name = r.name || `未命名合集 ${i + 1}`;
         
         let subRulesHtml = '';
-        const maxPreview = 3; // 主界面最多预览前3条规则，避免卡片太长
+        const maxPreview = 3; 
         
         (r.subRules || []).slice(0, maxPreview).forEach(sub => {
             const mode = sub.mode || 'text';
             let badgeHTML = '';
-            // 匹配三种模式的徽章
             if (mode === 'regex') badgeHTML = '<span class="bl-badge bl-badge-regex" style="font-size:9px; padding:2px 4px;">正则</span>';
             else if (mode === 'simple') badgeHTML = '<span class="bl-badge bl-badge-simple" style="background:#0984e3; color:white; font-size:9px; padding:2px 4px;">简易</span>';
             else badgeHTML = '<span class="bl-badge bl-badge-text" style="font-size:9px; padding:2px 4px;">普通</span>';
@@ -588,7 +569,6 @@ function renderTags() {
             let rPreview = sub.replacements.join(', ');
             if(!rPreview) rPreview = '【直接删除】';
             
-            // 组装结构化的预览行： [徽章] 原词 -> 替换词
             subRulesHtml += `
             <div style="display:flex; align-items:center; margin-bottom:5px; overflow:hidden; white-space:nowrap;">
                 ${badgeHTML} 
@@ -598,7 +578,6 @@ function renderTags() {
             </div>`;
         });
         
-        // 如果规则太多，显示省略提示
         if ((r.subRules || []).length > maxPreview) {
              subRulesHtml += `<div style="font-size:11px; margin-top:6px; color:var(--bl-text-secondary); opacity:0.8; text-align:center;">... 以及其他 ${(r.subRules||[]).length - maxPreview} 组映射</div>`;
         }
@@ -648,7 +627,6 @@ function renderSubrulesToModal() {
         const isEditing = sub.isEditing !== false; 
 
         if (!isEditing) {
-            // -- 折叠摘要态 --
             let badgeHTML = '';
             if (mode === 'regex') badgeHTML = '<span class="bl-badge bl-badge-regex">正则</span>';
             else if (mode === 'simple') badgeHTML = '<span class="bl-badge bl-badge-simple" style="background:#0984e3; color:white;">简易</span>';
@@ -672,7 +650,6 @@ function renderSubrulesToModal() {
                 </div>
             `);
         } else {
-            // -- 展开编辑态 --
             const tStr = sub.targets.join(mode === 'text' ? ', ' : '\n');
             const rStr = sub.replacements.join(mode === 'regex' ? '\n' : ', ');
 
@@ -731,7 +708,6 @@ function openEditModal(index = -1) {
     if (index === -1) {
         $('#bl-edit-modal-title').html('<i class="fas fa-folder-plus"></i> 新增规则合集');
         $('#bl-edit-name').val('');
-        // 新建时默认使用全新的简易模式
         currentEditingSubrules = [{ targets: [], replacements: [], mode: 'simple', isEditing: true }];
     } else {
         const rule = settings.rules[index];
@@ -798,7 +774,6 @@ function bindEvents() {
         renderSubrulesToModal();
     });
 
-    // 切换模式时立刻刷新以展示对应模式的提示词
     $(document).off('change', '.bl-sub-mode').on('change', '.bl-sub-mode', function() {
         const idx = $(this).closest('.bl-subrule-row').find('.bl-save-subrule-btn').data('index');
         syncSubrulesFromDOM();
