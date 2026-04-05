@@ -42,7 +42,7 @@ function buildProcessors() {
                         wordToReplacements[t] = sub.replacements; 
                     }
                 });
-            } else if (mode === 'regex') {
+        } else if (mode === 'regex') {
                 sub.targets.forEach(t => {
                     if (t) {
                         try {
@@ -56,8 +56,16 @@ function buildProcessors() {
                                     if (!flags.includes('g')) flags += 'g'; 
                                 }
                             }
+                            
+                            // --- 防核弹补丁 (正则模式) ---
+                            let testRegex = new RegExp(pattern, flags);
+                            if (testRegex.test("")) {
+                                console.warn("[Ultimate Purifier] 拦截到一个危险的空匹配正则，已忽略:", t);
+                                return; 
+                            }
+                            
                             processors.push({
-                                regex: new RegExp(pattern, flags),
+                                regex: testRegex,
                                 replacements: sub.replacements,
                                 isRegexMode: true
                             });
@@ -67,25 +75,29 @@ function buildProcessors() {
                     }
                 });
             } else if (mode === 'simple') {
-                // --- 新增：简易积木组合引擎 ---
+                // --- 简易积木组合引擎 ---
                 sub.targets.forEach(t => {
                     if (t) {
                         try {
-                            // 1. 转义正则基本危险字符，但故意保留我们需要的 { } , * 以及用于可选的 ?
                             let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
                             
-                            // 2. 将 {A,B,C} 语法转换为非捕获组 (?:A|B|C)
                             escaped = escaped.replace(/\{([^}]+)\}/g, (match, group) => {
                                 return '(?:' + group.split(',').map(s => s.trim()).join('|') + ')';
                             });
                             
-                            // 3. 将 * 转换为模糊通配，限制最大长度15，防止误杀全段文字
                             escaped = escaped.replace(/\*/g, '.{0,15}?');
                             
+                            // --- 防核弹补丁 (简易模式) ---
+                            let testRegex = new RegExp(escaped, 'gmu');
+                            if (testRegex.test("")) {
+                                console.warn("[Ultimate Purifier] 拦截到一个危险的简易空匹配规则，已忽略:", t);
+                                return;
+                            }
+                            
                             processors.push({
-                                regex: new RegExp(escaped, 'gmu'),
+                                regex: testRegex,
                                 replacements: sub.replacements,
-                                isRegexMode: true // 复用正则的随机替换机制
+                                isRegexMode: true 
                             });
                         } catch(e) {
                             console.warn("[Ultimate Purifier] 简易规则解析失败:", t);
@@ -93,7 +105,6 @@ function buildProcessors() {
                     }
                 });
             }
-        });
     });
 
     if (textTargets.length > 0) {
@@ -210,6 +221,8 @@ function safeDeepScrub(rootObj, isGlobalSettings = false) {
 
 function purifyDOM(rootNode) {
     if (!rootNode) return;
+    // 强行合并手机端流式输出时碎裂的文本节点
+    try { if (rootNode.normalize) rootNode.normalize(); } catch(e) { }
     buildProcessors();
     if (activeProcessors.length === 0) return;
 
