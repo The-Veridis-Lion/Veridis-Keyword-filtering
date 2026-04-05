@@ -680,7 +680,7 @@ function renderSubrulesToModal() {
                         <select class="bl-sub-mode bl-input" style="width:auto; padding:6px; font-size:12px;">
                             <option value="simple" ${mode === 'simple' ? 'selected' : ''}>🧩 简易组合 (推荐! 支持{}与*号)</option>
                             <option value="text" ${mode === 'text' ? 'selected' : ''}>📝 普通文本 (长词优先替换)</option>
-                            <option value="regex" ${mode === 'regex' ? 'selected' : ''}>⚙️ 纯正表达式 (专业模式)</option>
+                            <option value="regex" ${mode === 'regex' ? 'selected' : ''}>⚙️ 正则表达式 (专业模式)</option>
                         </select>
                         <div style="display:flex; gap:6px;">
                             <button class="bl-save-subrule-btn bl-icon-btn" data-index="${i}" title="完成并折叠" style="color:var(--bl-accent-color);"><i class="fas fa-check"></i></button>
