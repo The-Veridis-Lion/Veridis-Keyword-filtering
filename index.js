@@ -153,6 +153,7 @@ function applyReplacements(originalText) {
     });
     return text;
 }
+}
 
 function isProtectedNode(node) {
     if (!node || !node.closest) return false;
