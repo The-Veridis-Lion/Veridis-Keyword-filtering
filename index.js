@@ -390,8 +390,30 @@ function initRealtimeInterceptor() {
         });
     });
     
+    // --- 监听酒馆主聊天框 ---
     const chatEl = document.getElementById('chat');
     if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value'] });
+
+    // 强行击穿回声小剧场的 Shadow DOM 结界
+    let currentTheaterShadow = null;
+    setInterval(() => {
+        // 寻找小剧场用于隔离的内部容器宿主
+        const theaterHost = document.querySelector('#t-output-content .t-shadow-host');
+        if (theaterHost && theaterHost.shadowRoot) {
+            // 发现剧场处于打开状态，且尚未被我们监听
+            if (currentTheaterShadow !== theaterHost) {
+                // 将监听器直接刺入 Shadow DOM 内部！
+                chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
+                currentTheaterShadow = theaterHost;
+                
+                // 立刻对结界里已经渲染出的八股文字执行一次大扫除
+                purifyDOM(theaterHost.shadowRoot);
+            }
+        } else {
+            // 剧场窗口关闭，重置追踪状态
+            currentTheaterShadow = null;
+        }
+    }, 800); // 每 0.8 秒扫描一次结界是否开启
 
     document.addEventListener('input', (e) => {
         const el = e.target;
@@ -483,9 +505,10 @@ function setupUI() {
             <div style="background:var(--bl-background-popup); padding:30px; border-radius:12px; max-width:450px; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid var(--bl-border-color);">
                 <h3 style="color:var(--bl-danger-color); margin-top:0; font-size: 22px;">⚠️ 深度清理警告</h3>
                 <p style="font-size:15px; color:var(--bl-text-primary); line-height:1.6; margin:0 0 25px 0; text-align:left;">
-                    为了防止深度清理修改您的常用预设(Preset)，请在此刻：
+                    深度清理会永久洗刷角色卡、世界书、人设、全部历史记录及<strong>当前选中的预设</strong>。
+                    为了防止深度清理修改或误伤您的以上内容，请在此刻：
                     <br><br>
-                    👉 <strong style="color:var(--bl-danger-color); background:var(--bl-background-secondary); padding:6px 10px; border-radius:6px; display:inline-block; margin-bottom:10px; border: 1px solid var(--bl-border-color);">将SillyTavern当前的预设切换至「Default」或任意废弃预设！</strong>
+                    👉 <strong style="color:var(--bl-danger-color); background:var(--bl-background-secondary); padding:6px 10px; border-radius:6px; display:inline-block; margin-bottom:10px; border: 1px solid var(--bl-border-color);">将SillyTavern当前的预设切换至「Default」或废弃预设！<br>将插件预设切换至不含名词句式规则(已在贴内提供)。</strong>
                     <br>
                     <span style="font-size:13px; color:var(--bl-text-secondary);">清理完成后页面会刷新，届时可切回原预设即可保证预设安全。</span>
                 </p>
