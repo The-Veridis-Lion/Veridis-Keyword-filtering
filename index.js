@@ -407,6 +407,30 @@ function collectTextNodesFromNode(node, collector) {
     }
 }
 
+function resolveActiveMessageText(msg) {
+    if (!msg) return '';
+    const swipeIndex = Number.isInteger(msg.swipe_id) ? msg.swipe_id : -1;
+    if (Array.isArray(msg.swipes) && swipeIndex >= 0 && swipeIndex < msg.swipes.length) {
+        const swipe = msg.swipes[swipeIndex];
+        if (typeof swipe === 'string') return swipe;
+        if (swipe && typeof swipe.mes === 'string') return swipe.mes;
+    }
+    return typeof msg.mes === 'string' ? msg.mes : '';
+}
+
+function syncMessageBlockText(index, msg) {
+    const messageBlock = findMessageBlockByIndex(index);
+    if (!messageBlock) return;
+    const mesText = messageBlock.querySelector('.mes_text');
+    if (!mesText) return;
+
+    const finalText = resolveActiveMessageText(msg);
+    if (typeof finalText !== 'string') return;
+
+    // 兜底：在非流式模式下，某些前端不会立即重绘消息块，导致旧词残留到刷新前。
+    mesText.textContent = finalText;
+}
+
 function finalizeAssistantMessageAt(index) {
     if (index < 0 || !Array.isArray(chat) || !chat[index] || !isAssistantMessage(chat[index])) return false;
     const msg = chat[index];
@@ -443,6 +467,7 @@ function finalizeAssistantMessageAt(index) {
     if (msgChanged) {
         try {
             if (typeof updateMessageBlock === 'function') updateMessageBlock(index, msg);
+            syncMessageBlockText(index, msg);
             if (typeof saveChat === 'function') saveChat();
         } catch (e) {
             console.error("[Ultimate Purifier] 最终净化写回失败", e);
