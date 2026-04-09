@@ -32,65 +32,88 @@ function buildProcessors() {
     const rules = extension_settings[extensionName]?.rules || [];
     
     let textTargets = [];
-    const wordToReplacements = {};
-    const processors = [];
-
-    const tryPushRegexProcessor = (regex, replacements) => {
-        processors.push({ regex, replacements, isRegexMode: true });
-    };
-    const modeHandlers = {
-        text: (t, sub) => {
-            textTargets.push(t);
-            wordToReplacements[t] = sub.replacements;
-        },
-        regex: (t, sub) => {
-            try {
-                let pattern = t;
-                let flags = 'gmu';
-                if (t.startsWith('/')) {
-                    const lastSlash = t.lastIndexOf('/');
-                    if (lastSlash > 0) {
-                        pattern = t.substring(1, lastSlash);
-                        flags = t.substring(lastSlash + 1);
-                        if (!flags.includes('g')) flags += 'g';
-                    }
-                }
-                const testRegex = new RegExp(pattern, flags);
-                if (testRegex.test("")) {
-                    console.warn("[Ultimate Purifier] 拦截到一个危险的空匹配正则，已忽略:", t);
-                    return;
-                }
-                tryPushRegexProcessor(testRegex, sub.replacements);
-            } catch (e) {
-                console.warn("[Ultimate Purifier] 忽略非法正则表达式:", t);
-            }
-        },
-        simple: (t, sub) => {
-            try {
-                let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
-                escaped = escaped.replace(/\{([^}]+)\}/g, (match, group) => '(?:' + group.split(',').map(s => s.trim()).join('|') + ')');
-                escaped = escaped.replace(/\*/g, '.{0,15}?');
-                const testRegex = new RegExp(escaped, 'gmu');
-                if (testRegex.test("")) {
-                    console.warn("[Ultimate Purifier] 拦截到一个危险的简易空匹配规则，已忽略:", t);
-                    return;
-                }
-                tryPushRegexProcessor(testRegex, sub.replacements);
-            } catch (e) {
-                console.warn("[Ultimate Purifier] 简易规则解析失败:", t);
-            }
-        }
-    };
+    let wordToReplacements = {};
+    let processors = [];
 
     rules.forEach(rule => {
-        if (rule.enabled === false) return;
-        (rule.subRules || []).forEach(sub => {
-            const mode = sub.mode || 'text';
-            const modeHandler = modeHandlers[mode];
-            if (!modeHandler) return;
-            (sub.targets || []).forEach(t => t && modeHandler(t, sub));
-        });
-    });
+        if (rule.enabled === false) return; 
+        
+        const subRulesToProcess = rule.subRules || [];
+        subRulesToProcess.forEach(sub => {
+            const mode = sub.mode || 'text'; // 默认向下兼容文本模式
+
+            if (mode === 'text') {
+                sub.targets.forEach(t => {
+                    if (t) {
+                        textTargets.push(t);
+                        wordToReplacements[t] = sub.replacements; 
+                    }
+                });
+            } else if (mode === 'regex') {
+                sub.targets.forEach(t => {
+                    if (t) {
+                        try {
+                            let pattern = t;
+                            let flags = 'gmu';
+                            if (t.startsWith('/')) {
+                                const lastSlash = t.lastIndexOf('/');
+                                if (lastSlash > 0) {
+                                    pattern = t.substring(1, lastSlash);
+                                    flags = t.substring(lastSlash + 1);
+                                    if (!flags.includes('g')) flags += 'g'; 
+                                }
+                            }
+                            
+                            // --- 防核弹补丁 (正则模式) ---
+                            let testRegex = new RegExp(pattern, flags);
+                            if (testRegex.test("")) {
+                                console.warn("[Ultimate Purifier] 拦截到一个危险的空匹配正则，已忽略:", t);
+                                return; 
+                            }
+                            
+                            processors.push({
+                                regex: testRegex,
+                                replacements: sub.replacements,
+                                isRegexMode: true
+                            });
+                        } catch(e) {
+                            console.warn("[Ultimate Purifier] 忽略非法正则表达式:", t);
+                        }
+                    }
+                });
+            } else if (mode === 'simple') {
+                // --- 简易积木组合引擎 ---
+                sub.targets.forEach(t => {
+                    if (t) {
+                        try {
+                            let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
+                            
+                            escaped = escaped.replace(/\{([^}]+)\}/g, (match, group) => {
+                                return '(?:' + group.split(',').map(s => s.trim()).join('|') + ')';
+                            });
+                            
+                            escaped = escaped.replace(/\*/g, '.{0,15}?');
+                            
+                            // --- 防核弹补丁 (简易模式) ---
+                            let testRegex = new RegExp(escaped, 'gmu');
+                            if (testRegex.test("")) {
+                                console.warn("[Ultimate Purifier] 拦截到一个危险的简易空匹配规则，已忽略:", t);
+                                return;
+                            }
+                            
+                            processors.push({
+                                regex: testRegex,
+                                replacements: sub.replacements,
+                                isRegexMode: true 
+                            });
+                        } catch(e) {
+                            console.warn("[Ultimate Purifier] 简易规则解析失败:", t);
+                        }
+                    }
+                });
+            }
+        }); // 完美闭合 subRulesToProcess.forEach
+    }); // 完美闭合 rules.forEach
 
     if (textTargets.length > 0) {
         const uniqueTargets = [...new Set(textTargets)];
@@ -114,23 +137,26 @@ function applyReplacements(originalText) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
     let text = originalText;
     const processors = buildProcessors();
-    const pickReplacement = (reps) => {
-        if (!reps || reps.length === 0) return '';
-        return reps[Math.floor(Math.random() * reps.length)];
-    };
 
     processors.forEach(proc => {
         text = text.replace(proc.regex, (match, ...args) => {
             if (proc.isRegexMode) {
-                let rep = pickReplacement(proc.replacements);
+                const reps = proc.replacements;
+                if (!reps || reps.length === 0) return ''; 
+                const randIndex = Math.floor(Math.random() * reps.length);
+                let rep = reps[randIndex];
                 
                 rep = rep.replace(/\$(\d+)/g, (m, g) => {
                     const idx = parseInt(g);
                     return args[idx - 1] !== undefined ? args[idx - 1] : m;
                 });
                 return rep;
+            } else {
+                const reps = proc.replacerMap[match];
+                if (!reps || reps.length === 0) return ''; 
+                const randIndex = Math.floor(Math.random() * reps.length); 
+                return reps[randIndex];
             }
-            return pickReplacement(proc.replacerMap[match]);
         });
     });
     return text;
@@ -168,17 +194,13 @@ function isProtectedNode(node) {
     return false;
 }
 
-function cleanStringField(current, key) {
-    const val = current[key];
-    if (typeof val !== 'string') return 0;
-    const cleaned = applyReplacements(val);
-    if (cleaned === val) return 0;
-    current[key] = cleaned;
-    return 1;
-}
+function shouldSkipDbExtensionField(pathKeys = [], isGlobalSettings = false) {
+    if (!isGlobalSettings || pathKeys.length < 2) return false;
+    const rootNamespace = String(pathKeys[0] || '');
+    if (!rootNamespace.includes('shujuku_v120')) return false;
 
-function pushChildNode(stack, val, keyPath, isAsync) {
-    stack.push(isAsync ? { node: val, path: keyPath } : val);
+    const currentKey = String(pathKeys[pathKeys.length - 1] || '');
+    return /(Prompt|Settings|Template)/.test(currentKey);
 }
 
 function deepCleanObjectSync(rootObj) {
@@ -194,9 +216,16 @@ function deepCleanObjectSync(rootObj) {
 
         for (let key in current) {
             if (!Object.prototype.hasOwnProperty.call(current, key)) continue;
-            changes += cleanStringField(current, key);
             const val = current[key];
-            if (val && typeof val === 'object') pushChildNode(stack, val, null, false);
+            if (typeof val === 'string') {
+                const cleaned = applyReplacements(val);
+                if (cleaned !== val) {
+                    current[key] = cleaned;
+                    changes++;
+                }
+            } else if (val && typeof val === 'object') {
+                stack.push(val);
+            }
         }
     }
     return changes;
@@ -230,18 +259,21 @@ async function safeDeepScrub(rootObj, isGlobalSettings = false, options = {}) {
 
         try {
             for (let key in current) {
-                if (!Object.prototype.hasOwnProperty.call(current, key)) continue;
-                if (isGlobalSettings && key === extensionName) continue;
-                const keyPath = [...path, key];
-                if (
-                    isGlobalSettings &&
-                    keyPath.length >= 2 &&
-                    String(keyPath[0] || '').includes('shujuku_v120') &&
-                    /(Prompt|Settings|Template)/.test(String(keyPath[keyPath.length - 1] || ''))
-                ) continue;
-                changes += cleanStringField(current, key);
-                const val = current[key];
-                if (val !== null && typeof val === 'object') pushChildNode(stack, val, keyPath, true);
+                if (Object.prototype.hasOwnProperty.call(current, key)) {
+                    if (isGlobalSettings && key === extensionName) continue;
+                    const keyPath = [...path, key];
+                    if (shouldSkipDbExtensionField(keyPath, isGlobalSettings)) continue;
+                    const val = current[key];
+                    if (typeof val === 'string') {
+                        const cleaned = applyReplacements(val);
+                        if (val !== cleaned) {
+                            current[key] = cleaned;
+                            changes++;
+                        }
+                    } else if (val !== null && typeof val === 'object') {
+                        stack.push({ node: val, path: keyPath });
+                    }
+                }
             }
         } catch (e) { }
     }
@@ -358,191 +390,146 @@ async function performDeepCleanse() {
     }
 }
 
-const streamRuntime = {
-    generationId: 0,
-    isGenerating: false,
-    visualCandidateIndex: -1,
-    finalPurifiedKeys: new Set()
-};
+function purifyDOM(rootNode) {
+    if (!rootNode) return;
+    // 强行合并手机端流式输出时碎裂的文本节点
+    try { if (rootNode.normalize) rootNode.normalize(); } catch (e) { }
+    buildProcessors();
+    if (activeProcessors.length === 0) return;
 
-function isAssistantMessage(msg) {
-    return !!msg && msg.is_user === false;
-}
+    const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, null, false);
 
-function getLastAssistantIndex() {
-    if (!Array.isArray(chat) || chat.length === 0) return -1;
-    for (let i = chat.length - 1; i >= 0; i--) {
-        if (isAssistantMessage(chat[i])) return i;
-    }
-    return -1;
-}
-
-function findMessageBlockByIndex(index) {
-    return document.querySelector(`#chat .mes[mesid="${index}"], #chat .mes[data-mesid="${index}"]`);
-}
-
-// 流式阶段只能做视觉净化：只改 text node，不能改 chat 数据，避免打断生成管线。
-function visualPurifyTextNode(node) {
-    if (!node || node.nodeType !== Node.TEXT_NODE) return;
-    const parent = node.parentNode;
-    if (!parent || isProtectedNode(parent)) return;
-    const original = node.nodeValue || '';
-    if (!original) return;
-    const cleaned = applyReplacements(original);
-    if (cleaned !== original) {
-        node.nodeValue = cleaned;
-        if (parent.dataset) parent.dataset.blVisualPurified = '1';
-    }
-}
-
-function collectTextNodesFromNode(node, collector) {
-    if (!node) return;
-    if (node.nodeType === Node.TEXT_NODE) {
-        collector(node);
-        return;
-    }
-    if (node.nodeType !== Node.ELEMENT_NODE) return;
-    for (const child of Array.from(node.childNodes || [])) {
-        if (child.nodeType === Node.TEXT_NODE) collector(child);
-    }
-}
-
-function resolveActiveMessageText(msg) {
-    if (!msg) return '';
-    const swipeIndex = Number.isInteger(msg.swipe_id) ? msg.swipe_id : -1;
-    if (Array.isArray(msg.swipes) && swipeIndex >= 0 && swipeIndex < msg.swipes.length) {
-        const swipe = msg.swipes[swipeIndex];
-        if (typeof swipe === 'string') return swipe;
-        if (swipe && typeof swipe.mes === 'string') return swipe.mes;
-    }
-    return typeof msg.mes === 'string' ? msg.mes : '';
-}
-
-function syncMessageBlockText(index, msg) {
-    const messageBlock = findMessageBlockByIndex(index);
-    if (!messageBlock) return;
-    const mesText = messageBlock.querySelector('.mes_text');
-    if (!mesText) return;
-
-    const finalText = resolveActiveMessageText(msg);
-    if (typeof finalText !== 'string') return;
-
-    // 兜底：在非流式模式下，某些前端不会立即重绘消息块，导致旧词残留到刷新前。
-    mesText.textContent = finalText;
-}
-
-function finalizeAssistantMessageAt(index) {
-    if (index < 0 || !Array.isArray(chat) || !chat[index] || !isAssistantMessage(chat[index])) return false;
-    const msg = chat[index];
-    const signature = `${streamRuntime.generationId}:${index}`;
-    if (streamRuntime.finalPurifiedKeys.has(signature)) return false;
-
-    let msgChanged = false;
-    if (typeof msg.mes === 'string') {
-        const cleaned = applyReplacements(msg.mes);
-        if (cleaned !== msg.mes) {
-            msg.mes = cleaned;
-            msgChanged = true;
+    let node;
+    while (node = walker.nextNode()) {
+        const parent = node.parentNode;
+        if (parent && (isProtectedNode(parent) || (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))))) {
+            continue;
         }
+
+        const original = node.nodeValue || '';
+        const cleaned = applyReplacements(original);
+        if (original !== cleaned) node.nodeValue = cleaned;
     }
 
-    if (msg.swipes && Array.isArray(msg.swipes)) {
-        for (let i = 0; i < msg.swipes.length; i++) {
-            if (typeof msg.swipes[i] === 'string') {
-                const cleanedSwipe = applyReplacements(msg.swipes[i]);
-                if (cleanedSwipe !== msg.swipes[i]) {
-                    msg.swipes[i] = cleanedSwipe;
-                    msgChanged = true;
-                }
-            } else if (typeof msg.swipes[i] === 'object' && msg.swipes[i] !== null && typeof msg.swipes[i].mes === 'string') {
-                const cleanedSwipeMes = applyReplacements(msg.swipes[i].mes);
-                if (cleanedSwipeMes !== msg.swipes[i].mes) {
-                    msg.swipes[i].mes = cleanedSwipeMes;
+    if (rootNode.nodeType === 1) {
+        let inputs = [];
+        if (rootNode.matches && rootNode.matches('input, textarea')) inputs.push(rootNode);
+        if (rootNode.querySelectorAll) inputs.push(...Array.from(rootNode.querySelectorAll('input, textarea')));
+
+        inputs.forEach(input => {
+            if (isProtectedNode(input) || document.activeElement === input) return;
+            const originalVal = input.value || '';
+            const cleanedVal = applyReplacements(originalVal);
+            if (originalVal !== cleanedVal) input.value = cleanedVal;
+        });
+    }
+}
+
+function performGlobalCleanse() {
+    buildProcessors();
+    if (activeProcessors.length === 0) return;
+    let chatChanged = false;
+
+    if (chat && Array.isArray(chat)) {
+        chat.forEach((msg, index) => {
+            let msgChanged = false;
+
+            if (typeof msg.mes === 'string') {
+                const cleaned = applyReplacements(msg.mes);
+                if (msg.mes !== cleaned) {
+                    msg.mes = cleaned;
                     msgChanged = true;
                 }
             }
+
+            if (msg.swipes && Array.isArray(msg.swipes)) {
+                for (let i = 0; i < msg.swipes.length; i++) {
+                    if (typeof msg.swipes[i] === 'string') {
+                        const cleanedSwipe = applyReplacements(msg.swipes[i]);
+                        if (msg.swipes[i] !== cleanedSwipe) {
+                            msg.swipes[i] = cleanedSwipe;
+                            msgChanged = true;
+                        }
+                    } else if (typeof msg.swipes[i] === 'object' && msg.swipes[i] !== null && typeof msg.swipes[i].mes === 'string') {
+                        const cleanedSwipe = applyReplacements(msg.swipes[i].mes);
+                        if (msg.swipes[i].mes !== cleanedSwipe) {
+                            msg.swipes[i].mes = cleanedSwipe;
+                            msgChanged = true;
+                        }
+                    }
+                }
+            }
+
+            if (msgChanged) {
+                chatChanged = true;
+                try {
+                    if (typeof updateMessageBlock === 'function') {
+                        setTimeout(() => updateMessageBlock(index, chat[index]), 50);
+                    }
+                } catch (e) { }
+            }
+        });
+
+        const latestMsg = chat.length > 0 ? chat[chat.length - 1] : null;
+        if (latestMsg && typeof latestMsg === 'object') {
+            ['TavernDB_ACU_Data', 'TavernDB_ACU_SummaryData'].forEach((dbKey) => {
+                const dbVal = latestMsg[dbKey];
+                if (dbVal && typeof dbVal === 'object') {
+                    const dbChanges = deepCleanObjectSync(dbVal);
+                    if (dbChanges > 0) chatChanged = true;
+                }
+            });
         }
     }
 
-    if (msgChanged) {
+    if (chatChanged) {
         try {
-            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, msg);
-            syncMessageBlockText(index, msg);
             if (typeof saveChat === 'function') saveChat();
         } catch (e) {
-            console.error("[Ultimate Purifier] 最终净化写回失败", e);
+            console.error("[Ultimate Purifier] 存盘失败", e);
         }
     }
-
-    const messageBlock = findMessageBlockByIndex(index);
-    if (messageBlock?.dataset) messageBlock.dataset.blFinalPurified = signature;
-    streamRuntime.finalPurifiedKeys.add(signature);
-    return msgChanged;
+    purifyDOM(document.getElementById('chat'));
 }
 
-// 完成阶段只允许做一次最终净化：避免多事件重复触发导致重复文本与手机端空白。
-function finalizeLastAssistantMessage() {
-    buildProcessors();
-    if (activeProcessors.length === 0) return false;
-    const index = streamRuntime.visualCandidateIndex >= 0 ? streamRuntime.visualCandidateIndex : getLastAssistantIndex();
-    return finalizeAssistantMessageAt(index);
-}
-
-function resetGenerationState() {
-    streamRuntime.generationId += 1;
-    streamRuntime.isGenerating = false;
-    streamRuntime.visualCandidateIndex = -1;
-}
-
-function markGenerationStarted() {
-    streamRuntime.generationId += 1;
-    streamRuntime.isGenerating = true;
-    streamRuntime.visualCandidateIndex = -1;
-    streamRuntime.finalPurifiedKeys.clear();
-}
-
+// 引入 isPurifying 锁机制
 function initRealtimeInterceptor() {
-    let isVisualPurifying = false;
-    let lastCharacterDataAt = 0;
+    let isPurifying = false; // 全局防死循环锁
 
     const chatObserver = new MutationObserver((mutations) => {
-        if (isVisualPurifying || !streamRuntime.isGenerating) return;
+        if (isPurifying) return; // 如果是插件自己发起的修改，直接忽略，避免死循环
 
         buildProcessors();
         if (activeProcessors.length === 0) return;
 
-        const now = Date.now();
-        const looksLikeStreamingTick = mutations.some(m => m.type === 'characterData') && (now - lastCharacterDataAt < 350 || lastCharacterDataAt === 0);
-        if (!looksLikeStreamingTick) {
-            lastCharacterDataAt = now;
-            return;
-        }
-
-        lastCharacterDataAt = now;
-        isVisualPurifying = true;
+        isPurifying = true; // 上锁
         try {
-            for (const mutation of mutations) {
-                if (mutation.type === 'characterData') {
-                    const textNode = mutation.target;
-                    if (textNode?.parentNode && isProtectedNode(textNode.parentNode)) continue;
-                    visualPurifyTextNode(textNode);
-                    streamRuntime.visualCandidateIndex = getLastAssistantIndex();
-                    continue;
+            mutations.forEach(m => {
+                m.addedNodes.forEach(node => {
+                    if (node.nodeType === 3 || node.nodeType === 8) { 
+                        if (node.parentNode && isProtectedNode(node.parentNode)) return;
+                        const cleaned = applyReplacements(node.nodeValue);
+                        if (node.nodeValue !== cleaned) node.nodeValue = cleaned;
+                    } else if (node.nodeType === 1) { 
+                        purifyDOM(node);
+                    }
+                });
+                if (m.type === 'characterData') {
+                    if (m.target.parentNode && isProtectedNode(m.target.parentNode)) return;
+                    const cleaned = applyReplacements(m.target.nodeValue);
+                    if (m.target.nodeValue !== cleaned) m.target.nodeValue = cleaned;
                 }
-
-                for (const addedNode of Array.from(mutation.addedNodes || [])) {
-                    collectTextNodesFromNode(addedNode, visualPurifyTextNode);
-                }
-                streamRuntime.visualCandidateIndex = getLastAssistantIndex();
-            }
+            });
         } finally {
-            isVisualPurifying = false;
+            isPurifying = false; // 执行完解锁
         }
     });
-
+    
+    // 监听酒馆主聊天框 
     const chatEl = document.getElementById('chat');
-    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
+    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value'] });
 
+    // 回声小剧场的 Shadow DOM
     let currentTheaterShadow = null;
     setInterval(() => {
         const theaterHost = document.querySelector('#t-output-content .t-shadow-host');
@@ -550,17 +537,22 @@ function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
+                
+                isPurifying = true; // 对刚打开的结界清洗时也要上锁
+                try {
+                    purifyDOM(theaterHost.shadowRoot);
+                } finally {
+                    isPurifying = false;
+                }
             }
         } else {
             currentTheaterShadow = null;
         }
-    }, 800);
+    }, 800); 
 
-    // 输入框逻辑独立保留，不参与聊天输出两阶段流程。
     document.addEventListener('input', (e) => {
         const el = e.target;
-        if (!el || !['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
-        if (el.isComposing) return;
+        if (!['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
         if (isProtectedNode(el)) return;
 
         buildProcessors();
@@ -568,10 +560,17 @@ function initRealtimeInterceptor() {
 
         const originalVal = el.value || '';
         const cleanedVal = applyReplacements(originalVal);
+        
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
-            el.value = cleanedVal;
-            try { el.setSelectionRange(start, start); } catch (err) { }
+            
+            isPurifying = true; // 上锁
+            try {
+                el.value = cleanedVal;
+                try { el.setSelectionRange(start, start); } catch(err){}
+            } finally {
+                isPurifying = false;
+            }
         }
     }, true);
 }
@@ -586,7 +585,7 @@ function setupUI() {
             </div>`);
     }
     
-    const uiTemplates = [`
+    $('body').append(`
         <div id="bl-purifier-popup" style="display:none;">
             <div class="bl-header">
                 <h3 class="bl-title">全局屏蔽与映射规则</h3>
@@ -614,8 +613,9 @@ function setupUI() {
             <div class="bl-footer">
                 <button id="bl-deep-clean-btn" class="bl-deep-clean-btn"><i class="fas fa-broom"></i> 深度屏蔽与替换</button>
             </div>
-        </div>`,
-    `
+        </div>`);
+
+    $('body').append(`
         <div id="bl-rule-edit-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.65); z-index:9999999; flex-direction:column; justify-content:center; align-items:center; font-family:inherit; backdrop-filter:blur(4px);">
             <div style="background:var(--bl-background-popup); padding:20px 25px; border-radius:12px; width:90%; max-width:460px; max-height:85vh; display:flex; flex-direction:column; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid var(--bl-border-color); box-sizing:border-box;">
                 
@@ -639,8 +639,9 @@ function setupUI() {
                 </div>
             </div>
         </div>
-    `,
-    `
+    `);
+
+    $('body').append(`
         <div id="bl-confirm-modal" style="display:none; position:fixed; top:0; left:0; width:100vw; height:100vh; background:rgba(0,0,0,0.65); z-index:9999999; flex-direction:column; justify-content:center; align-items:center; font-family:inherit; backdrop-filter:blur(4px);">
             <div style="background:var(--bl-background-popup); padding:30px; border-radius:12px; max-width:450px; text-align:center; box-shadow: 0 10px 30px rgba(0,0,0,0.5); border: 1px solid var(--bl-border-color);">
                 <h3 style="color:var(--bl-danger-color); margin-top:0; font-size: 22px;">⚠️ 深度清理警告</h3>
@@ -658,8 +659,9 @@ function setupUI() {
                 </div>
             </div>
         </div>
-    `,
-    `
+    `);
+
+    $('body').append(`
         <div id="bl-rule-transfer-modal" style="display:none;">
             <div class="bl-transfer-content">
                 <h3 style="margin:0 0 10px 0; font-size:16px; color:var(--bl-text-primary);"><i class="fas fa-copy"></i> 复制 / 转移规则合集</h3>
@@ -671,8 +673,7 @@ function setupUI() {
                 </div>
             </div>
         </div>
-    `];
-    $('body').append(uiTemplates.join(''));
+    `);
 }
 
 function showConfirmModal() {
@@ -958,71 +959,87 @@ function openEditModal(index = -1) {
 }
 
 function bindEvents() {
-    const doc = $(document);
-    const bindDelegated = (eventName, selector, handler) => doc.off(eventName, selector).on(eventName, selector, handler);
+    $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => { 
+        updateToolbarUI(); 
+        renderTags(); 
+        $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200); 
+    });
+    
+    $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => {
+        $('#bl-purifier-popup').fadeOut(200);
+    });
+    
+    $(document).off('click', '#bl-open-new-rule-btn').on('click', '#bl-open-new-rule-btn', () => openEditModal(-1));
+    
+    $(document).off('click', '.bl-rule-edit').on('click', '.bl-rule-edit', function() {
+        openEditModal($(this).data('index'));
+    });
 
-    [
-        ['click', '#bl-wand-btn', () => {
-            updateToolbarUI();
-            renderTags();
-            $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
-        }],
-        ['click', '#bl-close-btn', () => $('#bl-purifier-popup').fadeOut(200)],
-        ['click', '#bl-open-new-rule-btn', () => openEditModal(-1)],
-        ['click', '.bl-rule-edit', function() { openEditModal($(this).data('index')); }],
-        ['click', '.bl-rule-transfer', function() { openTransferModal($(this).data('index')); }],
-        ['change', '.bl-rule-toggle', function() {
-            const index = $(this).data('index');
-            extension_settings[extensionName].rules[index].enabled = $(this).prop('checked');
-            isRegexDirty = true;
-            saveSettingsDebounced();
-            renderTags();
-            finalizeLastAssistantMessage();
-        }],
-        ['click', '.bl-rule-del', function() {
-            extension_settings[extensionName].rules.splice($(this).data('index'), 1);
-            isRegexDirty = true;
-            saveSettingsDebounced();
-            renderTags();
-        }],
-        ['click', '#bl-add-subrule-btn', () => {
-            syncSubrulesFromDOM();
-            currentEditingSubrules.push({ targets: [], replacements: [], mode: 'simple', isEditing: true });
-            renderSubrulesToModal();
-            const container = $('#bl-edit-subrules-container');
-            container.scrollTop(container[0].scrollHeight);
-        }],
-        ['click', '.bl-edit-subrule-btn', function() {
-            syncSubrulesFromDOM();
-            currentEditingSubrules[$(this).data('index')].isEditing = true;
-            renderSubrulesToModal();
-        }],
-        ['click', '.bl-save-subrule-btn', function() {
-            syncSubrulesFromDOM();
-            currentEditingSubrules[$(this).data('index')].isEditing = false;
-            renderSubrulesToModal();
-        }],
-        ['change', '.bl-sub-mode', function() {
-            const idx = $(this).closest('.bl-subrule-row').find('.bl-save-subrule-btn').data('index');
-            syncSubrulesFromDOM();
-            currentEditingSubrules[idx].mode = $(this).val();
-            renderSubrulesToModal();
-        }],
-        ['click', '.bl-del-subrule-btn', function() {
-            syncSubrulesFromDOM();
-            currentEditingSubrules.splice($(this).data('index'), 1);
-            renderSubrulesToModal();
-        }],
-        ['click', '#bl-edit-cancel', () => $('#bl-rule-edit-modal').hide()],
-        ['click', '#bl-transfer-cancel', () => closeTransferModal()],
-        ['click', '#bl-transfer-copy', () => runRuleTransfer(false)],
-        ['click', '#bl-transfer-move', () => runRuleTransfer(true)],
-        ['click', '#bl-rule-transfer-modal', function(e) {
-            if (e.target && e.target.id === 'bl-rule-transfer-modal') closeTransferModal();
-        }]
-    ].forEach(([eventName, selector, handler]) => bindDelegated(eventName, selector, handler));
+    $(document).off('click', '.bl-rule-transfer').on('click', '.bl-rule-transfer', function() {
+        openTransferModal($(this).data('index'));
+    });
+    
+    $(document).off('change', '.bl-rule-toggle').on('change', '.bl-rule-toggle', function() {
+        const index = $(this).data('index');
+        extension_settings[extensionName].rules[index].enabled = $(this).prop('checked');
+        isRegexDirty = true;
+        saveSettingsDebounced();
+        renderTags();
+        performGlobalCleanse();
+    });
+    
+    $(document).off('click', '.bl-rule-del').on('click', '.bl-rule-del', function() {
+        extension_settings[extensionName].rules.splice($(this).data('index'), 1);
+        isRegexDirty = true;
+        saveSettingsDebounced();
+        renderTags();
+    });
 
-    bindDelegated('click', '#bl-edit-save', () => {
+    $(document).off('click', '#bl-add-subrule-btn').on('click', '#bl-add-subrule-btn', () => {
+        syncSubrulesFromDOM();
+        currentEditingSubrules.push({ targets: [], replacements: [], mode: 'simple', isEditing: true });
+        renderSubrulesToModal();
+        const container = $('#bl-edit-subrules-container');
+        container.scrollTop(container[0].scrollHeight);
+    });
+    
+    $(document).off('click', '.bl-edit-subrule-btn').on('click', '.bl-edit-subrule-btn', function() {
+        syncSubrulesFromDOM();
+        currentEditingSubrules[$(this).data('index')].isEditing = true;
+        renderSubrulesToModal();
+    });
+
+    $(document).off('click', '.bl-save-subrule-btn').on('click', '.bl-save-subrule-btn', function() {
+        syncSubrulesFromDOM();
+        currentEditingSubrules[$(this).data('index')].isEditing = false;
+        renderSubrulesToModal();
+    });
+
+    $(document).off('change', '.bl-sub-mode').on('change', '.bl-sub-mode', function() {
+        const idx = $(this).closest('.bl-subrule-row').find('.bl-save-subrule-btn').data('index');
+        syncSubrulesFromDOM();
+        currentEditingSubrules[idx].mode = $(this).val();
+        renderSubrulesToModal();
+    });
+
+    $(document).off('click', '.bl-del-subrule-btn').on('click', '.bl-del-subrule-btn', function() {
+        syncSubrulesFromDOM();
+        currentEditingSubrules.splice($(this).data('index'), 1);
+        renderSubrulesToModal();
+    });
+
+    $(document).off('click', '#bl-edit-cancel').on('click', '#bl-edit-cancel', () => {
+        $('#bl-rule-edit-modal').hide();
+    });
+
+    $(document).off('click', '#bl-transfer-cancel').on('click', '#bl-transfer-cancel', () => closeTransferModal());
+    $(document).off('click', '#bl-transfer-copy').on('click', '#bl-transfer-copy', () => runRuleTransfer(false));
+    $(document).off('click', '#bl-transfer-move').on('click', '#bl-transfer-move', () => runRuleTransfer(true));
+    $(document).off('click', '#bl-rule-transfer-modal').on('click', '#bl-rule-transfer-modal', function(e) {
+        if (e.target && e.target.id === 'bl-rule-transfer-modal') closeTransferModal();
+    });
+
+    $(document).off('click', '#bl-edit-save').on('click', '#bl-edit-save', () => {
         syncSubrulesFromDOM();
         const nameVal = $('#bl-edit-name').val().trim();
         
@@ -1054,13 +1071,15 @@ function bindEvents() {
         isRegexDirty = true; 
         saveSettingsDebounced();
         renderTags();
-        finalizeLastAssistantMessage();
+        performGlobalCleanse();
         $('#bl-rule-edit-modal').hide();
     });
 
-    bindDelegated('click', '#bl-deep-clean-btn', () => showConfirmModal());
+    $(document).off('click', '#bl-deep-clean-btn').on('click', '#bl-deep-clean-btn', () => {
+        showConfirmModal();
+    });
 
-    bindDelegated('change', '#bl-preset-select', function() {
+    $(document).off('change', '#bl-preset-select').on('change', '#bl-preset-select', function() {
         const settings = extension_settings[extensionName];
         const name = $(this).val();
         settings.activePreset = name;
@@ -1072,10 +1091,10 @@ function bindEvents() {
         isRegexDirty = true;
         saveSettingsDebounced();
         renderTags();
-        finalizeLastAssistantMessage();
+        performGlobalCleanse();
     });
 
-    bindDelegated('click', '#bl-preset-rename', function() {
+    $(document).off('click', '#bl-preset-rename').on('click', '#bl-preset-rename', function() {
         const settings = extension_settings[extensionName];
         const oldName = settings.activePreset;
         if (!oldName) { alert("当前为临时规则，请先新建存档。"); return; }
@@ -1089,7 +1108,7 @@ function bindEvents() {
         updateToolbarUI();
     });
 
-    bindDelegated('click', '#bl-preset-delete', function() {
+    $(document).off('click', '#bl-preset-delete').on('click', '#bl-preset-delete', function() {
         const settings = extension_settings[extensionName];
         const name = settings.activePreset;
         if (!name) return;
@@ -1101,11 +1120,11 @@ function bindEvents() {
             saveSettingsDebounced();
             renderTags();
             updateToolbarUI();
-            finalizeLastAssistantMessage();
+            performGlobalCleanse();
         }
     });
 
-    bindDelegated('click', '#bl-preset-new', function() {
+    $(document).off('click', '#bl-preset-new').on('click', '#bl-preset-new', function() {
         const settings = extension_settings[extensionName];
         const name = prompt("输入新存档名称：");
         if (!name) return;
@@ -1116,7 +1135,7 @@ function bindEvents() {
         updateToolbarUI();
     });
 
-    bindDelegated('click', '#bl-preset-save', function() {
+    $(document).off('click', '#bl-preset-save').on('click', '#bl-preset-save', function() {
         const settings = extension_settings[extensionName];
         if (!settings.activePreset) { alert("当前为临时规则，请点击“新建”保存为新存档。"); return; }
         settings.presets[settings.activePreset] = JSON.parse(JSON.stringify(settings.rules));
@@ -1124,7 +1143,7 @@ function bindEvents() {
         alert("已保存到存档：" + settings.activePreset);
     });
 
-    bindDelegated('click', '#bl-preset-export', function() {
+    $(document).off('click', '#bl-preset-export').on('click', '#bl-preset-export', function() {
         const settings = extension_settings[extensionName];
         const data = JSON.stringify(settings.rules, null, 2);
         const blob = new Blob([data], { type: "application/json" });
@@ -1137,7 +1156,7 @@ function bindEvents() {
     });
 
 // 兼容老版本的对象结构
-    bindDelegated('click', '#bl-preset-import', function() {
+    $(document).off('click', '#bl-preset-import').on('click', '#bl-preset-import', function() {
         const input = document.createElement('input');
         input.type = 'file';
         input.accept = '.json';
@@ -1185,7 +1204,7 @@ function bindEvents() {
                     saveSettingsDebounced();
                     renderTags();
                     updateToolbarUI();
-                    finalizeLastAssistantMessage();
+                    performGlobalCleanse();
                 } catch (err) {
                     alert("导入失败：检查文件是否为合法规则数组。");
                 }
@@ -1195,26 +1214,15 @@ function bindEvents() {
         input.click();
     });
 
-    const finalizeCurrentMessageOnce = () => finalizeLastAssistantMessage();
-    const startGeneration = () => markGenerationStarted();
-    const stopGeneration = () => {
-        if (!streamRuntime.isGenerating) return;
-        finalizeCurrentMessageOnce();
-        resetGenerationState();
-    };
-    const onMessageReceived = () => {
-        if (streamRuntime.isGenerating) return;
-        markGenerationStarted();
-        finalizeCurrentMessageOnce();
-        resetGenerationState();
-    };
-
-    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, startGeneration);
-    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, finalizeCurrentMessageOnce);
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, stopGeneration);
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, stopGeneration);
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, onMessageReceived);
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, finalizeCurrentMessageOnce);
+    const visualCleanseOnly = () => { purifyDOM(document.getElementById('chat')); };
+    const delayedFullCleanse = () => setTimeout(performGlobalCleanse, 1000); 
+    
+    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, visualCleanseOnly);      
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, delayedFullCleanse); 
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedFullCleanse); 
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedFullCleanse); 
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedFullCleanse);      
+    if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, delayedFullCleanse);          
 }
 
 function migrateOldData() {
@@ -1290,6 +1298,7 @@ jQuery(() => {
         bindEvents();
         initRealtimeInterceptor(); 
         updateToolbarUI();
+        performGlobalCleanse(); 
     };
     if (typeof eventSource !== 'undefined' && event_types.APP_READY) {
         eventSource.on(event_types.APP_READY, boot);
