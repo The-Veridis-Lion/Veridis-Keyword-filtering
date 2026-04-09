@@ -98,8 +98,55 @@
 }
 .bl-deep-clean-btn:hover { opacity: 0.8 !important; }
 
+.bl-loading-overlay {
+    position: fixed !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100vw !important;
+    height: 100vh !important;
+    background: rgba(0, 0, 0, 0.85) !important;
+    z-index: 9999999 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    justify-content: center !important;
+    align-items: center !important;
+    color: white !important;
+    backdrop-filter: blur(5px) !important;
+    padding: 20px !important;
+    box-sizing: border-box !important;
+}
+
+.bl-loading-title {
+    margin-bottom: 20px !important;
+    font-size: 20px !important;
+    text-align: center !important;
+}
+
+.bl-progress-track {
+    width: min(560px, 88vw) !important;
+    height: 12px !important;
+    border-radius: 999px !important;
+    overflow: hidden !important;
+    border: 1px solid rgba(255, 255, 255, 0.35) !important;
+    background: rgba(255, 255, 255, 0.2) !important;
+    margin-top: 12px !important;
+}
+
+.bl-progress-fill {
+    width: 0%;
+    height: 100% !important;
+    background: linear-gradient(90deg, #7f5af0 0%, #2cb67d 100%) !important;
+    transition: width 0.2s ease !important;
+}
+
+.bl-progress-percent {
+    margin-top: 8px !important;
+    font-weight: bold !important;
+}
+
 .bl-icon-btn {
-    padding: 10px 15px !important;
+    padding: 8px 14px !important;
+    min-height: 38px !important;
     font-size: 16px !important;
     line-height: 1 !important;
     border-radius: 8px !important;
@@ -116,7 +163,7 @@
 }
 .bl-tool-btn {
     flex: 1 1 0% !important; 
-    padding: 12px 0 !important; 
+    padding: 9px 0 !important; 
     border-radius: 8px !important;
     border: 1px solid var(--bl-border-color) !important;
     background: var(--bl-background-secondary) !important;
@@ -151,7 +198,7 @@
 .bl-rule-card-header {
     display: flex !important;
     justify-content: space-between !important;
-    align-items: flex-start !important; 
+    align-items: center !important; 
     width: 100% !important;
 }
 
@@ -162,7 +209,7 @@
     margin: 0 !important; 
     line-height: 1.4 !important;
     display: flex !important; 
-    align-items: flex-start !important; 
+    align-items: center !important; 
     /* --- 新增：强制换行，防止长文本撑破 flex 布局 --- */
     word-break: break-all !important; 
 }
@@ -184,7 +231,7 @@
     margin-top: 2px !important; 
 }
 
-.bl-rule-edit, .bl-rule-del {
+.bl-rule-transfer, .bl-rule-edit, .bl-rule-del {
     background: var(--bl-background-secondary) !important;
     border: 1px solid var(--bl-border-color) !important;
     border-radius: 8px !important;
@@ -196,10 +243,55 @@
     transition: all 0.2s !important;
     color: var(--bl-text-primary) !important;
 }
+.bl-rule-transfer { font-size: 15px !important; }
 .bl-rule-edit { font-size: 15px !important; }
-.bl-rule-del { font-size: 18px !important; color: var(--bl-text-secondary) !important;}
+.bl-rule-del { font-size: 15px !important; color: var(--bl-text-primary) !important;}
+.bl-rule-transfer:hover { background: #57606f !important; border-color: #57606f !important; color: white !important; }
 .bl-rule-edit:hover { background: var(--bl-accent-color) !important; border-color: var(--bl-accent-color) !important; color: white !important;}
 .bl-rule-del:hover { background: var(--bl-danger-color) !important; border-color: var(--bl-danger-color) !important; color: white !important; }
+
+#bl-rule-transfer-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    background: rgba(0, 0, 0, 0.35) !important;
+    z-index: 10000000 !important;
+    display: none;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 16px !important;
+    box-sizing: border-box !important;
+}
+
+.bl-transfer-content {
+    width: min(420px, 96vw) !important;
+    background: var(--bl-background-popup) !important;
+    border: 1px solid var(--bl-border-color) !important;
+    border-radius: 12px !important;
+    padding: 14px !important;
+    box-shadow: 0 12px 24px rgba(0,0,0,0.35) !important;
+}
+
+.bl-transfer-btn {
+    flex: 1 !important;
+    padding: 9px 10px !important;
+    border-radius: 8px !important;
+    border: 1px solid var(--bl-border-color) !important;
+    background: var(--bl-background-secondary) !important;
+    color: var(--bl-text-primary) !important;
+    cursor: pointer !important;
+    transition: background 0.2s !important;
+}
+
+.bl-transfer-btn:hover {
+    background: var(--bl-border-color) !important;
+}
+
+/* 统一为低调的次级按钮样式 */
+.bl-transfer-copy, .bl-transfer-move {
+    background: var(--bl-background-secondary) !important;
+    border-color: var(--bl-border-color) !important;
+    color: var(--bl-text-primary) !important;
+}
 
 /* ================== 徽章样式 ================== */
 .bl-badge {
@@ -222,6 +314,24 @@
 .bl-badge-text { background: #868e96 !important; } 
 .bl-badge-regex { background: var(--bl-accent-color) !important; }
 .bl-badge-simple { background: #0984e3 !important; }
+
+.bl-subrule-main {
+    flex: 1 !important;
+    min-width: 0 !important;
+    display: grid !important;
+    grid-template-columns: auto minmax(0, 1fr) !important;
+    column-gap: 10px !important;
+    align-items: flex-start !important;
+}
+
+.bl-subrule-text {
+    min-width: 0 !important;
+    font-size: 13px !important;
+    color: var(--bl-text-primary) !important;
+    line-height: 1.45 !important;
+    overflow-wrap: anywhere !important;
+    word-break: break-word !important;
+}
 
 /* --- 手机端微调 --- */
 @media screen and (max-width: 600px) {
