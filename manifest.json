@@ -4,6 +4,6 @@
     "js": "index.js",
     "css": "style.css",
     "author": "Assistant",
-    "version": "4.3.1",
+    "version": "5.1.1",
     "description": "物理切除内存与编辑框屏蔽词，防止 AI 复读。"
 }
