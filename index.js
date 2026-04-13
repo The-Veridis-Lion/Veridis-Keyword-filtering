@@ -8,7 +8,8 @@ const defaultSettings = {
     activePreset: "",
     defaultPreset: "",
     characterBindings: {},
-    deepCleanTimeoutSec: 120
+    deepCleanTimeoutSec: 120,
+    stableReplacementLock: true
 };
 
 let activeProcessors = [];
@@ -239,9 +240,14 @@ function pickReplacement(replacements, deterministicKey = "") {
     return replacements[idx];
 }
 
+function isStableReplacementLockEnabled() {
+    return extension_settings?.[extensionName]?.stableReplacementLock !== false;
+}
+
 function applyReplacements(originalText, options = {}) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
-    const deterministic = options.deterministic === true;
+    const deterministic = options.deterministic === true
+        || (options.deterministic !== false && isStableReplacementLockEnabled());
     let text = originalText;
     const processors = buildProcessors();
 
@@ -603,48 +609,107 @@ function performGlobalCleanse() {
 // 引入 isPurifying 锁机制
 function initRealtimeInterceptor() {
     let isPurifying = false; // 全局防死循环锁
-    let pendingMutations = [];
+    const pendingTextNodes = new Set();
+    const pendingElementNodes = new Set();
     let flushTimer = null;
+    const delayedNodeTimers = new WeakMap();
+    const nodeCleanSnapshots = new WeakMap();
+
+    const scheduleTextNodeClean = (node, delayMs = 140) => {
+        if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
+        if (node.parentNode && isProtectedNode(node.parentNode)) return;
+
+        const previousTimer = delayedNodeTimers.get(node);
+        if (previousTimer) clearTimeout(previousTimer);
+
+        const timer = setTimeout(() => {
+            delayedNodeTimers.delete(node);
+            if (!node.isConnected || isPurifying) return;
+
+            buildProcessors();
+            if (activeProcessors.length === 0) return;
+
+            const original = node.nodeValue || '';
+            const lastSnapshot = nodeCleanSnapshots.get(node);
+            if (lastSnapshot && lastSnapshot.original === original) return;
+
+            const cleaned = applyReplacements(original, { deterministic: true });
+            nodeCleanSnapshots.set(node, { original, cleaned });
+            if (original === cleaned) return;
+
+            isPurifying = true;
+            try {
+                node.nodeValue = cleaned;
+            } finally {
+                isPurifying = false;
+            }
+        }, delayMs);
+
+        delayedNodeTimers.set(node, timer);
+    };
 
     const flushMutations = () => {
         flushTimer = null;
         if (isPurifying) return;
-        buildProcessors();
-        if (activeProcessors.length === 0) return;
 
-        const mutations = pendingMutations;
-        pendingMutations = [];
-        if (!mutations.length) return;
+        buildProcessors();
+        if (activeProcessors.length === 0) {
+            pendingTextNodes.clear();
+            pendingElementNodes.clear();
+            return;
+        }
+
+        if (pendingTextNodes.size === 0 && pendingElementNodes.size === 0) return;
 
         isPurifying = true;
         try {
-            mutations.forEach(m => {
-                m.addedNodes.forEach(node => {
-                    if (node.nodeType === 3 || node.nodeType === 8) { 
-                        if (node.parentNode && isProtectedNode(node.parentNode)) return;
-                        const cleaned = applyReplacements(node.nodeValue, { deterministic: true });
-                        if (node.nodeValue !== cleaned) node.nodeValue = cleaned;
-                    } else if (node.nodeType === 1) { 
-                        purifyDOM(node);
-                    }
-                });
-                if (m.type === 'characterData') {
-                    if (m.target.parentNode && isProtectedNode(m.target.parentNode)) return;
-                    const cleaned = applyReplacements(m.target.nodeValue, { deterministic: true });
-                    if (m.target.nodeValue !== cleaned) m.target.nodeValue = cleaned;
-                }
+            pendingElementNodes.forEach(node => {
+                if (node && node.isConnected) purifyDOM(node);
+            });
+
+            pendingTextNodes.forEach(node => {
+                if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
+                if (!node.isConnected) return;
+                if (node.parentNode && isProtectedNode(node.parentNode)) return;
+                const original = node.nodeValue || '';
+                const cleaned = applyReplacements(original, { deterministic: true });
+                if (original !== cleaned) node.nodeValue = cleaned;
             });
         } finally {
+            pendingTextNodes.clear();
+            pendingElementNodes.clear();
             isPurifying = false; // 执行完解锁
         }
     };
 
+    const enqueueMutation = (mutation) => {
+        if (mutation.type === 'characterData') {
+            pendingTextNodes.add(mutation.target);
+        }
+
+        mutation.addedNodes.forEach(node => {
+            if (node.nodeType === 3 || node.nodeType === 8) {
+                pendingTextNodes.add(node);
+            } else if (node.nodeType === 1) {
+                pendingElementNodes.add(node);
+            }
+        });
+
+        // 兜底限制，避免极端流式场景下队列无限增长
+        if (pendingTextNodes.size > 3000 || pendingElementNodes.size > 1000) {
+            pendingTextNodes.clear();
+            pendingElementNodes.clear();
+            const chatRoot = document.getElementById('chat');
+            if (chatRoot) pendingElementNodes.add(chatRoot);
+        }
+    };
+
     const chatObserver = new MutationObserver((mutations) => {
-        pendingMutations.push(...mutations);
+        mutations.forEach(enqueueMutation);
         if (!flushTimer) flushTimer = setTimeout(flushMutations, 32);
     });
-    
-    // 监听酒馆主聊天框 
+
+    // 监听酒馆主聊天框
     const chatEl = document.getElementById('chat');
     if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
 
@@ -656,7 +721,7 @@ function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
-                
+
                 isPurifying = true; // 对刚打开的结界清洗时也要上锁
                 try {
                     purifyDOM(theaterHost.shadowRoot);
@@ -667,7 +732,7 @@ function initRealtimeInterceptor() {
         } else {
             currentTheaterShadow = null;
         }
-    }, 800); 
+    }, 800);
 
     document.addEventListener('input', (e) => {
         const el = e.target;
@@ -679,10 +744,10 @@ function initRealtimeInterceptor() {
 
         const originalVal = el.value || '';
         const cleanedVal = applyReplacements(originalVal, { deterministic: true });
-        
+
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
-            
+
             isPurifying = true; // 上锁
             try {
                 el.value = cleanedVal;
@@ -693,7 +758,6 @@ function initRealtimeInterceptor() {
         }
     }, true);
 }
-
 function setupUI() {
     $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal').remove();
 
@@ -1536,6 +1600,10 @@ function ensureSettingsShape() {
     settings.deepCleanTimeoutSec = Number.isFinite(timeoutSec)
         ? Math.min(Math.max(timeoutSec, 10), 1800)
         : defaultSettings.deepCleanTimeoutSec;
+
+    if (settings.stableReplacementLock === undefined) {
+        settings.stableReplacementLock = true;
+    }
 }
 
 let isBooted = false;
