@@ -492,8 +492,6 @@ async function performDeepCleanse() {
 
 function purifyDOM(rootNode) {
     if (!rootNode) return;
-    // 强行合并手机端流式输出时碎裂的文本节点
-    try { if (rootNode.normalize) rootNode.normalize(); } catch (e) { }
     buildProcessors();
     if (activeProcessors.length === 0) return;
 
@@ -595,14 +593,20 @@ function performGlobalCleanse() {
 // 引入 isPurifying 锁机制
 function initRealtimeInterceptor() {
     let isPurifying = false; // 全局防死循环锁
+    let pendingMutations = [];
+    let flushTimer = null;
 
-    const chatObserver = new MutationObserver((mutations) => {
-        if (isPurifying) return; // 如果是插件自己发起的修改，直接忽略，避免死循环
-
+    const flushMutations = () => {
+        flushTimer = null;
+        if (isPurifying) return;
         buildProcessors();
         if (activeProcessors.length === 0) return;
 
-        isPurifying = true; // 上锁
+        const mutations = pendingMutations;
+        pendingMutations = [];
+        if (!mutations.length) return;
+
+        isPurifying = true;
         try {
             mutations.forEach(m => {
                 m.addedNodes.forEach(node => {
@@ -623,11 +627,16 @@ function initRealtimeInterceptor() {
         } finally {
             isPurifying = false; // 执行完解锁
         }
+    };
+
+    const chatObserver = new MutationObserver((mutations) => {
+        pendingMutations.push(...mutations);
+        if (!flushTimer) flushTimer = setTimeout(flushMutations, 32);
     });
     
     // 监听酒馆主聊天框 
     const chatEl = document.getElementById('chat');
-    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: ['value'] });
+    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
 
     // 回声小剧场的 Shadow DOM
     let currentTheaterShadow = null;
