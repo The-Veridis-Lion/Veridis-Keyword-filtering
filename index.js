@@ -8,8 +8,7 @@ const defaultSettings = {
     activePreset: "",
     defaultPreset: "",
     characterBindings: {},
-    deepCleanTimeoutSec: 120,
-    stableReplacementLock: true
+    deepCleanTimeoutSec: 120
 };
 
 let activeProcessors = [];
@@ -18,12 +17,10 @@ let currentEditingIndex = -1;
 let currentEditingSubrules = []; 
 let currentTransferRuleIndex = -1;
 let lastCharacterContextKey = "";
-const realtimeState = {
-    isGenerating: false,
-    sawStreamingTick: false,
-    lastStreamingAt: 0,
-    visualCandidateIndex: -1,
-};
+let isStreamingGeneration = false;
+let chatSaveTimer = null;
+let chatSaveInFlight = false;
+let pendingChatSave = false;
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 
@@ -123,28 +120,26 @@ function buildProcessors() {
     
     let textTargets = [];
     let wordToReplacements = {};
-    let textReplacementPool = new Set();
     let processors = [];
 
     rules.forEach(rule => {
         if (rule.enabled === false) return; 
         
-        const subRulesToProcess = rule.subRules || [];
+        const subRulesToProcess = Array.isArray(rule.subRules) ? rule.subRules : [];
         subRulesToProcess.forEach(sub => {
             const mode = sub.mode || 'text'; // 默认向下兼容文本模式
+            const targets = Array.isArray(sub.targets) ? sub.targets : [];
+            const replacements = Array.isArray(sub.replacements) ? sub.replacements : [];
 
             if (mode === 'text') {
-                sub.targets.forEach(t => {
+                targets.forEach(t => {
                     if (t) {
                         textTargets.push(t);
-                        wordToReplacements[t] = sub.replacements; 
-                        (sub.replacements || []).forEach(r => {
-                            if (typeof r === 'string' && r) textReplacementPool.add(r);
-                        });
+                        wordToReplacements[t] = replacements; 
                     }
                 });
             } else if (mode === 'regex') {
-                sub.targets.forEach(t => {
+                targets.forEach(t => {
                     if (t) {
                         try {
                             let pattern = t;
@@ -167,8 +162,7 @@ function buildProcessors() {
                             
                             processors.push({
                                 regex: testRegex,
-                                replacements: sub.replacements,
-                                replacementSet: new Set((sub.replacements || []).filter(r => typeof r === 'string' && r)),
+                                replacements,
                                 isRegexMode: true
                             });
                         } catch(e) {
@@ -178,7 +172,7 @@ function buildProcessors() {
                 });
             } else if (mode === 'simple') {
                 // --- 简易积木组合引擎 ---
-                sub.targets.forEach(t => {
+                targets.forEach(t => {
                     if (t) {
                         try {
                             let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
@@ -198,8 +192,7 @@ function buildProcessors() {
                             
                             processors.push({
                                 regex: testRegex,
-                                replacements: sub.replacements,
-                                replacementSet: new Set((sub.replacements || []).filter(r => typeof r === 'string' && r)),
+                                replacements,
                                 isRegexMode: true 
                             });
                         } catch(e) {
@@ -220,7 +213,6 @@ function buildProcessors() {
         processors.unshift({
             regex: textRegex,
             replacerMap: wordToReplacements,
-            replacementSet: textReplacementPool,
             isRegexMode: false
         });
     }
@@ -246,27 +238,20 @@ function pickReplacement(replacements, deterministicKey = "") {
     return replacements[idx];
 }
 
-function isStableReplacementLockEnabled() {
-    return extension_settings?.[extensionName]?.stableReplacementLock !== false;
-}
-
 function applyReplacements(originalText, options = {}) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
-    const deterministic = options.deterministic === true
-        || (options.deterministic !== false && isStableReplacementLockEnabled());
+    const deterministic = options.deterministic === true;
     let text = originalText;
     const processors = buildProcessors();
 
     processors.forEach((proc, procIndex) => {
         text = text.replace(proc.regex, (match, ...args) => {
-            // 流式场景下避免“替换词再次被当成目标词”引发抖动
-            if (deterministic && proc.replacementSet && proc.replacementSet.has(match)) return match;
-
             if (proc.isRegexMode) {
                 const reps = proc.replacements;
                 if (!reps || reps.length === 0) return ''; 
                 const repKey = deterministic ? `${procIndex}|${match}` : '';
                 let rep = pickReplacement(reps, repKey);
+                rep = String(rep ?? '');
                 
                 rep = rep.replace(/\$(\d+)/g, (m, g) => {
                     const idx = parseInt(g);
@@ -282,6 +267,41 @@ function applyReplacements(originalText, options = {}) {
         });
     });
     return text;
+}
+
+function applyVisualMask(originalText) {
+    if (typeof originalText !== 'string' || !originalText) return originalText;
+    // 流式阶段仅改 UI，不落库；但展示效果改为“按规则实时替换/删除”
+    // 这样不会出现 █ 方块残留，同时仍然不触碰底层 chat 数据。
+    return applyReplacements(originalText, { deterministic: true });
+}
+
+function queueIncrementalChatSave() {
+    pendingChatSave = true;
+    if (chatSaveTimer) return;
+
+    chatSaveTimer = setTimeout(async () => {
+        chatSaveTimer = null;
+        if (!pendingChatSave) return;
+        if (chatSaveInFlight) {
+            queueIncrementalChatSave();
+            return;
+        }
+
+        pendingChatSave = false;
+        chatSaveInFlight = true;
+        try {
+            if (typeof saveChat === 'function') {
+                const result = saveChat();
+                if (result instanceof Promise) await result;
+            }
+        } catch (e) {
+            console.error("[Ultimate Purifier] 增量存盘失败", e);
+        } finally {
+            chatSaveInFlight = false;
+            if (pendingChatSave) queueIncrementalChatSave();
+        }
+    }, 180);
 }
 
 function isProtectedNode(node) {
@@ -527,8 +547,10 @@ function purifyDOM(rootNode) {
         }
 
         const original = node.nodeValue || '';
-        const cleaned = applyReplacements(original, { deterministic: true });
-        if (original !== cleaned) node.nodeValue = cleaned;
+        const nextValue = isStreamingGeneration
+            ? applyVisualMask(original)
+            : applyReplacements(original, { deterministic: true });
+        if (original !== nextValue) node.nodeValue = nextValue;
     }
 
     if (rootNode.nodeType === 1) {
@@ -539,9 +561,99 @@ function purifyDOM(rootNode) {
         inputs.forEach(input => {
             if (isProtectedNode(input) || document.activeElement === input) return;
             const originalVal = input.value || '';
-            const cleanedVal = applyReplacements(originalVal, { deterministic: true });
-            if (originalVal !== cleanedVal) input.value = cleanedVal;
+            const nextVal = isStreamingGeneration
+                ? applyVisualMask(originalVal)
+                : applyReplacements(originalVal, { deterministic: true });
+            if (originalVal !== nextVal) input.value = nextVal;
         });
+    }
+}
+
+function getMessageIndexFromEvent(payload) {
+    if (Number.isInteger(payload)) return payload;
+    if (!payload || typeof payload !== 'object') return -1;
+    const candidates = [payload.messageId, payload.message_id, payload.mesid, payload.index, payload.id];
+    for (const value of candidates) {
+        const n = Number(value);
+        if (Number.isInteger(n) && n >= 0) return n;
+    }
+    return -1;
+}
+
+function getLatestMessageIndex() {
+    return Array.isArray(chat) && chat.length > 0 ? chat.length - 1 : -1;
+}
+
+function getMessageDomNode(index) {
+    const chatEl = document.getElementById('chat');
+    if (!chatEl) return null;
+    const selectors = [
+        `.mes[mesid="${index}"]`,
+        `.mes[data-mesid="${index}"]`,
+        `.mes[messageid="${index}"]`,
+        `.mes[data-message-id="${index}"]`
+    ];
+    for (const selector of selectors) {
+        const node = chatEl.querySelector(selector);
+        if (node) return node;
+    }
+    const allMes = chatEl.querySelectorAll('.mes');
+    return allMes.length > 0 ? allMes[allMes.length - 1] : null;
+}
+
+function cleanseMessageDataAtIndex(index) {
+    if (!Array.isArray(chat) || index < 0 || index >= chat.length) return false;
+    const msg = chat[index];
+    if (!msg || typeof msg !== 'object') return false;
+    let changed = false;
+
+    if (typeof msg.mes === 'string') {
+        const cleaned = applyReplacements(msg.mes);
+        if (cleaned !== msg.mes) {
+            msg.mes = cleaned;
+            changed = true;
+        }
+    }
+
+    if (Array.isArray(msg.swipes)) {
+        for (let i = 0; i < msg.swipes.length; i++) {
+            if (typeof msg.swipes[i] === 'string') {
+                const cleanedSwipe = applyReplacements(msg.swipes[i]);
+                if (cleanedSwipe !== msg.swipes[i]) {
+                    msg.swipes[i] = cleanedSwipe;
+                    changed = true;
+                }
+            } else if (msg.swipes[i] && typeof msg.swipes[i] === 'object' && typeof msg.swipes[i].mes === 'string') {
+                const cleanedSwipeObj = applyReplacements(msg.swipes[i].mes);
+                if (cleanedSwipeObj !== msg.swipes[i].mes) {
+                    msg.swipes[i].mes = cleanedSwipeObj;
+                    changed = true;
+                }
+            }
+        }
+    }
+
+    return changed;
+}
+
+function performIncrementalCleanse(payload, options = {}) {
+    buildProcessors();
+    if (activeProcessors.length === 0) return;
+
+    const fallbackLatest = options.fallbackLatest !== false;
+    let index = getMessageIndexFromEvent(payload);
+    if (index < 0 && fallbackLatest) index = getLatestMessageIndex();
+    if (index < 0) return;
+
+    const dataChanged = options.visualOnly ? false : cleanseMessageDataAtIndex(index);
+    const messageNode = getMessageDomNode(index);
+    if (messageNode) purifyDOM(messageNode);
+
+    if (dataChanged) {
+        try {
+            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
+        } catch (e) { }
+        queueIncrementalChatSave();
     }
 }
 
@@ -614,106 +726,49 @@ function performGlobalCleanse() {
 
 // 引入 isPurifying 锁机制
 function initRealtimeInterceptor() {
-    let isVisualPurifying = false;
-    let lastCharacterDataAt = 0;
-
-    const getLastAssistantIndex = () => {
-        if (!Array.isArray(chat) || chat.length === 0) return -1;
-        for (let i = chat.length - 1; i >= 0; i--) {
-            if (!chat[i]?.is_user) return i;
-        }
-        return chat.length - 1;
-    };
-
-    const visualPurifyTextNode = (node) => {
-        if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
-        if (!node.isConnected) return;
-        if (node.parentNode && isProtectedNode(node.parentNode)) return;
-        const original = node.nodeValue || '';
-        const cleaned = applyReplacements(original, { deterministic: true });
-        if (original !== cleaned) node.nodeValue = cleaned;
-    };
-
-    const collectTextNodesFromNode = (node, callback) => {
-        if (!node || typeof callback !== 'function') return;
-
-        if (node.nodeType === 3 || node.nodeType === 8) {
-            callback(node);
-            return;
-        }
-        if (node.nodeType !== 1) return;
-
-        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, null, false);
-        let cursor;
-        while (cursor = walker.nextNode()) callback(cursor);
-    };
+    let isPurifying = false; // 全局防死循环锁
 
     const chatObserver = new MutationObserver((mutations) => {
-        if (isVisualPurifying) return;
+        if (isPurifying) return; // 如果是插件自己发起的修改，直接忽略，避免死循环
 
         buildProcessors();
-        if (activeProcessors.length === 0) {
-            pendingTextNodes.clear();
-            pendingElementNodes.clear();
-            return;
-        }
+        if (activeProcessors.length === 0) return;
 
-        const now = Date.now();
-        const looksLikeStreamingTick = mutations.some(m => m.type === 'characterData')
-            && (now - lastCharacterDataAt < 350 || lastCharacterDataAt === 0);
-        if (!looksLikeStreamingTick) {
-            lastCharacterDataAt = now;
-            return;
-        }
-
-        lastCharacterDataAt = now;
-        if (mutations.some(m => m.type === 'characterData')) {
-            realtimeState.sawStreamingTick = true;
-            realtimeState.lastStreamingAt = now;
-        }
-
-        isVisualPurifying = true;
+        isPurifying = true; // 上锁
         try {
-            for (const mutation of mutations) {
-                if (mutation.type === 'characterData') {
-                    const textNode = mutation.target;
-                    if (textNode?.parentNode && isProtectedNode(textNode.parentNode)) continue;
-                    visualPurifyTextNode(textNode);
-                    realtimeState.visualCandidateIndex = getLastAssistantIndex();
-                    continue;
+            mutations.forEach(m => {
+                m.addedNodes.forEach(node => {
+                    if (node.nodeType === 3 || node.nodeType === 8) { 
+                        if (node.parentNode && isProtectedNode(node.parentNode)) return;
+                        const original = node.nodeValue;
+                        const nextValue = isStreamingGeneration
+                            ? applyVisualMask(original)
+                            : applyReplacements(original, { deterministic: true });
+                        if (original !== nextValue) node.nodeValue = nextValue;
+                    } else if (node.nodeType === 1) { 
+                        purifyDOM(node);
+                    }
+                });
+                if (m.type === 'characterData') {
+                    if (m.target.parentNode && isProtectedNode(m.target.parentNode)) return;
+                    const original = m.target.nodeValue;
+                    const nextValue = isStreamingGeneration
+                        ? applyVisualMask(original)
+                        : applyReplacements(original, { deterministic: true });
+                    if (original !== nextValue) m.target.nodeValue = nextValue;
                 }
-
-                for (const addedNode of Array.from(mutation.addedNodes || [])) {
-                    collectTextNodesFromNode(addedNode, visualPurifyTextNode);
-                }
-                realtimeState.visualCandidateIndex = getLastAssistantIndex();
-            }
+            });
         } finally {
-            isVisualPurifying = false;
+            chatObserver.takeRecords();
+            isPurifying = false; // 执行完解锁
         }
     });
-
-    if (eventSource && event_types) {
-        if (event_types.GENERATION_STARTED) {
-            eventSource.on(event_types.GENERATION_STARTED, () => {
-                realtimeState.isGenerating = true;
-                realtimeState.sawStreamingTick = false;
-                lastCharacterDataAt = 0;
-            });
-        }
-
-        const stopVisualStream = () => {
-            realtimeState.isGenerating = false;
-            lastCharacterDataAt = 0;
-        };
-        if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, stopVisualStream);
-        if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, stopVisualStream);
-        if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, stopVisualStream);
-    }
-
+    
+    // 监听酒馆主聊天框 
     const chatEl = document.getElementById('chat');
     if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
 
+    // 回声小剧场的 Shadow DOM
     let currentTheaterShadow = null;
     setInterval(() => {
         const theaterHost = document.querySelector('#t-output-content .t-shadow-host');
@@ -721,17 +776,22 @@ function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
+                
+                isPurifying = true; // 对刚打开的结界清洗时也要上锁
+                try {
+                    purifyDOM(theaterHost.shadowRoot);
+                } finally {
+                    isPurifying = false;
+                }
             }
         } else {
             currentTheaterShadow = null;
         }
-    }, 800);
+    }, 800); 
 
-    // 输入框逻辑独立保留，不参与聊天输出两阶段流程。
     document.addEventListener('input', (e) => {
         const el = e.target;
-        if (!el || !['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
-        if (el.isComposing) return;
+        if (!['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
         if (isProtectedNode(el)) return;
 
         buildProcessors();
@@ -739,13 +799,21 @@ function initRealtimeInterceptor() {
 
         const originalVal = el.value || '';
         const cleanedVal = applyReplacements(originalVal, { deterministic: true });
+        
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
-            el.value = cleanedVal;
-            try { el.setSelectionRange(start, start); } catch (err) { }
+            
+            isPurifying = true; // 上锁
+            try {
+                el.value = cleanedVal;
+                try { el.setSelectionRange(start, start); } catch(err){}
+            } finally {
+                isPurifying = false;
+            }
         }
     }, true);
 }
+
 function setupUI() {
     $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal').remove();
 
@@ -1509,27 +1577,37 @@ function bindEvents() {
         input.click();
     });
 
-    const visualCleanseOnly = () => { purifyDOM(document.getElementById('chat')); };
-    let postOutputTimer = null;
-    const schedulePostOutputCleanse = () => {
-        const streamedRecently = realtimeState.sawStreamingTick || (Date.now() - realtimeState.lastStreamingAt < 900);
-        const waitMs = streamedRecently ? 420 : 0;
-        if (postOutputTimer) clearTimeout(postOutputTimer);
-        postOutputTimer = setTimeout(() => {
-            performGlobalCleanse();
-            realtimeState.sawStreamingTick = false;
-        }, waitMs);
+    const visualMaskLatestOnly = (payload) => {
+        if (!isStreamingGeneration) return;
+        performIncrementalCleanse(payload, { visualOnly: true, fallbackLatest: true });
     };
-
-    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, visualCleanseOnly);
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, schedulePostOutputCleanse);
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, schedulePostOutputCleanse);
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, schedulePostOutputCleanse);
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, schedulePostOutputCleanse);
+    const delayedIncrementalCleanse = (payload) => {
+        isStreamingGeneration = false;
+        setTimeout(() => performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }), 120);
+    };
+    
+    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, (payload) => {
+        setTimeout(() => performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }), 0);
+    });
+    if (event_types.GENERATION_STARTED) {
+        eventSource.on(event_types.GENERATION_STARTED, () => {
+            isStreamingGeneration = true;
+        });
+    }
+    if (event_types.STREAM_TOKEN_RECEIVED) {
+        eventSource.on(event_types.STREAM_TOKEN_RECEIVED, (payload) => {
+            isStreamingGeneration = true;
+            visualMaskLatestOnly(payload);
+        });
+    }
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, delayedIncrementalCleanse);
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedIncrementalCleanse);
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedIncrementalCleanse);
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedIncrementalCleanse);
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
             applyCharacterPresetBinding(true);
-            schedulePostOutputCleanse();
+            setTimeout(performGlobalCleanse, 120);
         });
     }
 
@@ -1597,10 +1675,6 @@ function ensureSettingsShape() {
     settings.deepCleanTimeoutSec = Number.isFinite(timeoutSec)
         ? Math.min(Math.max(timeoutSec, 10), 1800)
         : defaultSettings.deepCleanTimeoutSec;
-
-    if (settings.stableReplacementLock === undefined) {
-        settings.stableReplacementLock = true;
-    }
 }
 
 let isBooted = false;
