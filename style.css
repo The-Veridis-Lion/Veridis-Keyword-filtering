@@ -157,6 +157,21 @@
 }
 .bl-icon-btn:hover { background: var(--bl-border-color) !important; }
 
+.bl-bind-toggle {
+    color: #a0a7b4 !important;
+}
+
+.bl-bind-toggle.bl-bind-active {
+    color: var(--bl-accent-color) !important;
+    border-color: var(--bl-accent-color) !important;
+    background: color-mix(in srgb, var(--bl-accent-color) 15%, transparent) !important;
+}
+
+.bl-bind-toggle:disabled {
+    opacity: 0.45 !important;
+    cursor: not-allowed !important;
+}
+
 #bl-purifier-popup .bl-tools-bar > div:last-child {
     width: 100% !important;
     box-sizing: border-box !important;

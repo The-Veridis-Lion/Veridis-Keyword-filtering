@@ -2,13 +2,91 @@ import { extension_settings } from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
 
 const extensionName = "ultimate_purifier";
-const defaultSettings = { rules: [], presets: {}, activePreset: "", deepCleanTimeoutSec: 120 };
+const defaultSettings = {
+    rules: [],
+    presets: {},
+    activePreset: "",
+    defaultPreset: "",
+    characterBindings: {},
+    deepCleanTimeoutSec: 120
+};
 
 let activeProcessors = [];
 let isRegexDirty = true; 
 let currentEditingIndex = -1; 
 let currentEditingSubrules = []; 
 let currentTransferRuleIndex = -1;
+let lastCharacterContextKey = "";
+
+const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
+
+function deepClone(value) {
+    return JSON.parse(JSON.stringify(value));
+}
+
+function getCurrentCharacterContext() {
+    const normalizeText = (v) => String(v || '').trim();
+    const byName = (name, source = 'name') => {
+        const clean = normalizeText(name);
+        if (!clean) return null;
+        return { key: `${source}:${clean}`, name: clean };
+    };
+    const byId = (id, name = '') => {
+        const cleanId = normalizeText(id);
+        if (!cleanId) return null;
+        return { key: `chid:${cleanId}`, name: normalizeText(name) || `角色#${cleanId}` };
+    };
+
+    try {
+        const chidRaw = window.this_chid;
+        const chid = Number(chidRaw);
+        if (Number.isInteger(chid) && chid >= 0 && Array.isArray(window.characters) && window.characters[chid]) {
+            const ch = window.characters[chid];
+            const name = String(ch.name || ch.ch_name || '').trim();
+            return byId(chid, name);
+        }
+    } catch (e) { }
+
+    const selectedCard = document.querySelector('.character_select.selected, .group_select.selected, .character_select[chid].active');
+    if (selectedCard) {
+        const selectedChid = selectedCard.getAttribute('chid') || selectedCard.dataset?.chid || selectedCard.dataset?.id;
+        const selectedName = selectedCard.getAttribute('title') || selectedCard.dataset?.name || selectedCard.querySelector('.ch_name, .name_text, .character_name')?.textContent;
+        const bySelectedId = byId(selectedChid, selectedName);
+        if (bySelectedId) return bySelectedId;
+        const bySelectedName = byName(selectedName, 'card');
+        if (bySelectedName) return bySelectedName;
+    }
+
+    const metadataName = normalizeText(chat_metadata?.character_name || chat_metadata?.name2 || chat_metadata?.ch_name || chat_metadata?.name);
+    const fromMetaName = byName(metadataName);
+    if (fromMetaName) return fromMetaName;
+
+    const chatMetaId = normalizeText(chat_metadata?.character_id || chat_metadata?.avatar || chat_metadata?.main_chat || chat_metadata?.chat_id);
+    const fromMetaId = byId(chatMetaId, metadataName);
+    if (fromMetaId) return fromMetaId;
+
+    const headerName = normalizeText(
+        document.querySelector('#chat_header .name_text, #rm_info_name, #chat .name_text, #selected_chat_pole .name_text')?.textContent
+    );
+    const fromHeader = byName(headerName, 'header');
+    if (fromHeader) return fromHeader;
+
+    const hashKey = normalizeText(window.location?.hash || '');
+    if (hashKey) {
+        return { key: `hash:${hashKey}`, name: `当前聊天(${hashKey.slice(0, 24)})` };
+    }
+
+    return { key: "", name: "未检测到角色（可先发送一条消息后再试）" };
+}
+
+function getPresetForCharacter(characterKey) {
+    const settings = extension_settings[extensionName];
+    if (!settings) return "";
+    const special = settings.characterBindings?.[characterKey];
+    if (special && settings.presets?.[special]) return special;
+    if (settings.defaultPreset && settings.presets?.[settings.defaultPreset]) return settings.defaultPreset;
+    return "";
+}
 
 // 智能分词：正则和简易模式只通过换行符切分，文本模式支持逗号和空格
 function parseInputToWords(text, mode = 'text', options = {}) {
@@ -24,6 +102,11 @@ function parseInputToWords(text, mode = 'text', options = {}) {
         : noQuotes.split(/[,\n，、]/);
     const words = textWords.map(w => w.trim());
     return isTarget ? words.filter(w => w) : words;
+}
+
+function buildSimpleWildcardPattern() {
+    const escapedStops = SIMPLE_WILDCARD_STOP_CHARS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    return `[^${escapedStops}]{0,15}?`;
 }
 
 // 核心重构：三引擎构建 (普通/正则/简易)
@@ -92,7 +175,7 @@ function buildProcessors() {
                                 return '(?:' + group.split(',').map(s => s.trim()).join('|') + ')';
                             });
                             
-                            escaped = escaped.replace(/\*/g, '.{0,15}?');
+                            escaped = escaped.replace(/\*/g, buildSimpleWildcardPattern());
                             
                             // --- 防核弹补丁 (简易模式) ---
                             let testRegex = new RegExp(escaped, 'gmu');
@@ -133,18 +216,35 @@ function buildProcessors() {
     return activeProcessors;
 }
 
-function applyReplacements(originalText) {
+function pickReplacement(replacements, deterministicKey = "") {
+    if (!Array.isArray(replacements) || replacements.length === 0) return '';
+    if (!deterministicKey) {
+        const randIndex = Math.floor(Math.random() * replacements.length);
+        return replacements[randIndex];
+    }
+
+    let hash = 0;
+    for (let i = 0; i < deterministicKey.length; i++) {
+        hash = ((hash << 5) - hash) + deterministicKey.charCodeAt(i);
+        hash |= 0;
+    }
+    const idx = Math.abs(hash) % replacements.length;
+    return replacements[idx];
+}
+
+function applyReplacements(originalText, options = {}) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
+    const deterministic = options.deterministic === true;
     let text = originalText;
     const processors = buildProcessors();
 
-    processors.forEach(proc => {
+    processors.forEach((proc, procIndex) => {
         text = text.replace(proc.regex, (match, ...args) => {
             if (proc.isRegexMode) {
                 const reps = proc.replacements;
                 if (!reps || reps.length === 0) return ''; 
-                const randIndex = Math.floor(Math.random() * reps.length);
-                let rep = reps[randIndex];
+                const repKey = deterministic ? `${procIndex}|${match}` : '';
+                let rep = pickReplacement(reps, repKey);
                 
                 rep = rep.replace(/\$(\d+)/g, (m, g) => {
                     const idx = parseInt(g);
@@ -154,8 +254,8 @@ function applyReplacements(originalText) {
             } else {
                 const reps = proc.replacerMap[match];
                 if (!reps || reps.length === 0) return ''; 
-                const randIndex = Math.floor(Math.random() * reps.length); 
-                return reps[randIndex];
+                const repKey = deterministic ? `${procIndex}|${match}` : '';
+                return pickReplacement(reps, repKey);
             }
         });
     });
@@ -407,7 +507,7 @@ function purifyDOM(rootNode) {
         }
 
         const original = node.nodeValue || '';
-        const cleaned = applyReplacements(original);
+        const cleaned = applyReplacements(original, { deterministic: true });
         if (original !== cleaned) node.nodeValue = cleaned;
     }
 
@@ -419,7 +519,7 @@ function purifyDOM(rootNode) {
         inputs.forEach(input => {
             if (isProtectedNode(input) || document.activeElement === input) return;
             const originalVal = input.value || '';
-            const cleanedVal = applyReplacements(originalVal);
+            const cleanedVal = applyReplacements(originalVal, { deterministic: true });
             if (originalVal !== cleanedVal) input.value = cleanedVal;
         });
     }
@@ -508,7 +608,7 @@ function initRealtimeInterceptor() {
                 m.addedNodes.forEach(node => {
                     if (node.nodeType === 3 || node.nodeType === 8) { 
                         if (node.parentNode && isProtectedNode(node.parentNode)) return;
-                        const cleaned = applyReplacements(node.nodeValue);
+                        const cleaned = applyReplacements(node.nodeValue, { deterministic: true });
                         if (node.nodeValue !== cleaned) node.nodeValue = cleaned;
                     } else if (node.nodeType === 1) { 
                         purifyDOM(node);
@@ -516,7 +616,7 @@ function initRealtimeInterceptor() {
                 });
                 if (m.type === 'characterData') {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) return;
-                    const cleaned = applyReplacements(m.target.nodeValue);
+                    const cleaned = applyReplacements(m.target.nodeValue, { deterministic: true });
                     if (m.target.nodeValue !== cleaned) m.target.nodeValue = cleaned;
                 }
             });
@@ -559,7 +659,7 @@ function initRealtimeInterceptor() {
         if (activeProcessors.length === 0) return;
 
         const originalVal = el.value || '';
-        const cleanedVal = applyReplacements(originalVal);
+        const cleanedVal = applyReplacements(originalVal, { deterministic: true });
         
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
@@ -594,6 +694,8 @@ function setupUI() {
 
             <div class="bl-tools-bar" style="display:flex; flex-direction:column; gap:8px; margin:10px 0 15px 0; border-bottom:1px solid var(--bl-border-color); padding-bottom:12px;">
                 <div style="display:flex; gap:8px; align-items:center;">
+                    <button id="bl-default-toggle" title="设为默认预设（未单独绑定角色时自动使用）" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-star"></i></button>
+                    <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
                     <select id="bl-preset-select" style="flex:1; padding:9px 12px; min-height:38px; border-radius:6px; border:1px solid var(--bl-border-color); background:var(--bl-input-bg); color:var(--bl-text-primary); outline:none; font-family:inherit;"></select>
                     <button id="bl-preset-rename" title="重命名存档" class="bl-icon-btn"><i class="fas fa-pen"></i></button>
                     <button id="bl-preset-delete" title="删除存档" class="bl-icon-btn" style="color:var(--bl-danger-color);"><i class="fas fa-trash"></i></button>
@@ -714,8 +816,91 @@ function showConfirmModal() {
     });
 }
 
+function applyPresetByName(name, options = {}) {
+    const settings = extension_settings[extensionName];
+    const presetName = String(name || '');
+    const presetExists = !!(presetName && settings.presets?.[presetName]);
+    settings.activePreset = presetExists ? presetName : "";
+    settings.rules = presetExists ? deepClone(settings.presets[presetName]) : [];
+    isRegexDirty = true;
+    saveSettingsDebounced();
+    if (!options.skipRender) {
+        updateToolbarUI();
+        renderTags();
+    }
+    if (!options.skipCleanse) performGlobalCleanse();
+}
+
+function cleanupInvalidPresetBindings() {
+    const settings = extension_settings[extensionName];
+    const presets = settings.presets || {};
+    if (settings.defaultPreset && !presets[settings.defaultPreset]) settings.defaultPreset = "";
+    if (!settings.characterBindings || typeof settings.characterBindings !== 'object') {
+        settings.characterBindings = {};
+        return;
+    }
+    Object.keys(settings.characterBindings).forEach((key) => {
+        const preset = settings.characterBindings[key];
+        if (!preset || !presets[preset]) delete settings.characterBindings[key];
+    });
+}
+
+function refreshCharacterBindingUI() {
+    const settings = extension_settings[extensionName];
+    const context = getCurrentCharacterContext();
+    const activePreset = String(settings.activePreset || '');
+    const $defaultBtn = $('#bl-default-toggle');
+    const $bindBtn = $('#bl-character-bind-toggle');
+    const currentBound = context.key ? (settings.characterBindings?.[context.key] || '') : '';
+
+    if ($defaultBtn.length && $bindBtn.length) {
+        const isDefaultActive = !!(activePreset && settings.defaultPreset === activePreset);
+        $defaultBtn.toggleClass('bl-bind-active', isDefaultActive);
+        $defaultBtn.prop('disabled', !activePreset);
+        $defaultBtn.attr('title', activePreset
+            ? (isDefaultActive ? `已设为默认预设：${activePreset}（点击取消）` : `将当前预设设为默认：${activePreset}`)
+            : '请先选择一个预设'
+        );
+
+        const isCharacterBound = !!(context.key && activePreset && currentBound === activePreset);
+        $bindBtn.toggleClass('bl-bind-active', isCharacterBound);
+        $bindBtn.prop('disabled', !activePreset || !context.key);
+        $bindBtn.find('i')
+            .removeClass('fa-link fa-link-slash')
+            .addClass(isCharacterBound ? 'fa-link' : 'fa-link-slash');
+        $bindBtn.attr('title',
+            !activePreset ? '请先选择一个预设'
+            : !context.key ? '未检测到当前角色，无法绑定'
+            : (isCharacterBound
+                ? `已绑定：${context.name} → ${activePreset}（点击解除）`
+                : `绑定当前角色：${context.name} → ${activePreset}`)
+        );
+    }
+
+}
+
+function applyCharacterPresetBinding(force = false) {
+    const context = getCurrentCharacterContext();
+    if (!context.key) {
+        lastCharacterContextKey = "";
+        refreshCharacterBindingUI();
+        return;
+    }
+
+    const characterChanged = context.key !== lastCharacterContextKey;
+    if (!force && !characterChanged) return;
+    lastCharacterContextKey = context.key;
+
+    const presetName = getPresetForCharacter(context.key);
+    if (presetName && presetName !== extension_settings[extensionName].activePreset) {
+        applyPresetByName(presetName, { skipRender: true });
+    }
+    refreshCharacterBindingUI();
+}
+
 function updateToolbarUI() {
     const settings = extension_settings[extensionName];
+    cleanupInvalidPresetBindings();
     const select = $('#bl-preset-select');
     select.empty();
     select.append('<option value="">-- 临时规则 (未绑定存档) --</option>');
@@ -726,6 +911,7 @@ function updateToolbarUI() {
         }
     }
     select.val(settings.activePreset || "");
+    refreshCharacterBindingUI();
 }
 
 function renderTags() {
@@ -1080,18 +1266,48 @@ function bindEvents() {
     });
 
     $(document).off('change', '#bl-preset-select').on('change', '#bl-preset-select', function() {
-        const settings = extension_settings[extensionName];
         const name = $(this).val();
-        settings.activePreset = name;
-        if (name && settings.presets[name]) {
-            settings.rules = JSON.parse(JSON.stringify(settings.presets[name]));
-        } else {
-            settings.rules = [];
-        }
-        isRegexDirty = true;
-        saveSettingsDebounced();
+        applyPresetByName(name, { skipRender: true });
         renderTags();
-        performGlobalCleanse();
+        refreshCharacterBindingUI();
+    });
+
+    $(document).off('click', '#bl-default-toggle').on('click', '#bl-default-toggle', function() {
+        const settings = extension_settings[extensionName];
+        const activePreset = String(settings.activePreset || '');
+        if (!activePreset) {
+            alert('请先在下拉框中选择一个预设。');
+            return;
+        }
+        settings.defaultPreset = settings.defaultPreset === activePreset ? "" : activePreset;
+        saveSettingsDebounced();
+        refreshCharacterBindingUI();
+    });
+
+    $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function() {
+        const settings = extension_settings[extensionName];
+        const activePreset = String(settings.activePreset || '');
+        if (!activePreset) {
+            alert('请先在下拉框中选择一个预设。');
+            return;
+        }
+        const context = getCurrentCharacterContext();
+        if (!context.key) {
+            alert('当前页面未识别到可绑定角色。请进入单角色聊天后再绑定。');
+            refreshCharacterBindingUI();
+            return;
+        }
+        if (!settings.characterBindings) settings.characterBindings = {};
+        const isCurrentlyBound = settings.characterBindings[context.key] === activePreset;
+        if (isCurrentlyBound) delete settings.characterBindings[context.key];
+        else settings.characterBindings[context.key] = activePreset;
+
+        lastCharacterContextKey = context.key;
+        if (!isCurrentlyBound) applyPresetByName(activePreset, { skipRender: true });
+        else applyCharacterPresetBinding(true);
+
+        saveSettingsDebounced();
+        refreshCharacterBindingUI();
     });
 
     $(document).off('click', '#bl-preset-rename').on('click', '#bl-preset-rename', function() {
@@ -1103,6 +1319,10 @@ function bindEvents() {
         if (settings.presets[newName]) { alert("存档名称已存在。"); return; }
         settings.presets[newName] = settings.presets[oldName];
         delete settings.presets[oldName];
+        if (settings.defaultPreset === oldName) settings.defaultPreset = newName;
+        Object.keys(settings.characterBindings || {}).forEach((key) => {
+            if (settings.characterBindings[key] === oldName) settings.characterBindings[key] = newName;
+        });
         settings.activePreset = newName;
         saveSettingsDebounced();
         updateToolbarUI();
@@ -1114,6 +1334,10 @@ function bindEvents() {
         if (!name) return;
         if (confirm(`确定删除存档 "${name}" 吗？`)) {
             delete settings.presets[name];
+            if (settings.defaultPreset === name) settings.defaultPreset = "";
+            Object.keys(settings.characterBindings || {}).forEach((key) => {
+                if (settings.characterBindings[key] === name) delete settings.characterBindings[key];
+            });
             settings.activePreset = "";
             settings.rules = [];
             isRegexDirty = true;
@@ -1222,7 +1446,16 @@ function bindEvents() {
     if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedFullCleanse); 
     if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedFullCleanse); 
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedFullCleanse);      
-    if (event_types.CHAT_CHANGED) eventSource.on(event_types.CHAT_CHANGED, delayedFullCleanse);          
+    if (event_types.CHAT_CHANGED) {
+        eventSource.on(event_types.CHAT_CHANGED, () => {
+            applyCharacterPresetBinding(true);
+            delayedFullCleanse();
+        });
+    }
+
+    setInterval(() => {
+        applyCharacterPresetBinding(false);
+    }, 1200);
 }
 
 function migrateOldData() {
@@ -1276,6 +1509,9 @@ function ensureSettingsShape() {
     if (!settings.rules) settings.rules = [];
     if (!settings.presets) settings.presets = {};
     if (settings.activePreset === undefined) settings.activePreset = "";
+    if (settings.defaultPreset === undefined) settings.defaultPreset = "";
+    if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    cleanupInvalidPresetBindings();
 
     const timeoutSec = Number(settings.deepCleanTimeoutSec);
     settings.deepCleanTimeoutSec = Number.isFinite(timeoutSec)
@@ -1298,6 +1534,7 @@ jQuery(() => {
         bindEvents();
         initRealtimeInterceptor(); 
         updateToolbarUI();
+        applyCharacterPresetBinding(true);
         performGlobalCleanse(); 
     };
     if (typeof eventSource !== 'undefined' && event_types.APP_READY) {
