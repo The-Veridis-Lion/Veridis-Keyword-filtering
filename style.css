@@ -16,7 +16,7 @@
 
 #bl-purifier-popup {
     position: fixed !important;
-    top: 8vh !important; 
+    top: 10vh !important; 
     left: 50% !important;
     transform: translateX(-50%) !important; 
     
@@ -350,10 +350,56 @@
 
 /* --- 手机端微调 --- */
 @media screen and (max-width: 600px) {
-    #bl-purifier-popup { padding: 15px 20px !important; width: 92% !important; top: 12vh !important; max-width: 420px !important; border-radius: 12px !important;}
+    #bl-purifier-popup { padding: 15px 20px !important; width: 92% !important; top: 8vh !important; max-width: 420px !important; border-radius: 12px !important;}
+    #bl-rule-transfer-modal {
+        align-items: flex-start !important;
+        background: transparent !important;
+        padding-top: calc(env(safe-area-inset-top, 0px) + 16vh) !important;
+    }
+    #bl-rule-transfer-modal .bl-transfer-content {
+        width: min(420px, 92vw) !important;
+    }
     #bl-purifier-popup .bl-title { font-size: 18px !important; }
     .bl-input, .bl-textarea { font-size: 14px !important; padding: 10px 12px !important;}
     .bl-tool-btn { font-size: 12px !important; padding: 7px 0 !important; }
+    #bl-purifier-popup .bl-preset-row {
+        display: grid !important;
+        grid-template-columns: 36px 36px minmax(0, 1fr) 36px 36px !important;
+        gap: 6px !important;
+        align-items: center !important;
+    }
+    #bl-purifier-popup .bl-preset-row .bl-icon-btn {
+        min-height: 36px !important;
+        min-width: 36px !important;
+        padding: 0 !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+    }
+    #bl-preset-select {
+        min-width: 0 !important;
+        width: 100% !important;
+        font-size: 13px !important;
+        padding: 8px 10px !important;
+    }
+    #bl-purifier-popup .bl-tool-grid {
+        display: grid !important;
+        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
+        gap: 6px !important;
+    }
+    #bl-purifier-popup .bl-tool-grid .bl-tool-btn {
+        min-height: 38px !important;
+        display: flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        padding: 0 !important;
+    }
+    #bl-purifier-popup .bl-tool-grid .bl-tool-text {
+        display: none !important;
+    }
+    #bl-purifier-popup .bl-tool-grid .bl-tool-btn i {
+        margin: 0 !important;
+    }
     .bl-rule-card { padding: 8px 10px !important; }
     .bl-rule-name { font-size: 13px !important; }
     .bl-rule-preview { font-size: 12px !important; }

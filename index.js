@@ -693,18 +693,18 @@ function setupUI() {
             </div>
 
             <div class="bl-tools-bar" style="display:flex; flex-direction:column; gap:8px; margin:10px 0 15px 0; border-bottom:1px solid var(--bl-border-color); padding-bottom:12px;">
-                <div style="display:flex; gap:8px; align-items:center;">
+                <div class="bl-preset-row" style="display:flex; gap:8px; align-items:center;">
                     <button id="bl-default-toggle" title="设为默认预设（未单独绑定角色时自动使用）" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-star"></i></button>
                     <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
                     <select id="bl-preset-select" style="flex:1; padding:9px 12px; min-height:38px; border-radius:6px; border:1px solid var(--bl-border-color); background:var(--bl-input-bg); color:var(--bl-text-primary); outline:none; font-family:inherit;"></select>
                     <button id="bl-preset-rename" title="重命名存档" class="bl-icon-btn"><i class="fas fa-pen"></i></button>
                     <button id="bl-preset-delete" title="删除存档" class="bl-icon-btn" style="color:var(--bl-danger-color);"><i class="fas fa-trash"></i></button>
                 </div>
-                <div style="display:flex; gap:8px;">
-                    <button class="bl-tool-btn" id="bl-preset-new"><i class="fas fa-plus"></i> 新建</button>
-                    <button class="bl-tool-btn" id="bl-preset-save"><i class="fas fa-save"></i> 保存</button>
-                    <button class="bl-tool-btn" id="bl-preset-import"><i class="fas fa-file-import"></i> 导入</button>
-                    <button class="bl-tool-btn" id="bl-preset-export"><i class="fas fa-file-export"></i> 导出</button>
+                <div class="bl-tool-grid" style="display:flex; gap:8px;">
+                    <button class="bl-tool-btn" id="bl-preset-new" title="新建"><i class="fas fa-plus"></i><span class="bl-tool-text"> 新建</span></button>
+                    <button class="bl-tool-btn" id="bl-preset-save" title="保存"><i class="fas fa-save"></i><span class="bl-tool-text"> 保存</span></button>
+                    <button class="bl-tool-btn" id="bl-preset-import" title="导入"><i class="fas fa-file-import"></i><span class="bl-tool-text"> 导入</span></button>
+                    <button class="bl-tool-btn" id="bl-preset-export" title="导出"><i class="fas fa-file-export"></i><span class="bl-tool-text"> 导出</span></button>
                 </div>
             </div>
 
