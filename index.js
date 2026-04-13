@@ -116,6 +116,7 @@ function buildProcessors() {
     
     let textTargets = [];
     let wordToReplacements = {};
+    let textReplacementPool = new Set();
     let processors = [];
 
     rules.forEach(rule => {
@@ -130,6 +131,9 @@ function buildProcessors() {
                     if (t) {
                         textTargets.push(t);
                         wordToReplacements[t] = sub.replacements; 
+                        (sub.replacements || []).forEach(r => {
+                            if (typeof r === 'string' && r) textReplacementPool.add(r);
+                        });
                     }
                 });
             } else if (mode === 'regex') {
@@ -157,6 +161,7 @@ function buildProcessors() {
                             processors.push({
                                 regex: testRegex,
                                 replacements: sub.replacements,
+                                replacementSet: new Set((sub.replacements || []).filter(r => typeof r === 'string' && r)),
                                 isRegexMode: true
                             });
                         } catch(e) {
@@ -187,6 +192,7 @@ function buildProcessors() {
                             processors.push({
                                 regex: testRegex,
                                 replacements: sub.replacements,
+                                replacementSet: new Set((sub.replacements || []).filter(r => typeof r === 'string' && r)),
                                 isRegexMode: true 
                             });
                         } catch(e) {
@@ -207,6 +213,7 @@ function buildProcessors() {
         processors.unshift({
             regex: textRegex,
             replacerMap: wordToReplacements,
+            replacementSet: textReplacementPool,
             isRegexMode: false
         });
     }
@@ -240,6 +247,9 @@ function applyReplacements(originalText, options = {}) {
 
     processors.forEach((proc, procIndex) => {
         text = text.replace(proc.regex, (match, ...args) => {
+            // 流式场景下避免“替换词再次被当成目标词”引发抖动
+            if (deterministic && proc.replacementSet && proc.replacementSet.has(match)) return match;
+
             if (proc.isRegexMode) {
                 const reps = proc.replacements;
                 if (!reps || reps.length === 0) return ''; 
