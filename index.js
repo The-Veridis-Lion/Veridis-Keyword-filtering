@@ -18,6 +18,12 @@ let currentEditingIndex = -1;
 let currentEditingSubrules = []; 
 let currentTransferRuleIndex = -1;
 let lastCharacterContextKey = "";
+const realtimeState = {
+    isGenerating: false,
+    sawStreamingTick: false,
+    lastStreamingAt: 0,
+    visualCandidateIndex: -1,
+};
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 
@@ -608,49 +614,42 @@ function performGlobalCleanse() {
 
 // 引入 isPurifying 锁机制
 function initRealtimeInterceptor() {
-    let isPurifying = false; // 全局防死循环锁
-    const pendingTextNodes = new Set();
-    const pendingElementNodes = new Set();
-    let flushTimer = null;
-    const delayedNodeTimers = new WeakMap();
-    const nodeCleanSnapshots = new WeakMap();
+    let isVisualPurifying = false;
+    let lastCharacterDataAt = 0;
 
-    const scheduleTextNodeClean = (node, delayMs = 140) => {
-        if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
-        if (node.parentNode && isProtectedNode(node.parentNode)) return;
-
-        const previousTimer = delayedNodeTimers.get(node);
-        if (previousTimer) clearTimeout(previousTimer);
-
-        const timer = setTimeout(() => {
-            delayedNodeTimers.delete(node);
-            if (!node.isConnected || isPurifying) return;
-
-            buildProcessors();
-            if (activeProcessors.length === 0) return;
-
-            const original = node.nodeValue || '';
-            const lastSnapshot = nodeCleanSnapshots.get(node);
-            if (lastSnapshot && lastSnapshot.original === original) return;
-
-            const cleaned = applyReplacements(original, { deterministic: true });
-            nodeCleanSnapshots.set(node, { original, cleaned });
-            if (original === cleaned) return;
-
-            isPurifying = true;
-            try {
-                node.nodeValue = cleaned;
-            } finally {
-                isPurifying = false;
-            }
-        }, delayMs);
-
-        delayedNodeTimers.set(node, timer);
+    const getLastAssistantIndex = () => {
+        if (!Array.isArray(chat) || chat.length === 0) return -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (!chat[i]?.is_user) return i;
+        }
+        return chat.length - 1;
     };
 
-    const flushMutations = () => {
-        flushTimer = null;
-        if (isPurifying) return;
+    const visualPurifyTextNode = (node) => {
+        if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
+        if (!node.isConnected) return;
+        if (node.parentNode && isProtectedNode(node.parentNode)) return;
+        const original = node.nodeValue || '';
+        const cleaned = applyReplacements(original, { deterministic: true });
+        if (original !== cleaned) node.nodeValue = cleaned;
+    };
+
+    const collectTextNodesFromNode = (node, callback) => {
+        if (!node || typeof callback !== 'function') return;
+
+        if (node.nodeType === 3 || node.nodeType === 8) {
+            callback(node);
+            return;
+        }
+        if (node.nodeType !== 1) return;
+
+        const walker = document.createTreeWalker(node, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, null, false);
+        let cursor;
+        while (cursor = walker.nextNode()) callback(cursor);
+    };
+
+    const chatObserver = new MutationObserver((mutations) => {
+        if (isVisualPurifying) return;
 
         buildProcessors();
         if (activeProcessors.length === 0) {
@@ -659,61 +658,62 @@ function initRealtimeInterceptor() {
             return;
         }
 
-        if (pendingTextNodes.size === 0 && pendingElementNodes.size === 0) return;
+        const now = Date.now();
+        const looksLikeStreamingTick = mutations.some(m => m.type === 'characterData')
+            && (now - lastCharacterDataAt < 350 || lastCharacterDataAt === 0);
+        if (!looksLikeStreamingTick) {
+            lastCharacterDataAt = now;
+            return;
+        }
 
-        isPurifying = true;
+        lastCharacterDataAt = now;
+        if (mutations.some(m => m.type === 'characterData')) {
+            realtimeState.sawStreamingTick = true;
+            realtimeState.lastStreamingAt = now;
+        }
+
+        isVisualPurifying = true;
         try {
-            pendingElementNodes.forEach(node => {
-                if (node && node.isConnected) purifyDOM(node);
-            });
+            for (const mutation of mutations) {
+                if (mutation.type === 'characterData') {
+                    const textNode = mutation.target;
+                    if (textNode?.parentNode && isProtectedNode(textNode.parentNode)) continue;
+                    visualPurifyTextNode(textNode);
+                    realtimeState.visualCandidateIndex = getLastAssistantIndex();
+                    continue;
+                }
 
-            pendingTextNodes.forEach(node => {
-                if (!node || (node.nodeType !== 3 && node.nodeType !== 8)) return;
-                if (!node.isConnected) return;
-                if (node.parentNode && isProtectedNode(node.parentNode)) return;
-                const original = node.nodeValue || '';
-                const cleaned = applyReplacements(original, { deterministic: true });
-                if (original !== cleaned) node.nodeValue = cleaned;
-            });
-        } finally {
-            pendingTextNodes.clear();
-            pendingElementNodes.clear();
-            isPurifying = false; // 执行完解锁
-        }
-    };
-
-    const enqueueMutation = (mutation) => {
-        if (mutation.type === 'characterData') {
-            pendingTextNodes.add(mutation.target);
-        }
-
-        mutation.addedNodes.forEach(node => {
-            if (node.nodeType === 3 || node.nodeType === 8) {
-                pendingTextNodes.add(node);
-            } else if (node.nodeType === 1) {
-                pendingElementNodes.add(node);
+                for (const addedNode of Array.from(mutation.addedNodes || [])) {
+                    collectTextNodesFromNode(addedNode, visualPurifyTextNode);
+                }
+                realtimeState.visualCandidateIndex = getLastAssistantIndex();
             }
-        });
-
-        // 兜底限制，避免极端流式场景下队列无限增长
-        if (pendingTextNodes.size > 3000 || pendingElementNodes.size > 1000) {
-            pendingTextNodes.clear();
-            pendingElementNodes.clear();
-            const chatRoot = document.getElementById('chat');
-            if (chatRoot) pendingElementNodes.add(chatRoot);
+        } finally {
+            isVisualPurifying = false;
         }
-    };
-
-    const chatObserver = new MutationObserver((mutations) => {
-        mutations.forEach(enqueueMutation);
-        if (!flushTimer) flushTimer = setTimeout(flushMutations, 32);
     });
 
-    // 监听酒馆主聊天框
+    if (eventSource && event_types) {
+        if (event_types.GENERATION_STARTED) {
+            eventSource.on(event_types.GENERATION_STARTED, () => {
+                realtimeState.isGenerating = true;
+                realtimeState.sawStreamingTick = false;
+                lastCharacterDataAt = 0;
+            });
+        }
+
+        const stopVisualStream = () => {
+            realtimeState.isGenerating = false;
+            lastCharacterDataAt = 0;
+        };
+        if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, stopVisualStream);
+        if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, stopVisualStream);
+        if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, stopVisualStream);
+    }
+
     const chatEl = document.getElementById('chat');
     if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
 
-    // 回声小剧场的 Shadow DOM
     let currentTheaterShadow = null;
     setInterval(() => {
         const theaterHost = document.querySelector('#t-output-content .t-shadow-host');
@@ -721,22 +721,17 @@ function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
-
-                isPurifying = true; // 对刚打开的结界清洗时也要上锁
-                try {
-                    purifyDOM(theaterHost.shadowRoot);
-                } finally {
-                    isPurifying = false;
-                }
             }
         } else {
             currentTheaterShadow = null;
         }
     }, 800);
 
+    // 输入框逻辑独立保留，不参与聊天输出两阶段流程。
     document.addEventListener('input', (e) => {
         const el = e.target;
-        if (!['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
+        if (!el || !['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
+        if (el.isComposing) return;
         if (isProtectedNode(el)) return;
 
         buildProcessors();
@@ -744,17 +739,10 @@ function initRealtimeInterceptor() {
 
         const originalVal = el.value || '';
         const cleanedVal = applyReplacements(originalVal, { deterministic: true });
-
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
-
-            isPurifying = true; // 上锁
-            try {
-                el.value = cleanedVal;
-                try { el.setSelectionRange(start, start); } catch(err){}
-            } finally {
-                isPurifying = false;
-            }
+            el.value = cleanedVal;
+            try { el.setSelectionRange(start, start); } catch (err) { }
         }
     }, true);
 }
@@ -1522,17 +1510,26 @@ function bindEvents() {
     });
 
     const visualCleanseOnly = () => { purifyDOM(document.getElementById('chat')); };
-    const delayedFullCleanse = () => setTimeout(performGlobalCleanse, 1000); 
-    
-    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, visualCleanseOnly);      
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, delayedFullCleanse); 
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedFullCleanse); 
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedFullCleanse); 
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedFullCleanse);      
+    let postOutputTimer = null;
+    const schedulePostOutputCleanse = () => {
+        const streamedRecently = realtimeState.sawStreamingTick || (Date.now() - realtimeState.lastStreamingAt < 900);
+        const waitMs = streamedRecently ? 420 : 0;
+        if (postOutputTimer) clearTimeout(postOutputTimer);
+        postOutputTimer = setTimeout(() => {
+            performGlobalCleanse();
+            realtimeState.sawStreamingTick = false;
+        }, waitMs);
+    };
+
+    if (event_types.MESSAGE_EDITED) eventSource.on(event_types.MESSAGE_EDITED, visualCleanseOnly);
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, schedulePostOutputCleanse);
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, schedulePostOutputCleanse);
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, schedulePostOutputCleanse);
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, schedulePostOutputCleanse);
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
             applyCharacterPresetBinding(true);
-            delayedFullCleanse();
+            schedulePostOutputCleanse();
         });
     }
 
