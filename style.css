@@ -579,21 +579,29 @@
         left: 0 !important;
         width: 100% !important;
         height: 100% !important;
-        padding: 0 !important; /* 去除原本的 padding，防止遮罩层被挤压 */
-        background: rgba(0, 0, 0, 0.65) !important; /* 确保整个屏幕都被灰底覆盖 */
-        align-items: flex-start !important; /* 依然保持靠上对齐，防软键盘顶飞 */
-        justify-content: center !important; /* 保证水平绝对居中 */
+        padding: 0 !important; 
+        background: rgba(0, 0, 0, 0.65) !important; 
+        z-index: 10000000 !important; /* 加上无敌层级，防止被底下的主界面挡住 */
+    }
+
+    #bl-diff-modal {
+        align-items: flex-start !important; 
+        justify-content: center !important; 
+    }
+
+    #bl-rule-edit-modal {
+        align-items: center !important; /* 修复方向反转：保证水平居中 */
+        justify-content: flex-start !important; /* 修复方向反转：保证靠上对齐 */
     }
 
     /* 2. 控制弹窗本体：缩短高度、完美居中 */
     #bl-rule-edit-modal > div,
     .bl-diff-modal-card {
-        width: 90% !important;       /* 左右各留 5% 的均匀空隙，不再挤在边缘 */
-        max-height: 68vh !important; /* 【缩短高度】从 82vh 降到 68vh，窗口看起来更轻巧 */
-        
-        /* 使用 margin-top 把卡片往下推，完美避开刘海和状态栏，同时保留防键盘遮挡效果 */
-        margin: calc(env(safe-area-inset-top, 0px) + 12vh) 0 0 0 !important; 
-        overflow-y: auto !important; 
+        width: 90% !important;       
+        max-height: 68vh !important; 
+        margin: calc(env(safe-area-inset-top, 0px) + 12vh) 0 0 0 !important;
+        /* 👇 修复 Safari 压扁 Bug：删除了原有的 overflow-y，强制设为自动撑开 */
+        height: auto !important; 
     }
     
     /* 3. 保持净化主面板的显示比例 */
