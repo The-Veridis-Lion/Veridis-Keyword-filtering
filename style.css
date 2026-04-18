@@ -405,3 +405,200 @@
     .bl-rule-preview { font-size: 12px !important; }
     .bl-badge { font-size: 11px !important; padding: 3px 6px !important; min-width: 40px !important; margin-right: 8px !important; margin-top: 2px !important;}
 }
+
+.bl-diff-btn {
+    font-size: inherit !important;
+}
+
+#bl-diff-modal {
+    position: fixed !important;
+    inset: 0 !important;
+    z-index: 10000000 !important;
+    background: rgba(0, 0, 0, 0.66) !important;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    padding: 12px;
+    box-sizing: border-box;
+}
+
+.bl-diff-modal-card {
+    width: min(860px, 96vw);
+    max-height: min(82vh, 900px);
+    background: var(--bl-background-popup);
+    border-radius: 12px;
+    border: 1px solid var(--bl-border-color);
+    box-shadow: 0 12px 30px rgba(0, 0, 0, 0.4);
+    display: flex;
+    flex-direction: column;
+}
+
+.bl-diff-modal-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--bl-border-color);
+}
+
+.bl-diff-modal-title {
+    margin: 0;
+    color: var(--bl-text-primary);
+    font-size: 16px;
+}
+
+.bl-diff-modal-close {
+    border: 0;
+    background: transparent;
+    color: var(--bl-text-secondary);
+    font-size: 26px;
+    cursor: pointer;
+    line-height: 1;
+}
+
+.bl-diff-modal-content {
+    padding: 12px 16px 16px;
+    overflow-y: auto;
+    max-height: min(70vh, 760px);
+    color: var(--bl-text-primary);
+}
+
+/* --- 原来的行内高亮片段（带边框和底色背景） --- */
+.bl-diff-snippet {
+    display: block !important;
+    line-height: 1.8 !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    padding: 12px 14px !important;
+    background: var(--bl-background-secondary) !important;
+    border-radius: 8px !important;
+    border-left: 3px solid var(--bl-border-color) !important;
+}
+
+.bl-diff-snippet del {
+    color: #e03131 !important;
+    background: rgba(224, 49, 49, 0.12) !important;
+    text-decoration: line-through !important;
+    text-decoration-thickness: 2px !important;
+    padding: 2px 4px !important;
+    border-radius: 4px !important;
+    margin: 0 2px !important;
+}
+
+.bl-diff-snippet ins {
+    color: #0ca678 !important;
+    background: rgba(12, 166, 120, 0.12) !important;
+    text-decoration: none !important;
+    padding: 2px 4px !important;
+    border-radius: 4px !important;
+    margin: 0 2px !important;
+    font-weight: bold !important;
+}
+
+/* ========================================================= */
+/* --- 任务1：侧边按钮居中与对齐优化（修复飘到顶部的问题） --- */
+/* 尾部按钮样式更新 */
+.bl-diff-btn-bottom {
+    position: absolute !important;
+    bottom: 6px !important;
+    right: 48px !important; /* 【核心修改】从 85px 缩小到 48px，让它贴近 2/2 页码 */
+    z-index: 10 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    opacity: 0.45 !important;
+    cursor: pointer !important;
+    transition: opacity 0.2s, color 0.2s !important;
+    color: var(--bl-text-primary) !important;
+}
+
+.bl-diff-btn-bottom:hover {
+    opacity: 1 !important;
+    color: var(--bl-accent-color) !important;
+}
+
+/* ========================================================= */
+/* --- 任务2 & 3：全文模式的段落级排版与高亮 --- */
+.bl-diff-full-text {
+    color: var(--bl-text-primary) !important;
+    padding: 8px !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 12px !important; 
+}
+
+/* 无修改的正常段落：保持小字号，稍微透明一点，方便快速翻阅不累眼 */
+.bl-diff-full-normal {
+    font-size: 14px !important; 
+    line-height: 1.5 !important;
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    opacity: 0.85 !important; 
+}
+
+/* 包含修改的段落：字号放大，行高拉开，和片段模式的排版看齐，超级醒目！ */
+.bl-diff-full-modified {
+    font-size: 16px !important; /* 放大字号 */
+    line-height: 1.8 !important; /* 拉大行高 */
+    white-space: pre-wrap !important;
+    word-break: break-word !important;
+    padding: 12px 14px !important; /* 加大内边距 */
+    background: var(--bl-background-secondary) !important;
+    border-left: 4px solid var(--bl-accent-color) !important;
+    border-radius: 6px !important;
+}
+
+/* 差异字体的颜色与背景 */
+.bl-diff-full-modified del {
+    color: #e03131 !important;
+    background: rgba(224, 49, 49, 0.08) !important;
+    text-decoration: line-through !important;
+    padding: 0 3px !important;
+    border-radius: 3px !important;
+}
+
+.bl-diff-full-modified ins {
+    color: #0ca678 !important;
+    background: rgba(12, 166, 120, 0.08) !important;
+    text-decoration: none !important;
+    padding: 0 3px !important;
+    border-radius: 3px !important;
+    font-weight: 600 !important;
+}
+
+/* ========================================================= */
+/* --- 手机端高度与软键盘适配 (修复遮罩未覆盖与高度过大) --- */
+@media screen and (max-width: 600px) {
+    
+    /* 1. 修复全屏灰色遮罩：死死锁住 100% 屏幕，绝对不留缝隙 */
+    #bl-rule-edit-modal,
+    #bl-diff-modal {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100% !important;
+        height: 100% !important;
+        padding: 0 !important; /* 去除原本的 padding，防止遮罩层被挤压 */
+        background: rgba(0, 0, 0, 0.65) !important; /* 确保整个屏幕都被灰底覆盖 */
+        align-items: flex-start !important; /* 依然保持靠上对齐，防软键盘顶飞 */
+        justify-content: center !important; /* 保证水平绝对居中 */
+    }
+
+    /* 2. 控制弹窗本体：缩短高度、完美居中 */
+    #bl-rule-edit-modal > div,
+    .bl-diff-modal-card {
+        width: 90% !important;       /* 左右各留 5% 的均匀空隙，不再挤在边缘 */
+        max-height: 68vh !important; /* 【缩短高度】从 82vh 降到 68vh，窗口看起来更轻巧 */
+        
+        /* 使用 margin-top 把卡片往下推，完美避开刘海和状态栏，同时保留防键盘遮挡效果 */
+        margin: calc(env(safe-area-inset-top, 0px) + 12vh) 0 0 0 !important; 
+        overflow-y: auto !important; 
+    }
+    
+    /* 3. 保持净化主面板的显示比例 */
+    #bl-purifier-popup {
+        top: 8vh !important; 
+        max-height: 80vh !important;
+    }
+}
