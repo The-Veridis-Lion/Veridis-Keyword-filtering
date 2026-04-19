@@ -107,6 +107,9 @@ export function setupUI() {
                 <div class="bl-diff-modal-header">
                     <h3 class="bl-diff-modal-title"><i class="fa-solid fa-eye"></i> 净化前文透视</h3>
                     <div style="display:flex; align-items:center; gap:12px;">
+                        <button id="bl-diff-pos-toggle" class="bl-icon-btn" style="padding: 6px 12px; min-height: 30px; font-size: 13px;" title="将顶部按钮收纳进三点菜单">
+                            <i id="bl-diff-pos-icon" class="fa-solid fa-ellipsis"></i> <span id="bl-diff-pos-text">收纳按钮</span>
+                        </button>
                         <button id="bl-diff-mode-toggle" class="bl-icon-btn" style="padding: 6px 12px; min-height: 30px; font-size: 13px;" title="切换视图模式">
                             <i id="bl-diff-mode-icon" class="fa-solid fa-file-lines"></i> <span id="bl-diff-mode-text">全文模式</span>
                         </button>
@@ -117,7 +120,7 @@ export function setupUI() {
             </div>
         </div>
     `);
-}
+} // <--- 之前就是漏掉了这个大括号导致报错！！！
 
 export function showDeepCleanOverlay() {
     $('body').append(`
