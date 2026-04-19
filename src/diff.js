@@ -152,12 +152,27 @@ export function ensureMessageDiffButton(index, messageNode) {
 
     const { extension_settings } = getAppContext();
     const isEnabled = extension_settings[extensionName]?.enableVisualDiff !== false;
+    // 新增：读取是否要求收纳
+    const isTopInExtra = extension_settings[extensionName]?.diffButtonInExtraMenu === true; 
+    
     const cached = runtimeState.diffSnippetsCache.get(index);
     const hasSnippets = !!(cached && ((Array.isArray(cached.snippets) && cached.snippets.length > 0) || cached.fullDiff !== ""));
 
+    // --- 顶部按钮注入逻辑更新开始 ---
     const buttonArea = messageNode.querySelector('.mes_buttons');
     if (buttonArea) {
-        const existing = buttonArea.querySelector('.bl-diff-btn-top');
+        let existing = buttonArea.querySelector('.bl-diff-btn-top');
+        const extraMenu = buttonArea.querySelector('.extraMesButtons');
+        
+        // 确定真正应该放置按钮的容器（如果要求收纳且存在三个点菜单，就用菜单，否则兜底放外边）
+        const targetContainer = (isTopInExtra && extraMenu) ? extraMenu : buttonArea;
+
+        // 如果旧按钮存在，但发现它不在我们当前期望的父容器里，把它扬了重新生成
+        if (existing && existing.parentElement !== targetContainer) {
+            existing.remove();
+            existing = null;
+        }
+
         if (!isEnabled || !hasSnippets) {
             if (existing) existing.remove();
         } else if (!existing) {
@@ -167,9 +182,15 @@ export function ensureMessageDiffButton(index, messageNode) {
             button.setAttribute('data-index', String(index));
             button.setAttribute('tabindex', '0');
             button.setAttribute('role', 'button');
-            const editBtn = buttonArea.querySelector('.mes_edit');
-            if (editBtn) buttonArea.insertBefore(button, editBtn);
-            else buttonArea.appendChild(button);
+            
+            // 往目标容器里塞按钮
+            if (isTopInExtra && extraMenu) {
+                extraMenu.appendChild(button); // 收纳进三个点内部
+            } else {
+                const editBtn = buttonArea.querySelector('.mes_edit');
+                if (editBtn) buttonArea.insertBefore(button, editBtn);
+                else buttonArea.appendChild(button); // 外显状态逻辑
+            }
         } else {
             existing.setAttribute('data-index', String(index));
         }

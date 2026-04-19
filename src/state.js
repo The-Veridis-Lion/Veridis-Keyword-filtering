@@ -8,6 +8,7 @@ export const defaultSettings = {
     characterBindings: {},
     enableVisualDiff: true,
     diffViewMode: "snippet",
+    diffButtonInExtraMenu: false, // <-- 新增：收纳按钮设置默认值
     deepCleanTimeoutSec: 120
 };
 

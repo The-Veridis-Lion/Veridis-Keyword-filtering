@@ -153,14 +153,53 @@ export function bindEvents() {
         }
     }
 
+    // ==========================================
+    // 新修改的区域开始：透视弹窗按钮与收纳逻辑
+    // ==========================================
     $(document).off('click', '.bl-diff-btn').on('click', '.bl-diff-btn', function() {
         const index = Number($(this).attr('data-index'));
         if (!Number.isInteger(index) || index < 0) return;
+
+        // --- 新增：同步收纳按钮的图标和文本状态 ---
+        const { extension_settings } = getAppContext();
+        const settings = extension_settings[extensionName];
+        if (settings.diffButtonInExtraMenu) {
+            $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-thumbtack');
+            $('#bl-diff-pos-text').text('外显按钮');
+        } else {
+            $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-ellipsis');
+            $('#bl-diff-pos-text').text('收纳按钮');
+        }
+        // ------------------------------------------
 
         runtimeState.currentDiffIndex = index;
         renderDiffModalContent(index);
         $('#bl-diff-modal').css('display', 'flex');
     });
+
+    $(document).off('click', '#bl-diff-pos-toggle').on('click', '#bl-diff-pos-toggle', function() {
+        const { extension_settings, saveSettingsDebounced } = getAppContext();
+        const settings = extension_settings[extensionName];
+        
+        // 切换布尔值状态并存盘
+        settings.diffButtonInExtraMenu = !settings.diffButtonInExtraMenu;
+        saveSettingsDebounced();
+
+        // 切换UI显示
+        if (settings.diffButtonInExtraMenu) {
+            $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-thumbtack');
+            $('#bl-diff-pos-text').text('外显按钮');
+        } else {
+            $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-ellipsis');
+            $('#bl-diff-pos-text').text('收纳按钮');
+        }
+
+        // 重新渲染当前屏幕上所有的透视按钮层级
+        injectDiffButtons();
+    });
+    // ==========================================
+    // 新修改的区域结束
+    // ==========================================
 
     $(document).off('click', '#bl-diff-mode-toggle').on('click', '#bl-diff-mode-toggle', function() {
         const { extension_settings, saveSettingsDebounced } = getAppContext();

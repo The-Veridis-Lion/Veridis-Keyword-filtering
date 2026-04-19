@@ -26,6 +26,7 @@ function ensureSettingsShape() {
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
     if (settings.enableVisualDiff === undefined) settings.enableVisualDiff = true;
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
+    if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false; // <-- 新增：初始化收纳字段
     cleanupInvalidPresetBindings();
 
     const timeoutSec = Number(settings.deepCleanTimeoutSec);
