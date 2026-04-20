@@ -1,67 +1,105 @@
-import { eventSource, event_types } from '../../../../../../script.js';
-import { renderTree } from './tree.js';
+import { extension_settings } from "../../../extensions.js";
+import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
 
-const MVU_BTN_ID = 'mvu-btn';
-const MVU_OVERLAY_ID = 'mvu-overlay';
+import { defaultSettings, extensionName, initAppContext, runtimeState } from './src/state.js';
+import { bindEvents, initRealtimeInterceptor } from './src/events.js';
+import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPresetBindings } from './src/ui.js';
+import { performGlobalCleanse } from './src/core.js';
 
-function openMvuDialog() {
-    $(`#${MVU_OVERLAY_ID}`).remove();
+initAppContext({
+    extension_settings,
+    saveSettingsDebounced,
+    eventSource,
+    event_types,
+    saveChat,
+    chat_metadata,
+    chat,
+});
 
-    // 创建弹窗外层遮罩
-    const $overlay = $(`
-        <div id="${MVU_OVERLAY_ID}" style="position: fixed; inset: 0; background: rgba(0,0,0,0.7); z-index: 9999; display: flex; align-items: center; justify-content: center;">
-            <div style="width: 80%; max-width: 800px; max-height: 85vh; background: var(--SmartThemeBodyColor); border: 1px solid var(--SmartThemeBorderColor); border-radius: 10px; display: flex; flex-direction: column; overflow: hidden; box-shadow: 0 10px 30px rgba(0,0,0,0.8);">
-                <div style="padding: 15px; border-bottom: 1px solid var(--SmartThemeBorderColor); display: flex; justify-content: space-between; align-items: center; font-weight: bold;">
-                    <div><i class="fa-solid fa-wand-magic-sparkles"></i> MVU 变量修改器</div>
-                    <div id="mvu-close-btn" class="mvu-action-btn"><i class="fa-solid fa-xmark fa-lg"></i></div>
-                </div>
-                <div id="mvu-tree-container" style="padding: 15px; overflow-y: auto; flex-grow: 1;">
-                    </div>
-            </div>
-        </div>
-    `);
+function ensureSettingsShape() {
+    const settings = extension_settings[extensionName];
+    if (!settings) return;
+    if (!settings.rules) settings.rules = [];
+    if (!settings.presets) settings.presets = {};
+    if (settings.activePreset === undefined) settings.activePreset = "";
+    if (settings.defaultPreset === undefined) settings.defaultPreset = "";
+    if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    if (settings.enableVisualDiff === undefined) settings.enableVisualDiff = true;
+    if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
+    if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false; // <-- 新增：初始化收纳字段
+    cleanupInvalidPresetBindings();
 
-    // 关闭事件
-    $overlay.find('#mvu-close-btn').on('click', () => $overlay.remove());
-    $('body').append($overlay);
-
-    // 调用 tree.js 渲染内容
-    renderTree(document.getElementById('mvu-tree-container'));
+    const timeoutSec = Number(settings.deepCleanTimeoutSec);
+    settings.deepCleanTimeoutSec = Number.isFinite(timeoutSec)
+        ? Math.min(Math.max(timeoutSec, 10), 1800)
+        : defaultSettings.deepCleanTimeoutSec;
 }
 
-function injectMvuButton() {
-    const $menu = $('#extensionsMenu, #chat_input_extras_menu').first();
-    if ($menu.length === 0 || $(`#${MVU_BTN_ID}`).length > 0) return;
+function migrateOldData() {
+    const settings = extension_settings[extensionName];
+    if (settings && settings.bannedWords) {
+        if (settings.bannedWords.length > 0) {
+            settings.rules = settings.rules || [];
+            settings.rules.push({
+                name: "旧版本过滤词",
+                subRules: [{ targets: [...settings.bannedWords], replacements: [], mode: 'text' }],
+                enabled: true
+            });
+        }
+        delete settings.bannedWords;
+        runtimeState.isRegexDirty = true;
+    }
 
-    // 完美契合酒馆扩展菜单的原生按钮
-    const $button = $(`
-        <div id="${MVU_BTN_ID}" class="list-group-item flex-container flexGap5 interactable" tabindex="0" role="listitem">
-            <i class="fa-solid fa-wand-magic-sparkles fa-fw extensionsMenuExtensionButton"></i>
-            <span style="overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">MVU 变量管理</span>
-        </div>
-    `);
+    if (settings) {
+        ensureSettingsShape();
 
-    $button.on('click', () => {
-        $('#extensionsMenu').hide(); // 点开后自动收起扩展菜单
-        openMvuDialog();
-    });
+        if (settings.rules && settings.rules.length > 0) {
+            settings.rules.forEach((r, i) => {
+                if (!r.name) r.name = `合集 ${i + 1}`;
+                if (r.enabled === undefined) r.enabled = true;
 
-    $menu.append($button);
-    console.log('[MVU Modifier] 扩展菜单按钮注入成功！');
-}
+                if (r.targets) {
+                    r.subRules = [{
+                        targets: r.targets,
+                        replacements: r.replacements || [],
+                        mode: 'text'
+                    }];
+                    delete r.targets;
+                    delete r.replacements;
+                }
+                if (!r.subRules) r.subRules = [];
+                r.subRules.forEach(sub => { if (!sub.mode) sub.mode = 'text'; });
+            });
 
-export async function init() {
-    console.log('[MVU Modifier] 正在初始化...');
-    // 双重保险：如果 DOM 已经准备好，直接注入；否则等 APP_READY
-    if ($('#extensionsMenu').length > 0 || $('#chat_input_extras_menu').length > 0) {
-        injectMvuButton();
-    } else {
-        eventSource.on(event_types.APP_READY, injectMvuButton);
+            if (Object.keys(settings.presets).length === 0) {
+                settings.presets["默认存档"] = JSON.parse(JSON.stringify(settings.rules));
+                settings.activePreset = "默认存档";
+            }
+        }
+        saveSettingsDebounced();
     }
 }
 
-export async function exit() {
-    $(`#${MVU_BTN_ID}`).remove();
-    $(`#${MVU_OVERLAY_ID}`).remove();
-    console.log('[MVU Modifier] 卸载成功');
-}
+jQuery(() => {
+    if (runtimeState.isBooted) return;
+    extension_settings[extensionName] = extension_settings[extensionName] || { ...defaultSettings };
+
+    migrateOldData();
+    ensureSettingsShape();
+
+    const boot = () => {
+        if (runtimeState.isBooted) return;
+        runtimeState.isBooted = true;
+        setupUI();
+        bindEvents();
+        initRealtimeInterceptor();
+        updateToolbarUI();
+        applyCharacterPresetBinding(true);
+        performGlobalCleanse();
+    };
+
+    if (typeof eventSource !== 'undefined' && event_types.APP_READY) {
+        eventSource.on(event_types.APP_READY, boot);
+        if (document.getElementById('send_textarea')) boot();
+    }
+});
