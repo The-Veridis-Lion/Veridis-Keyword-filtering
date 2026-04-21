@@ -1,7 +1,7 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { buildSimpleWildcardPattern } from './utils.js';
 import { deepCleanObjectSync } from './cleanse.js';
-import { buildDiffSnippetsFromText, clearDiffSnippetsCache, ensureMessageDiffButton, injectDiffButtons, updateDiffSnippetCache } from './diff.js';
+import { buildDiffSnippetsFromText, clearDiffSnippetsCache, computeMessageSignature, ensureMessageDiffButton, getLatestAssistantMessageIndices, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, updateDiffSnippetCache, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 
 /**
@@ -237,14 +237,19 @@ export function cleanseMessageDataAtIndex(index) {
     if (!Array.isArray(chat) || index < 0 || index >= chat.length) return false;
     const msg = chat[index];
     if (!msg || typeof msg !== 'object') return false;
-    let changed = false;
-    const allSnippets = [];
-    let mainFullDiff = "";
 
+    const isAssistant = isAssistantMessage(msg);
+    const rawMes = typeof msg.mes === 'string' ? msg.mes : '';
+    const currentSignature = isAssistant ? computeMessageSignature(msg) : '';
+    let changed = false;
+
+    let mainCache = { snippets: [], fullDiff: '' };
     if (typeof msg.mes === 'string') {
         const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(msg.mes);
-        allSnippets.push(...mesSnippets);
-        mainFullDiff = fullDiff;
+        mainCache = {
+            snippets: Array.from(new Set(mesSnippets)),
+            fullDiff,
+        };
         if (cleanedText !== msg.mes) {
             msg.mes = cleanedText;
             changed = true;
@@ -254,15 +259,13 @@ export function cleanseMessageDataAtIndex(index) {
     if (Array.isArray(msg.swipes)) {
         for (let i = 0; i < msg.swipes.length; i++) {
             if (typeof msg.swipes[i] === 'string') {
-                const { cleanedText, snippets: swipeSnippets } = buildDiffSnippetsFromText(msg.swipes[i]);
-                allSnippets.push(...swipeSnippets);
+                const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i]);
                 if (cleanedText !== msg.swipes[i]) {
                     msg.swipes[i] = cleanedText;
                     changed = true;
                 }
             } else if (msg.swipes[i] && typeof msg.swipes[i] === 'object' && typeof msg.swipes[i].mes === 'string') {
-                const { cleanedText, snippets: swipeObjSnippets } = buildDiffSnippetsFromText(msg.swipes[i].mes);
-                allSnippets.push(...swipeObjSnippets);
+                const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i].mes);
                 if (cleanedText !== msg.swipes[i].mes) {
                     msg.swipes[i].mes = cleanedText;
                     changed = true;
@@ -271,9 +274,19 @@ export function cleanseMessageDataAtIndex(index) {
         }
     }
 
-    // 使用 Set 对完全相同的片段 HTML 进行去重
-    const uniqueSnippets = Array.from(new Set(allSnippets));
-    updateDiffSnippetCache(index, { snippets: uniqueSnippets, fullDiff: mainFullDiff });
+    if (isAssistant) {
+        msg.__bl_diff_source_signature = currentSignature;
+        msg.__bl_diff_last_cleaned_mes = typeof msg.mes === 'string' ? msg.mes : '';
+        writeReadyDiffCache(index, currentSignature, {
+            snippets: mainCache.snippets,
+            fullDiff: mainCache.fullDiff,
+            signature: currentSignature,
+            rawMes,
+        });
+    } else {
+        clearTrackedDiffEntry(index);
+    }
+
     return changed;
 }
 
@@ -292,6 +305,31 @@ export function performIncrementalCleanse(payload, options = {}) {
     let index = getMessageIndexFromEvent(payload);
     if (index < 0 && fallbackLatest) index = getLatestMessageIndex();
     if (index < 0) return;
+
+    const msg = Array.isArray(chat) ? chat[index] : null;
+    const assistant = isAssistantMessage(msg);
+    if (assistant) {
+        const signature = computeMessageSignature(msg);
+        if (options.visualOnly) markDiffComparisonPending(index, signature);
+        else {
+            const previousState = runtimeState.diffMessageStates.get(index);
+            const alreadyFinalizedSameSource = previousState?.status === 'ready'
+                && previousState.signature === signature
+                && typeof msg?.mes === 'string'
+                && typeof msg?.__bl_diff_last_cleaned_mes === 'string'
+                && msg.mes === msg.__bl_diff_last_cleaned_mes;
+
+            if (alreadyFinalizedSameSource) {
+                const messageNode = getMessageDomNode(index);
+                if (messageNode) ensureMessageDiffButton(index, messageNode);
+                return;
+            }
+
+            if (!previousState || previousState.signature !== signature) {
+                markDiffComparisonPending(index, signature);
+            }
+        }
+    }
 
     const dataChanged = options.visualOnly ? false : cleanseMessageDataAtIndex(index);
     const messageNode = getMessageDomNode(index);
@@ -315,42 +353,45 @@ export function performIncrementalCleanse(payload, options = {}) {
 export function performGlobalCleanse() {
     const { chat, saveChat } = getAppContext();
     buildProcessors();
+    clearDiffSnippetsCache();
+
     if (runtimeState.activeProcessors.length === 0) {
-        clearDiffSnippetsCache();
         injectDiffButtons();
         return;
     }
+
     let chatChanged = false;
-    clearDiffSnippetsCache();
+    const latestDiffIndices = new Set(getLatestAssistantMessageIndices(chat));
 
     if (chat && Array.isArray(chat)) {
         chat.forEach((msg, index) => {
             let msgChanged = false;
-            const allSnippets = [];
-            let mainFullDiff = "";
+            let mainCache = { snippets: [], fullDiff: '' };
+            const assistant = isAssistantMessage(msg);
+            const signature = assistant ? computeMessageSignature(msg) : '';
 
-            if (typeof msg.mes === 'string') {
+            if (typeof msg?.mes === 'string') {
                 const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(msg.mes);
-                allSnippets.push(...mesSnippets);
-                mainFullDiff = fullDiff;
+                mainCache = {
+                    snippets: Array.from(new Set(mesSnippets)),
+                    fullDiff,
+                };
                 if (msg.mes !== cleanedText) {
                     msg.mes = cleanedText;
                     msgChanged = true;
                 }
             }
 
-            if (msg.swipes && Array.isArray(msg.swipes)) {
+            if (msg?.swipes && Array.isArray(msg.swipes)) {
                 for (let i = 0; i < msg.swipes.length; i++) {
                     if (typeof msg.swipes[i] === 'string') {
-                        const { cleanedText, snippets: swipeSnippets } = buildDiffSnippetsFromText(msg.swipes[i]);
-                        allSnippets.push(...swipeSnippets);
+                        const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i]);
                         if (msg.swipes[i] !== cleanedText) {
                             msg.swipes[i] = cleanedText;
                             msgChanged = true;
                         }
                     } else if (typeof msg.swipes[i] === 'object' && msg.swipes[i] !== null && typeof msg.swipes[i].mes === 'string') {
-                        const { cleanedText, snippets: swipeObjSnippets } = buildDiffSnippetsFromText(msg.swipes[i].mes);
-                        allSnippets.push(...swipeObjSnippets);
+                        const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i].mes);
                         if (msg.swipes[i].mes !== cleanedText) {
                             msg.swipes[i].mes = cleanedText;
                             msgChanged = true;
@@ -359,9 +400,16 @@ export function performGlobalCleanse() {
                 }
             }
 
-            // 同样在这里加上去重逻辑
-            const uniqueSnippets = Array.from(new Set(allSnippets));
-            updateDiffSnippetCache(index, { snippets: uniqueSnippets, fullDiff: mainFullDiff });
+            if (assistant && latestDiffIndices.has(index)) {
+                updateDiffSnippetCache(index, {
+                    snippets: mainCache.snippets,
+                    fullDiff: mainCache.fullDiff,
+                    signature,
+                });
+                writeReadyDiffCache(index, signature, mainCache);
+            } else {
+                clearTrackedDiffEntry(index, { persist: false });
+            }
 
             if (msgChanged) {
                 chatChanged = true;
@@ -382,6 +430,8 @@ export function performGlobalCleanse() {
             });
         }
     }
+
+    syncTrackedIndicesToLatestAssistantMessages();
 
     if (chatChanged) {
         try {

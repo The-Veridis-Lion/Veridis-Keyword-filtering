@@ -20,13 +20,42 @@ import {
     applyReplacements,
     applyVisualMask,
     performIncrementalCleanse,
+    getMessageIndexFromEvent,
+    getLatestMessageIndex,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 import { purifyDOM, isProtectedNode } from './dom.js';
-import { getDiffSnippetsForMessage, clearDiffSnippetsCache, injectDiffButtons } from './diff.js';
+import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
 export function initRealtimeInterceptor() {
     let isPurifying = false;
+
+    const resolveNodeMessageIndex = (node) => {
+        if (!node || node.nodeType !== 1) return -1;
+        const attrs = [node.getAttribute('mesid'), node.getAttribute('data-mesid'), node.getAttribute('messageid'), node.getAttribute('data-message-id')];
+        for (const raw of attrs) {
+            const n = Number(raw);
+            if (Number.isInteger(n) && n >= 0) return n;
+        }
+        const chatEl = document.getElementById('chat');
+        if (!chatEl) return -1;
+        const nodes = Array.from(chatEl.querySelectorAll('.mes'));
+        return nodes.indexOf(node);
+    };
+
+    const collectMessageNodes = (node, bucket) => {
+        if (!node || node.nodeType !== 1) return;
+        if (node.matches?.('.mes')) bucket.push(node);
+        node.querySelectorAll?.('.mes').forEach((mes) => bucket.push(mes));
+    };
+
+    const primePendingComparisonForNode = (messageNode) => {
+        const { chat } = getAppContext();
+        const index = resolveNodeMessageIndex(messageNode);
+        if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return -1;
+        markDiffComparisonPending(index, computeMessageSignature(chat[index]));
+        return index;
+    };
 
     const chatObserver = new MutationObserver((mutations) => {
         if (isPurifying) return;
@@ -34,6 +63,7 @@ export function initRealtimeInterceptor() {
         buildProcessors();
         if (runtimeState.activeProcessors.length === 0) return;
 
+        const touchedMessageIndices = new Set();
         isPurifying = true;
         try {
             for (let mi = 0; mi < mutations.length; mi++) {
@@ -47,6 +77,12 @@ export function initRealtimeInterceptor() {
                         if (original !== nextValue) node.nodeValue = nextValue;
                     } else if (node.nodeType === 1) {
                         purifyDOM(node);
+                        const messageNodes = [];
+                        collectMessageNodes(node, messageNodes);
+                        messageNodes.forEach((mesNode) => {
+                            const index = primePendingComparisonForNode(mesNode);
+                            if (index >= 0) touchedMessageIndices.add(index);
+                        });
                     }
                 }
                 if (m.type === 'characterData') {
@@ -58,7 +94,7 @@ export function initRealtimeInterceptor() {
             }
         } finally {
             chatObserver.takeRecords();
-            injectDiffButtons();
+            injectDiffButtons([...touchedMessageIndices]);
             isPurifying = false;
         }
     });
@@ -128,30 +164,47 @@ export function bindEvents() {
         saveSettingsDebounced();
         injectDiffButtons();
     });
-
-
     function renderDiffModalContent(index) {
         const { extension_settings } = getAppContext();
         const settings = extension_settings[extensionName];
         const mode = settings.diffViewMode || 'snippet';
+        const state = getDiffStateForMessage(index);
         const cached = getDiffSnippetsForMessage(index);
-        if (!cached) return;
-
         const contentEl = $('#bl-diff-modal-content');
 
+        if (state.status !== 'ready') {
+            contentEl.html(`
+                <div class="bl-diff-loading">
+                    <i class="fas fa-spinner fa-spin"></i>
+                    <span>Loading...</span>
+                </div>
+            `);
+            $('#bl-diff-mode-text').text(mode === 'full' ? '切回片段' : '全文模式');
+            $('#bl-diff-mode-icon').attr('class', mode === 'full' ? 'fa-solid fa-list-ul' : 'fa-solid fa-file-lines');
+            return;
+        }
+
         if (mode === 'full') {
-            contentEl.html(`<div class="bl-diff-full-text">${cached.fullDiff || "当前消息无正文差异。"}</div>`);
+            const fullHtml = cached.fullDiff || '<div class="bl-diff-empty">当前消息未触发净化差异。</div>';
+            contentEl.html(`<div class="bl-diff-full-text">${fullHtml}</div>`);
             $('#bl-diff-mode-text').text('切回片段');
             $('#bl-diff-mode-icon').attr('class', 'fa-solid fa-list-ul');
         } else {
             const html = cached.snippets.length > 0
                 ? cached.snippets.join('<hr class="bl-diff-divider">')
-                : '<div class="bl-diff-empty">当前消息没有可展示的净化片段。</div>';
+                : '<div class="bl-diff-empty">当前消息未触发净化差异。</div>';
             contentEl.html(html);
             $('#bl-diff-mode-text').text('全文模式');
             $('#bl-diff-mode-icon').attr('class', 'fa-solid fa-file-lines');
         }
     }
+
+    runtimeState.diffModalRefresh = (index) => {
+        if (runtimeState.currentDiffIndex === undefined) return;
+        if (index !== undefined && index !== runtimeState.currentDiffIndex) return;
+        if (!$('#bl-diff-modal').is(':visible')) return;
+        renderDiffModalContent(runtimeState.currentDiffIndex);
+    };
 
     // ==========================================
     // 新修改的区域开始：透视弹窗按钮与收纳逻辑
@@ -220,6 +273,26 @@ export function bindEvents() {
     $(document).off('click', '.bl-rule-edit').on('click', '.bl-rule-edit', function() { openEditModal($(this).data('index')); });
     $(document).off('click', '.bl-rule-transfer').on('click', '.bl-rule-transfer', function() { openTransferModal($(this).data('index')); });
 
+    $(document).off('click', '.bl-rule-move-up').on('click', '.bl-rule-move-up', function() {
+        const index = Number($(this).data('index'));
+        const rules = extension_settings[extensionName].rules || [];
+        if (index <= 0 || index >= rules.length) return;
+        [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
+        runtimeState.isRegexDirty = true;
+        saveSettingsDebounced();
+        renderTags();
+    });
+
+    $(document).off('click', '.bl-rule-move-down').on('click', '.bl-rule-move-down', function() {
+        const index = Number($(this).data('index'));
+        const rules = extension_settings[extensionName].rules || [];
+        if (index < 0 || index >= rules.length - 1) return;
+        [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
+        runtimeState.isRegexDirty = true;
+        saveSettingsDebounced();
+        renderTags();
+    });
+
     $(document).off('change', '.bl-rule-toggle').on('change', '.bl-rule-toggle', function() {
         const index = $(this).data('index');
         extension_settings[extensionName].rules[index].enabled = $(this).prop('checked');
@@ -242,6 +315,22 @@ export function bindEvents() {
         renderSubrulesToModal();
         const container = $('#bl-edit-subrules-container');
         container.scrollTop(container[0].scrollHeight);
+    });
+
+    $(document).off('click', '.bl-move-subrule-up-btn').on('click', '.bl-move-subrule-up-btn', function() {
+        syncSubrulesFromDOM();
+        const index = Number($(this).data('index'));
+        if (index <= 0 || index >= runtimeState.currentEditingSubrules.length) return;
+        [runtimeState.currentEditingSubrules[index - 1], runtimeState.currentEditingSubrules[index]] = [runtimeState.currentEditingSubrules[index], runtimeState.currentEditingSubrules[index - 1]];
+        renderSubrulesToModal();
+    });
+
+    $(document).off('click', '.bl-move-subrule-down-btn').on('click', '.bl-move-subrule-down-btn', function() {
+        syncSubrulesFromDOM();
+        const index = Number($(this).data('index'));
+        if (index < 0 || index >= runtimeState.currentEditingSubrules.length - 1) return;
+        [runtimeState.currentEditingSubrules[index], runtimeState.currentEditingSubrules[index + 1]] = [runtimeState.currentEditingSubrules[index + 1], runtimeState.currentEditingSubrules[index]];
+        renderSubrulesToModal();
     });
 
     $(document).off('click', '.bl-edit-subrule-btn').on('click', '.bl-edit-subrule-btn', function() {
@@ -480,24 +569,40 @@ export function bindEvents() {
         };
         input.click();
     });
+    const markPendingFromPayload = (payload) => {
+        const { chat } = getAppContext();
+        let index = getMessageIndexFromEvent(payload);
+        if (index < 0) index = getLatestMessageIndex();
+        if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return;
+        markDiffComparisonPending(index, computeMessageSignature(chat[index]));
+        injectDiffButtons([index]);
+    };
 
     const visualMaskLatestOnly = (payload) => {
         if (!runtimeState.isStreamingGeneration) return;
+        markPendingFromPayload(payload);
         performIncrementalCleanse(payload, { visualOnly: true, fallbackLatest: true });
     };
 
     let delayedCleanseTimer = null;
+    let settleCleanseTimer = null;
     const delayedIncrementalCleanse = (payload) => {
         runtimeState.isStreamingGeneration = false;
+        markPendingFromPayload(payload);
         if (delayedCleanseTimer) clearTimeout(delayedCleanseTimer);
+        if (settleCleanseTimer) clearTimeout(settleCleanseTimer);
         delayedCleanseTimer = setTimeout(() => {
             performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
         }, 150);
+        settleCleanseTimer = setTimeout(() => {
+            performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
+        }, 700);
     };
 
     let editCleanseTimer = null;
     if (event_types.MESSAGE_EDITED) {
         eventSource.on(event_types.MESSAGE_EDITED, (payload) => {
+            markPendingFromPayload(payload);
             if (editCleanseTimer) clearTimeout(editCleanseTimer);
             editCleanseTimer = setTimeout(() => {
                 performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
@@ -518,13 +623,17 @@ export function bindEvents() {
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedIncrementalCleanse);
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
-            clearDiffSnippetsCache();
+            resetDiffRuntimeState();
             runtimeState.currentDiffIndex = undefined;
             $('#bl-diff-modal').hide();
-            applyCharacterPresetBinding(true);
-            setTimeout(performGlobalCleanse, 120);
+            applyCharacterPresetBinding(true, { skipCleanse: true });
+            restoreDiffStateFromChatMetadata();
+            setTimeout(() => {
+                injectDiffButtons();
+                performGlobalCleanse();
+            }, 120);
         });
     }
 
-    setInterval(() => applyCharacterPresetBinding(false), 1200);
+    setInterval(() => applyCharacterPresetBinding(false, { skipCleanse: true }), 1200);
 }
