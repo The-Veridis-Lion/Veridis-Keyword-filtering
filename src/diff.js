@@ -1,5 +1,6 @@
-import { extensionName, getAppContext, runtimeState } from './state.js';
-import { applyReplacements } from './core.js';
+import { diffMetadataKey, extensionName, getAppContext, maxTrackedDiffMessages, runtimeState } from './state.js';
+import { applyReplacements, queueIncrementalChatSave } from './core.js';
+import { getMessageDomNode } from './dom.js';
 
 /**
  * 将原始文本进行 HTML 转义，避免差异片段注入标签。
@@ -13,6 +14,250 @@ export function escapeHtml(value = '') {
         .replace(/>/g, '&gt;')
         .replace(/"/g, '&quot;')
         .replace(/'/g, '&#39;');
+}
+
+function hashString(value = '') {
+    let hash = 2166136261;
+    for (let i = 0; i < value.length; i++) {
+        hash ^= value.charCodeAt(i);
+        hash += (hash << 1) + (hash << 4) + (hash << 7) + (hash << 8) + (hash << 24);
+    }
+    return `h${(hash >>> 0).toString(16)}`;
+}
+
+export function isAssistantMessage(msg) {
+    return !!(msg && typeof msg === 'object' && msg.is_user !== true && msg.is_system !== true);
+}
+
+export function computeMessageSignature(msg) {
+    if (!msg || typeof msg !== 'object') return '';
+    const base = typeof msg.mes === 'string' ? msg.mes : '';
+    const name = typeof msg.name === 'string' ? msg.name : '';
+    const swipeInfo = msg.swipe_id ?? msg.swipeId ?? msg.swipes?.length ?? '';
+
+    const storedSourceSignature = typeof msg.__bl_diff_source_signature === 'string'
+        ? msg.__bl_diff_source_signature
+        : '';
+    const lastCleanedMes = typeof msg.__bl_diff_last_cleaned_mes === 'string'
+        ? msg.__bl_diff_last_cleaned_mes
+        : '';
+
+    // 正式替换后 msg.mes 会被写成净化后的文本。
+    // 如果随后同一条消息又收到一次结束事件，这里仍需返回“原始源文本”的签名，
+    // 避免把同一条消息误判成新内容，导致对比缓存被空结果覆盖。
+    if (storedSourceSignature && lastCleanedMes && base === lastCleanedMes) {
+        return storedSourceSignature;
+    }
+
+    return hashString(`${name}
+${swipeInfo}
+${base}`);
+}
+
+export function getLatestAssistantMessageIndices(chat, limit = maxTrackedDiffMessages) {
+    if (!Array.isArray(chat) || limit <= 0) return [];
+    const picked = [];
+    for (let i = chat.length - 1; i >= 0 && picked.length < limit; i--) {
+        if (isAssistantMessage(chat[i])) picked.push(i);
+    }
+    return picked.reverse();
+}
+
+function sanitizeCacheEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    return {
+        snippets: Array.isArray(entry.snippets) ? entry.snippets.filter(v => typeof v === 'string') : [],
+        fullDiff: typeof entry.fullDiff === 'string' ? entry.fullDiff : '',
+        signature: typeof entry.signature === 'string' ? entry.signature : '',
+    };
+}
+
+function sanitizeStateEntry(entry) {
+    if (!entry || typeof entry !== 'object') return null;
+    const status = entry.status === 'pending' ? 'pending' : 'ready';
+    return {
+        status,
+        signature: typeof entry.signature === 'string' ? entry.signature : '',
+        updatedAt: Number.isFinite(Number(entry.updatedAt)) ? Number(entry.updatedAt) : Date.now(),
+    };
+}
+
+function notifyDiffStateChanged(reason = 'state', index = runtimeState.currentDiffIndex) {
+    if (typeof runtimeState.diffModalRefresh === 'function') {
+        try {
+            runtimeState.diffModalRefresh(index, { reason, changedIndex: index });
+        } catch (err) {
+            console.warn('[Ultimate Purifier] 刷新对比弹窗失败', err);
+        }
+    }
+}
+
+function persistTrackedDiffState() {
+    const { chat_metadata } = getAppContext();
+    if (!chat_metadata || typeof chat_metadata !== 'object') return;
+
+    const order = runtimeState.trackedDiffMessageOrder
+        .filter(index => Number.isInteger(index) && index >= 0)
+        .slice(-maxTrackedDiffMessages);
+
+    if (order.length === 0) {
+        delete chat_metadata[diffMetadataKey];
+        queueIncrementalChatSave();
+        return;
+    }
+
+    const entries = {};
+    for (const index of order) {
+        const state = sanitizeStateEntry(runtimeState.diffMessageStates.get(index));
+        if (!state) continue;
+        const cache = sanitizeCacheEntry(runtimeState.diffSnippetsCache.get(index)) || { snippets: [], fullDiff: '', signature: state.signature || '' };
+        entries[String(index)] = {
+            status: state.status,
+            signature: state.signature || cache.signature || '',
+            updatedAt: state.updatedAt,
+            snippets: cache.snippets,
+            fullDiff: cache.fullDiff,
+        };
+    }
+
+    chat_metadata[diffMetadataKey] = { version: 1, order, entries };
+    queueIncrementalChatSave();
+}
+
+export function resetDiffRuntimeState() {
+    runtimeState.diffSnippetsCache.clear();
+    runtimeState.diffMessageStates.clear();
+    runtimeState.trackedDiffMessageOrder = [];
+    runtimeState.currentDiffIndex = undefined;
+}
+
+export function restoreDiffStateFromChatMetadata() {
+    const { chat, chat_metadata } = getAppContext();
+    resetDiffRuntimeState();
+
+    const saved = chat_metadata?.[diffMetadataKey];
+    if (!saved || typeof saved !== 'object') return;
+
+    const validLatest = new Set(getLatestAssistantMessageIndices(chat));
+    const rawOrder = Array.isArray(saved.order) ? saved.order : [];
+    const restoredOrder = rawOrder
+        .map(v => Number(v))
+        .filter(index => Number.isInteger(index) && index >= 0 && validLatest.has(index))
+        .slice(-maxTrackedDiffMessages);
+
+    for (const index of restoredOrder) {
+        const entry = sanitizeStateEntry(saved.entries?.[String(index)] || saved.entries?.[index]);
+        if (!entry) continue;
+        runtimeState.diffMessageStates.set(index, entry);
+        runtimeState.diffSnippetsCache.set(index, sanitizeCacheEntry(saved.entries?.[String(index)] || {}) || { snippets: [], fullDiff: '', signature: entry.signature || '' });
+    }
+
+    runtimeState.trackedDiffMessageOrder = restoredOrder;
+}
+
+function removeTrackedIndex(index) {
+    runtimeState.trackedDiffMessageOrder = runtimeState.trackedDiffMessageOrder.filter(v => v !== index);
+}
+
+function pushTrackedIndex(index) {
+    removeTrackedIndex(index);
+    runtimeState.trackedDiffMessageOrder.push(index);
+    while (runtimeState.trackedDiffMessageOrder.length > maxTrackedDiffMessages) {
+        const evicted = runtimeState.trackedDiffMessageOrder.shift();
+        runtimeState.diffMessageStates.delete(evicted);
+        runtimeState.diffSnippetsCache.delete(evicted);
+        const oldNode = getMessageDomNode(evicted);
+        if (oldNode) ensureMessageDiffButton(evicted, oldNode);
+    }
+}
+
+export function syncTrackedIndicesToLatestAssistantMessages() {
+    const { chat } = getAppContext();
+    const latestIndices = getLatestAssistantMessageIndices(chat);
+    const latestSet = new Set(latestIndices);
+
+    for (const index of [...runtimeState.trackedDiffMessageOrder]) {
+        if (!latestSet.has(index)) {
+            runtimeState.diffMessageStates.delete(index);
+            runtimeState.diffSnippetsCache.delete(index);
+            removeTrackedIndex(index);
+        }
+    }
+
+    runtimeState.trackedDiffMessageOrder = latestIndices.filter(index => runtimeState.diffMessageStates.has(index) || runtimeState.diffSnippetsCache.has(index));
+}
+
+export function isTrackedDiffMessage(index) {
+    return runtimeState.trackedDiffMessageOrder.includes(index);
+}
+
+export function markDiffComparisonPending(index, signature = '') {
+    const { chat } = getAppContext();
+    if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return false;
+
+    const existingState = runtimeState.diffMessageStates.get(index);
+    const existingCache = runtimeState.diffSnippetsCache.get(index);
+    const normalizedSignature = signature || computeMessageSignature(chat[index]);
+    const shouldReplace = !existingState || existingState.signature !== normalizedSignature || !isTrackedDiffMessage(index);
+
+    if (!shouldReplace) return false;
+
+    pushTrackedIndex(index);
+    runtimeState.diffSnippetsCache.delete(index);
+    runtimeState.diffMessageStates.set(index, {
+        status: 'pending',
+        signature: normalizedSignature,
+        updatedAt: Date.now(),
+    });
+
+    if (existingCache || !existingState || existingState.status !== 'pending') {
+        persistTrackedDiffState();
+        injectDiffButtons([index]);
+        notifyDiffStateChanged('pending', index);
+    }
+    return true;
+}
+
+export function writeReadyDiffCache(index, signature, cacheData = {}) {
+    if (!Number.isInteger(index) || index < 0) return false;
+
+    pushTrackedIndex(index);
+    runtimeState.diffSnippetsCache.set(index, {
+        snippets: Array.isArray(cacheData.snippets) ? cacheData.snippets : [],
+        fullDiff: typeof cacheData.fullDiff === 'string' ? cacheData.fullDiff : '',
+        signature: signature || '',
+    });
+    runtimeState.diffMessageStates.set(index, {
+        status: 'ready',
+        signature: signature || '',
+        updatedAt: Date.now(),
+    });
+
+    persistTrackedDiffState();
+    injectDiffButtons([index]);
+    notifyDiffStateChanged('cache-written', index);
+    return true;
+}
+
+export function clearTrackedDiffEntry(index, options = {}) {
+    const hadState = runtimeState.diffMessageStates.delete(index);
+    const hadCache = runtimeState.diffSnippetsCache.delete(index);
+    removeTrackedIndex(index);
+
+    if (hadState || hadCache) {
+        if (options.persist !== false) persistTrackedDiffState();
+        injectDiffButtons([index]);
+        notifyDiffStateChanged('cleared', index);
+    }
+}
+
+export function getDiffStateForMessage(index) {
+    const state = runtimeState.diffMessageStates.get(index);
+    if (!state || typeof state !== 'object') return { status: 'pending', signature: '' };
+    return {
+        status: state.status === 'ready' ? 'ready' : 'pending',
+        signature: typeof state.signature === 'string' ? state.signature : '',
+    };
 }
 
 /**
@@ -129,16 +374,16 @@ export function buildDiffSnippetsFromText(rawText) {
 /**
  * 更新指定消息的差异缓存。
  * @param {number} index 消息索引。
- * @param {{snippets?: string[], fullDiff?: string}} cacheData 差异缓存数据。
+ * @param {{snippets?: string[], fullDiff?: string, signature?: string}} cacheData 差异缓存数据。
  * @returns {void}
  */
 export function updateDiffSnippetCache(index, cacheData) {
     if (!Number.isInteger(index) || index < 0) return;
-    if (!cacheData || ((!Array.isArray(cacheData.snippets) || cacheData.snippets.length === 0) && !cacheData.fullDiff)) {
-        runtimeState.diffSnippetsCache.delete(index);
-        return;
-    }
-    runtimeState.diffSnippetsCache.set(index, cacheData);
+    runtimeState.diffSnippetsCache.set(index, {
+        snippets: Array.isArray(cacheData?.snippets) ? cacheData.snippets : [],
+        fullDiff: typeof cacheData?.fullDiff === 'string' ? cacheData.fullDiff : '',
+        signature: typeof cacheData?.signature === 'string' ? cacheData.signature : '',
+    });
 }
 
 /**
@@ -152,28 +397,21 @@ export function ensureMessageDiffButton(index, messageNode) {
 
     const { extension_settings } = getAppContext();
     const isEnabled = extension_settings[extensionName]?.enableVisualDiff !== false;
-    // 新增：读取是否要求收纳
-    const isTopInExtra = extension_settings[extensionName]?.diffButtonInExtraMenu === true; 
-    
-    const cached = runtimeState.diffSnippetsCache.get(index);
-    const hasSnippets = !!(cached && ((Array.isArray(cached.snippets) && cached.snippets.length > 0) || cached.fullDiff !== ""));
+    const isTopInExtra = extension_settings[extensionName]?.diffButtonInExtraMenu === true;
+    const shouldShow = isEnabled && isTrackedDiffMessage(index);
 
-    // --- 顶部按钮注入逻辑更新开始 ---
     const buttonArea = messageNode.querySelector('.mes_buttons');
     if (buttonArea) {
         let existing = buttonArea.querySelector('.bl-diff-btn-top');
         const extraMenu = buttonArea.querySelector('.extraMesButtons');
-        
-        // 确定真正应该放置按钮的容器（如果要求收纳且存在三个点菜单，就用菜单，否则兜底放外边）
         const targetContainer = (isTopInExtra && extraMenu) ? extraMenu : buttonArea;
 
-        // 如果旧按钮存在，但发现它不在我们当前期望的父容器里，把它扬了重新生成
         if (existing && existing.parentElement !== targetContainer) {
             existing.remove();
             existing = null;
         }
 
-        if (!isEnabled || !hasSnippets) {
+        if (!shouldShow) {
             if (existing) existing.remove();
         } else if (!existing) {
             const button = document.createElement('div');
@@ -182,14 +420,13 @@ export function ensureMessageDiffButton(index, messageNode) {
             button.setAttribute('data-index', String(index));
             button.setAttribute('tabindex', '0');
             button.setAttribute('role', 'button');
-            
-            // 往目标容器里塞按钮
+
             if (isTopInExtra && extraMenu) {
-                extraMenu.appendChild(button); // 收纳进三个点内部
+                extraMenu.appendChild(button);
             } else {
                 const editBtn = buttonArea.querySelector('.mes_edit');
                 if (editBtn) buttonArea.insertBefore(button, editBtn);
-                else buttonArea.appendChild(button); // 外显状态逻辑
+                else buttonArea.appendChild(button);
             }
         } else {
             existing.setAttribute('data-index', String(index));
@@ -201,7 +438,7 @@ export function ensureMessageDiffButton(index, messageNode) {
         const parent = swipeBlock.parentNode;
         const existingBottom = parent?.querySelector('.bl-diff-btn-bottom');
 
-        if (!isEnabled || !hasSnippets) {
+        if (!shouldShow) {
             if (existingBottom) existingBottom.remove();
         } else if (!existingBottom && parent) {
             const btnBottom = document.createElement('div');
@@ -217,42 +454,41 @@ export function ensureMessageDiffButton(index, messageNode) {
     }
 }
 
+function cleanupStrayDiffButtons(trackedSet) {
+    document.querySelectorAll('.bl-diff-btn[data-index]').forEach((button) => {
+        const index = Number(button.getAttribute('data-index'));
+        if (!trackedSet.has(index)) button.remove();
+    });
+}
+
 /**
- * 扫描当前聊天区域并按消息索引注入差异按钮。
+ * 仅对最新 3 条可追踪消息定向注入差异按钮。
+ * @param {number[]} [targetIndices=[]] 可选的定向消息索引。
  * @returns {void}
  */
-export function injectDiffButtons() {
-    const chatEl = document.getElementById('chat');
-    if (!chatEl) return;
-    const messageNodes = chatEl.querySelectorAll('.mes');
-    for (let i = 0; i < messageNodes.length; i++) {
-        const node = messageNodes[i];
-        const attrs = [node.getAttribute('mesid'), node.getAttribute('data-mesid'), node.getAttribute('messageid'), node.getAttribute('data-message-id')];
-        let index = -1;
-        for (const raw of attrs) {
-            const n = Number(raw);
-            if (Number.isInteger(n) && n >= 0) {
-                index = n;
-                break;
-            }
-        }
-        if (index < 0) index = i;
-        ensureMessageDiffButton(index, node);
+export function injectDiffButtons(targetIndices = []) {
+    const tracked = runtimeState.trackedDiffMessageOrder.slice(-maxTrackedDiffMessages);
+    const trackedSet = new Set(tracked);
+    const indices = Array.isArray(targetIndices) && targetIndices.length > 0
+        ? [...new Set(targetIndices.filter(index => trackedSet.has(index)))]
+        : tracked;
+
+    cleanupStrayDiffButtons(trackedSet);
+    for (const index of indices) {
+        const node = getMessageDomNode(index);
+        if (node) ensureMessageDiffButton(index, node);
     }
 }
 
 /**
  * 获取指定消息的差异缓存数据。
  * @param {number} index 消息索引。
- * @returns {{snippets: string[], fullDiff: string}} 对应消息的差异片段与全文差异。
+ * @returns {{snippets: string[], fullDiff: string, signature: string}} 对应消息的差异片段与全文差异。
  */
 export function getDiffSnippetsForMessage(index) {
-    const cached = runtimeState.diffSnippetsCache.get(index);
-    if (!cached || typeof cached !== 'object') return { snippets: [], fullDiff: '' };
-    return {
-        snippets: Array.isArray(cached.snippets) ? cached.snippets : [],
-        fullDiff: String(cached.fullDiff || ''),
-    };
+    const cached = sanitizeCacheEntry(runtimeState.diffSnippetsCache.get(index));
+    if (!cached) return { snippets: [], fullDiff: '', signature: '' };
+    return cached;
 }
 
 /**
@@ -260,5 +496,7 @@ export function getDiffSnippetsForMessage(index) {
  * @returns {void}
  */
 export function clearDiffSnippetsCache() {
-    runtimeState.diffSnippetsCache.clear();
+    resetDiffRuntimeState();
+    const { chat_metadata } = getAppContext();
+    if (chat_metadata && typeof chat_metadata === 'object') delete chat_metadata[diffMetadataKey];
 }

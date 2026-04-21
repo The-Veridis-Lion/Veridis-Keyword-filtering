@@ -1,4 +1,6 @@
 export const extensionName = "ultimate_purifier";
+export const diffMetadataKey = `${extensionName}_diff_state_v3`;
+export const maxTrackedDiffMessages = 3;
 
 export const defaultSettings = {
     rules: [],
@@ -8,7 +10,7 @@ export const defaultSettings = {
     characterBindings: {},
     enableVisualDiff: true,
     diffViewMode: "snippet",
-    diffButtonInExtraMenu: false, // <-- 新增：收纳按钮设置默认值
+    diffButtonInExtraMenu: false,
     deepCleanTimeoutSec: 120
 };
 
@@ -25,7 +27,10 @@ export const runtimeState = {
     pendingChatSave: false,
     isBooted: false,
     diffSnippetsCache: new Map(),
+    diffMessageStates: new Map(),
+    trackedDiffMessageOrder: [],
     currentDiffIndex: undefined,
+    diffModalRefresh: null,
 };
 
 const appContext = {
