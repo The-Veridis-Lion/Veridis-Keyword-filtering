@@ -17,26 +17,29 @@ export function setupUI() {
 
     $('body').append(`
         <div id="bl-purifier-popup" style="display:none;">
-            <div class="bl-header">
-                <h3 class="bl-title">全局屏蔽与映射规则</h3>
-                <button id="bl-close-btn" class="bl-close">&times;</button>
-            </div>
-            <div class="bl-tools-bar">
-                <div class="bl-preset-row">
-                    <button id="bl-default-toggle" title="设为默认预设（未单独绑定角色时自动使用）" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-star"></i></button>
+        <div class="bl-header-compact">
+                <h3 class="bl-title">全局映射预设</h3>
+                <div class="bl-header-actions">
+                    <button id="bl-default-toggle" title="设为默认预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-star"></i></button>
                     <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
-                    <select id="bl-preset-select"></select>
-                    <button id="bl-preset-rename" title="重命名存档" class="bl-icon-btn"><i class="fas fa-pen"></i></button>
+                    <div class="bl-divider-v"></div>
+                    <button id="bl-preset-import" title="导入存档" class="bl-icon-btn"><i class="fas fa-file-import"></i></button>
+                    <button id="bl-preset-export" title="导出存档" class="bl-icon-btn"><i class="fas fa-file-export"></i></button>
+                    <button id="bl-close-btn" class="bl-close-icon" title="关闭">&times;</button>
+                </div>
+            </div>
+            
+            <div class="bl-preset-compact-row">
+                <select id="bl-preset-select" class="bl-preset-select"></select>
+                <div class="bl-preset-actions">
+                    <button id="bl-preset-rename" title="重命名" class="bl-icon-btn"><i class="fas fa-pen"></i></button>
+                    <button id="bl-preset-save" title="保存" class="bl-icon-btn"><i class="fas fa-save"></i></button>
+                    <button id="bl-preset-new" title="新建" class="bl-icon-btn"><i class="fas fa-plus"></i></button>
                     <button id="bl-preset-delete" title="删除存档" class="bl-icon-btn bl-danger-btn"><i class="fas fa-trash"></i></button>
                 </div>
-                <div class="bl-tool-grid" style="display:flex; gap:8px;">
-                    <button class="bl-tool-btn" id="bl-preset-new" title="新建"><i class="fas fa-plus"></i><span class="bl-tool-text"> 新建</span></button>
-                    <button class="bl-tool-btn" id="bl-preset-save" title="保存"><i class="fas fa-save"></i><span class="bl-tool-text"> 保存</span></button>
-                    <button class="bl-tool-btn" id="bl-preset-import" title="导入"><i class="fas fa-file-import"></i><span class="bl-tool-text"> 导入</span></button>
-                    <button class="bl-tool-btn" id="bl-preset-export" title="导出"><i class="fas fa-file-export"></i><span class="bl-tool-text"> 导出</span></button>
-                </div>
             </div>
-            <button id="bl-open-new-rule-btn" class="bl-add-rule-btn"><i class="fas fa-folder-plus"></i> 新增规则组 (合集)</button>
+
+            <button id="bl-open-new-rule-btn" class="bl-add-rule-btn"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
             <div id="bl-tags-container" class="bl-scroll-region"></div>
             <div class="bl-footer">
                 <div class="bl-footer-meta">
