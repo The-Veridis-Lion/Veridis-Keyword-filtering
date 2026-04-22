@@ -344,6 +344,9 @@ export function bindEvents() {
     });
 
     $(document).off('click', '.bl-rule-del').on('click', '.bl-rule-del', function() {
+        // 误触拦截
+        if (!confirm('确定要删除这个规则分组吗？删除后无法恢复。')) return; 
+        
         extension_settings[extensionName].rules.splice($(this).data('index'), 1);
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();

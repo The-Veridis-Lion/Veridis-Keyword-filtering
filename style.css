@@ -47,17 +47,43 @@
     -webkit-backdrop-filter: blur(20px) !important;
 }
 
-#bl-purifier-popup .bl-header {
-    display: flex !important; justify-content: space-between !important; align-items: center !important;
-    padding-bottom: 18px !important; border-bottom: 1px solid var(--bl-border-color) !important; margin: 0 !important;
+/* --- 紧凑版头部排版 --- */
+.bl-header-compact {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    margin-bottom: 12px !important;
+    padding-bottom: 12px !important;
+    border-bottom: 1px solid var(--bl-border-color) !important;
 }
-#bl-purifier-popup .bl-title { font-size: 24px !important; font-weight: 700 !important; margin: 0 !important; color: var(--bl-text-primary) !important; } 
-#bl-purifier-popup .bl-close {
-    background: none !important; border: none !important; color: var(--bl-text-secondary) !important;
-    font-size: 36px !important; line-height: 1 !important; cursor: pointer !important; transition: color 0.2s ease !important;
-    padding: 0 !important; margin-left: 10px !important;
+
+.bl-header-actions {
+    display: flex !important;
+    align-items: center !important;
+    gap: 8px !important;
 }
-#bl-purifier-popup .bl-close:hover { color: var(--bl-danger-color) !important; }
+
+.bl-divider-v {
+    width: 1px !important;
+    height: 18px !important;
+    background: var(--bl-border-color) !important;
+    margin: 0 4px !important;
+    opacity: 0.6 !important;
+}
+
+.bl-close-icon {
+    background: none !important;
+    border: none !important;
+    color: var(--bl-text-secondary) !important;
+    font-size: 28px !important;
+    line-height: 1 !important;
+    cursor: pointer !important;
+    transition: color 0.2s ease !important;
+    padding: 0 0 0 4px !important;
+    display: flex !important;
+    align-items: center !important;
+}
+.bl-close-icon:hover { color: var(--bl-danger-color) !important; }
 
 .bl-input, .bl-textarea {
     width: 100% !important;
@@ -73,7 +99,6 @@
 }
 .bl-textarea { resize: vertical !important; }
 .bl-input:focus, .bl-textarea:focus { border-color: var(--bl-accent-color) !important; }
-
 
 .bl-danger-btn { color: var(--bl-danger-color) !important; }
 .bl-accent-btn { color: var(--bl-accent-color) !important; }
@@ -198,25 +223,20 @@
     cursor: not-allowed !important;
 }
 
-#bl-purifier-popup .bl-tools-bar > div:last-child {
-    width: 100% !important;
-    box-sizing: border-box !important;
+/* --- 紧凑版第二行 --- */
+.bl-preset-compact-row {
+    display: flex !important;
+    justify-content: space-between !important;
+    align-items: center !important;
+    gap: 12px !important;
+    margin-bottom: 12px !important;
 }
-.bl-tool-btn {
-    flex: 1 1 0% !important; 
-    padding: 9px 0 !important; 
-    border-radius: 8px !important;
-    border: 1px solid var(--bl-border-color) !important;
-    background: var(--bl-background-secondary) !important;
-    color: var(--bl-text-primary) !important;
-    cursor: pointer !important;
-    font-size: 15px !important; 
-    font-weight: 600 !important;
-    text-align: center !important;
-    transition: background 0.2s, opacity 0.2s !important;
-    white-space: nowrap !important; 
+
+.bl-preset-actions {
+    display: flex !important;
+    gap: 8px !important;
+    flex-shrink: 0 !important;
 }
-.bl-tool-btn:hover { background: var(--bl-background-tertiary) !important; opacity: 1 !important; }
 
 #bl-tags-container::-webkit-scrollbar, #bl-edit-subrules-container::-webkit-scrollbar { width: 8px; }
 #bl-tags-container::-webkit-scrollbar-thumb, #bl-edit-subrules-container::-webkit-scrollbar-thumb { background: var(--bl-border-color); border-radius: 4px; }
@@ -227,7 +247,7 @@
     align-items: stretch !important;
     width: 100% !important;
     padding: 18px 20px !important; 
-    background: var(--bl-input-bg) !important;
+    background: color-mix(in srgb, var(--bl-text-primary) 4%, transparent) !important;
     border: 1px solid var(--bl-border-color) !important;
     border-radius: 10px !important;
     margin-bottom: 12px !important;
@@ -376,22 +396,6 @@
     word-break: break-word !important;
 }
 
-
-#bl-purifier-popup .bl-tools-bar {
-    display: flex !important;
-    flex-direction: column !important;
-    gap: 8px !important;
-    margin: 10px 0 14px 0 !important;
-    border-bottom: 1px solid var(--bl-border-color) !important;
-    padding-bottom: 12px !important;
-}
-
-#bl-purifier-popup .bl-preset-row {
-    display: flex !important;
-    gap: 8px !important;
-    align-items: center !important;
-}
-
 #bl-preset-select {
     flex: 1 1 auto !important;
     min-width: 0 !important;
@@ -418,7 +422,7 @@
 
 #bl-open-new-rule-btn {
     width: 100% !important;
-    margin-bottom: 10px !important;
+    margin-bottom: 14px !important;
 }
 
 #bl-tags-container {
@@ -643,7 +647,7 @@
     flex-direction: column !important;
     gap: 8px !important;
     padding: 12px !important;
-    background: var(--bl-background-popup) !important;
+    background: color-mix(in srgb, var(--bl-text-primary) 2%, transparent) !important;
     border: 1px dashed var(--bl-accent-color) !important;
     border-radius: 8px !important;
     position: relative !important;
@@ -681,23 +685,13 @@
     #bl-rule-transfer-modal .bl-transfer-content {
         width: min(420px, 92vw) !important;
     }
-    #bl-purifier-popup .bl-title { font-size: 17px !important; }
+    /* 缩小标题区域 */
+    .bl-header-compact { margin-bottom: 8px !important; padding-bottom: 8px !important; }
+    .bl-title { font-size: 17px !important; }
+    .bl-close-icon { font-size: 24px !important; }
+    
     .bl-input, .bl-textarea { font-size: 14px !important; padding: 10px 12px !important;}
-    .bl-tool-btn { font-size: 12px !important; padding: 6px 0 !important; }
-    #bl-purifier-popup .bl-preset-row {
-        display: grid !important;
-        grid-template-columns: 36px 36px minmax(0, 1fr) 36px 36px !important;
-        gap: 6px !important;
-        align-items: center !important;
-    }
-    #bl-purifier-popup .bl-preset-row .bl-icon-btn {
-        min-height: 36px !important;
-        min-width: 36px !important;
-        padding: 0 !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-    }
+    
     #bl-preset-select {
         min-width: 0 !important;
         width: 100% !important;
@@ -705,26 +699,8 @@
         padding: 8px 32px 8px 10px !important;
         background-position: right 10px center !important;
     }
-    #bl-purifier-popup .bl-tool-grid {
-        display: grid !important;
-        grid-template-columns: repeat(4, minmax(0, 1fr)) !important;
-        gap: 6px !important;
-    }
-    #bl-purifier-popup .bl-tool-grid .bl-tool-btn {
-        min-height: 38px !important;
-        display: flex !important;
-        align-items: center !important;
-        justify-content: center !important;
-        padding: 0 !important;
-    }
-    #bl-purifier-popup .bl-tool-grid .bl-tool-text {
-        display: none !important;
-    }
-    #bl-purifier-popup .bl-tool-grid .bl-tool-btn i {
-        margin: 0 !important;
-    }
+    
     .bl-rule-card { padding: 8px 10px !important; }
-    #bl-purifier-popup .bl-tools-bar { margin: 8px 0 10px 0 !important; padding-bottom: 10px !important; gap: 6px !important; }
     #bl-purifier-popup .bl-footer { gap: 10px !important; align-items: stretch !important; }
     .bl-footer-meta { flex-shrink: 0 !important; }
     .bl-footer-meta-text { font-size: 12px !important; }
@@ -944,7 +920,6 @@
     }
 }
 
-
 .bl-badge-compact {
     font-size: 9px !important;
     padding: 2px 4px !important;
@@ -1051,7 +1026,6 @@
     .bl-transfer-actions > .bl-transfer-btn { flex: 1 1 calc(50% - 4px) !important; }
 }
 
-
 .bl-rule-move-up,
 .bl-rule-move-down,
 .bl-move-subrule-up-btn,
@@ -1061,6 +1035,16 @@
     width: 32px !important;
     min-height: 32px !important;
     padding: 0 !important;
+    border: 1px solid var(--bl-border-color) !important;
+    background: var(--bl-background-secondary) !important;
+    color: var(--bl-text-primary) !important;
+}
+
+.bl-rule-move-up:hover,
+.bl-rule-move-down:hover,
+.bl-move-subrule-up-btn:hover,
+.bl-move-subrule-down-btn:hover {
+    background: var(--bl-background-tertiary) !important;
 }
 
 .bl-subrule-summary-actions .bl-icon-btn,
@@ -1084,7 +1068,6 @@
 .bl-rule-actions i {
     font-size: 13px !important;
 }
-
 
 @media screen and (max-width: 600px) {
     .bl-edit-modal-title { font-size: 15px !important; }
