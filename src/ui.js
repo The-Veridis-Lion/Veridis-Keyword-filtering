@@ -1,9 +1,11 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { deepClone, getCurrentCharacterContext, getPresetForCharacter, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
 export function setupUI() {
+    logger.debug('[setupUI] 开始初始化 UI');
     $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal').remove();
 
     if (!$('#bl-wand-btn').length) {
@@ -186,6 +188,7 @@ export function applyPresetByName(name, options = {}) {
     settings.rules = presetExists ? deepClone(settings.presets[presetName]) : [];
     runtimeState.isRegexDirty = true;
     saveSettingsDebounced();
+    logger.info(`切换预设: ${presetName || '(临时规则)'}, 存在=${presetExists}`);
     if (!options.skipRender) {
         updateToolbarUI();
         renderTags();

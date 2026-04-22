@@ -1,4 +1,5 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { buildSimpleWildcardPattern } from './utils.js';
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, clearDiffSnippetsCache, computeMessageSignature, ensureMessageDiffButton, getLatestAssistantMessageIndices, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, updateDiffSnippetCache, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
@@ -50,13 +51,13 @@ export function buildProcessors() {
 
                             let testRegex = new RegExp(pattern, flags);
                             if (testRegex.test("")) {
-                                console.warn("[Ultimate Purifier] 拦截到一个危险的空匹配正则，已忽略:", t);
+                                logger.warn(`拦截到危险的空匹配正则，已忽略: ${t}`);
                                 return;
                             }
 
                             processors.push({ regex: testRegex, replacements, isRegexMode: true });
                         } catch (e) {
-                            console.warn("[Ultimate Purifier] 忽略非法正则表达式:", t);
+                            logger.warn(`忽略非法正则表达式: ${t}`);
                         }
                     }
                 }
@@ -74,13 +75,13 @@ export function buildProcessors() {
 
                             let testRegex = new RegExp(escaped, 'gmu');
                             if (testRegex.test("")) {
-                                console.warn("[Ultimate Purifier] 拦截到一个危险的简易空匹配规则，已忽略:", t);
+                                logger.warn(`拦截到危险的简易空匹配规则，已忽略: ${t}`);
                                 return;
                             }
 
                             processors.push({ regex: testRegex, replacements, isRegexMode: true });
                         } catch (e) {
-                            console.warn("[Ultimate Purifier] 简易规则解析失败:", t);
+                            logger.warn(`简易规则解析失败: ${t}`);
                         }
                     }
                 }
@@ -98,6 +99,7 @@ export function buildProcessors() {
 
     runtimeState.activeProcessors = processors;
     runtimeState.isRegexDirty = false;
+    logger.info(`规则处理器构建完成，共 ${processors.length} 个处理器（文本:${textTargets.length} | 正则:${processors.filter(p => p.isRegexMode).length}）`);
     return runtimeState.activeProcessors;
 }
 
@@ -194,7 +196,7 @@ export function queueIncrementalChatSave() {
                 if (result instanceof Promise) await result;
             }
         } catch (e) {
-            console.error("[Ultimate Purifier] 增量存盘失败", e);
+            logger.error(`增量存盘失败`, e);
         } finally {
             runtimeState.chatSaveInFlight = false;
             if (runtimeState.pendingChatSave) queueIncrementalChatSave();
@@ -297,6 +299,7 @@ export function cleanseMessageDataAtIndex(index) {
  * @returns {void}
  */
 export function performIncrementalCleanse(payload, options = {}) {
+    logger.debug(`[performIncrementalCleanse] payload=${JSON.stringify(payload)}, options=${JSON.stringify(options)}`);
     const { chat } = getAppContext();
     if (!options.skipPurifyDom) buildProcessors();
     if (!options.skipPurifyDom && runtimeState.activeProcessors.length === 0) return;
@@ -341,7 +344,7 @@ export function performIncrementalCleanse(payload, options = {}) {
     if (dataChanged) {
         try {
             if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
-        } catch (e) { }
+        } catch (e) { logger.warn(`updateMessageBlock 调用失败 index=${index}`, e); }
         queueIncrementalChatSave();
     }
 }
@@ -351,6 +354,7 @@ export function performIncrementalCleanse(payload, options = {}) {
  * @returns {void}
  */
 export function performGlobalCleanse() {
+    logger.info(`[performGlobalCleanse] 全局净化开始`);
     const { chat, saveChat } = getAppContext();
     buildProcessors();
     clearDiffSnippetsCache();
@@ -415,7 +419,7 @@ export function performGlobalCleanse() {
                 chatChanged = true;
                 try {
                     if (typeof updateMessageBlock === 'function') setTimeout(() => updateMessageBlock(index, chat[index]), 50);
-                } catch (e) { }
+                } catch (e) { logger.warn(`updateMessageBlock 调用失败 index=${index}`, e); }
             }
         });
 
@@ -437,7 +441,7 @@ export function performGlobalCleanse() {
         try {
             if (typeof saveChat === 'function') saveChat();
         } catch (e) {
-            console.error("[Ultimate Purifier] 存盘失败", e);
+            logger.error(`存盘失败`, e);
         }
     }
     purifyDOM(document.getElementById('chat'));

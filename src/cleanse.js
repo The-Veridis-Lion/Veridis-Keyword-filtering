@@ -1,4 +1,5 @@
 import { defaultSettings, extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { applyReplacements, buildProcessors } from './core.js';
 import { showDeepCleanOverlay, updateDeepCleanOverlay } from './ui.js';
 
@@ -133,6 +134,7 @@ export function getDeepCleanTimeoutMs() {
  * @returns {Promise<void>}
  */
 export async function performDeepCleanse() {
+    logger.info('[performDeepCleanse] 深度清理开始');
     const { chat, chat_metadata, extension_settings, saveChat, saveSettingsDebounced } = getAppContext();
     buildProcessors();
     if (runtimeState.activeProcessors.length === 0) {
@@ -159,6 +161,7 @@ export async function performDeepCleanse() {
 
         for (let i = 0; i < phases.length; i++) {
             const phase = phases[i];
+            logger.info(`深度清理阶段 ${i + 1}/${phases.length}: ${phase.label}`);
             const phaseBase = i / phases.length;
             const phaseSpan = 1 / phases.length;
 
@@ -200,7 +203,7 @@ export async function performDeepCleanse() {
             alert('未发现需要替换的数据残留。');
         }
     } catch (e) {
-        console.error('[Ultimate Purifier] 深度清理出错:', e);
+        logger.error(`深度清理出错`, e);
         $('#bl-loading-overlay').remove();
         if (e && e.message === 'DEEP_CLEAN_TIMEOUT') {
             const timeoutSec = Math.round(getDeepCleanTimeoutMs() / 1000);

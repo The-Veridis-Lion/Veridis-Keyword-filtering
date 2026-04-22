@@ -1,4 +1,5 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { parseInputToWords, getCurrentCharacterContext } from './utils.js';
 import {
     applyPresetByName,
@@ -77,7 +78,10 @@ export function initRealtimeInterceptor() {
                         if (node.parentNode && isProtectedNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                        if (original !== nextValue) node.nodeValue = nextValue;
+                        if (original !== nextValue) {
+                            node.nodeValue = nextValue;
+                            logger.debug(`MutationObserver 文本替换 ${node.nodeType === 3 ? '文本' : '注释'}节点`);
+                        }
                     } else if (node.nodeType === 1) {
                         if (!isStreaming) purifyDOM(node);
                         const messageNodes = [];
@@ -92,7 +96,10 @@ export function initRealtimeInterceptor() {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                    if (original !== nextValue) m.target.nodeValue = nextValue;
+                    if (original !== nextValue) {
+                        m.target.nodeValue = nextValue;
+                        logger.debug(`MutationObserver characterData 替换`);
+                    }
                 }
             }
         } finally {
@@ -103,7 +110,12 @@ export function initRealtimeInterceptor() {
     });
 
     const chatEl = document.getElementById('chat');
-    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
+    if (chatEl) {
+        chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
+        logger.info('实时拦截器已启动，MutationObserver 监听 #chat');
+    } else {
+        logger.warn('实时拦截器启动失败，未找到 #chat 元素');
+    }
 
     let currentTheaterShadow = null;
     const theaterIntervalId = setInterval(() => {
@@ -112,14 +124,20 @@ export function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
+                logger.info('检测到剧场模式，已将 MutationObserver 附加到 ShadowRoot');
                 isPurifying = true;
                 try {
                     purifyDOM(theaterHost.shadowRoot);
+                } catch (err) {
+                    logger.warn(`剧场模式 purifyDOM 出错`, err);
                 } finally {
                     isPurifying = false;
                 }
             }
         } else {
+            if (currentTheaterShadow !== null) {
+                logger.info('剧场模式已退出，ShadowRoot 观察者已断开');
+            }
             currentTheaterShadow = null;
         }
     }, 800);
@@ -141,7 +159,7 @@ export function initRealtimeInterceptor() {
             isPurifying = true;
             try {
                 el.value = cleanedVal;
-                try { el.setSelectionRange(start, start); } catch (err) { }
+                try { el.setSelectionRange(start, start); } catch (err) { logger.warn(`setSelectionRange 失败`, err); }
             } finally {
                 isPurifying = false;
             }
@@ -153,6 +171,7 @@ export function bindEvents() {
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
 
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => {
+        logger.debug('点击了词汇映射工具栏按钮');
         updateToolbarUI();
         renderTags();
         $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
@@ -644,19 +663,35 @@ export function bindEvents() {
         });
     }
 
-    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => { runtimeState.isStreamingGeneration = true; });
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => {
+        runtimeState.isStreamingGeneration = true;
+        logger.debug('事件: GENERATION_STARTED');
+    });
     if (event_types.STREAM_TOKEN_RECEIVED) {
         eventSource.on(event_types.STREAM_TOKEN_RECEIVED, (payload) => {
             runtimeState.isStreamingGeneration = true;
-            visualMaskLatestOnly(payload);
+            logger.debug(`事件: STREAM_TOKEN_RECEIVED`);
         });
     }
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, delayedIncrementalCleanse);
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedIncrementalCleanse);
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedIncrementalCleanse);
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedIncrementalCleanse);
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, (payload) => {
+        logger.debug('事件: GENERATION_ENDED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => {
+        logger.debug('事件: GENERATION_STOPPED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => {
+        logger.debug('事件: MESSAGE_RECEIVED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => {
+        logger.debug('事件: MESSAGE_SWIPED');
+        delayedIncrementalCleanse(payload);
+    });
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
+            logger.info('事件: CHAT_CHANGED，聊天已切换');
             resetDiffRuntimeState();
             runtimeState.currentDiffIndex = undefined;
             $('#bl-diff-modal').hide();
