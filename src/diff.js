@@ -93,7 +93,7 @@ function notifyDiffStateChanged(reason = 'state', index = runtimeState.currentDi
     }
 }
 
-function persistTrackedDiffState() {
+export function persistTrackedDiffState() {
     const { chat_metadata } = getAppContext();
     if (!chat_metadata || typeof chat_metadata !== 'object') return;
 
