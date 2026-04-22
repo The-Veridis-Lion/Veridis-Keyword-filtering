@@ -191,7 +191,7 @@ export function isTrackedDiffMessage(index) {
     return runtimeState.trackedDiffMessageOrder.includes(index);
 }
 
-export function markDiffComparisonPending(index, signature = '') {
+export function markDiffComparisonPending(index, signature = '', options = {}) {
     const { chat } = getAppContext();
     if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return false;
 
@@ -210,10 +210,12 @@ export function markDiffComparisonPending(index, signature = '') {
         updatedAt: Date.now(),
     });
 
-    if (existingCache || !existingState || existingState.status !== 'pending') {
-        persistTrackedDiffState();
-        injectDiffButtons([index]);
-        notifyDiffStateChanged('pending', index);
+    if (options.skipPersist !== true) {
+        if (existingCache || !existingState || existingState.status !== 'pending') {
+            persistTrackedDiffState();
+            injectDiffButtons([index]);
+            notifyDiffStateChanged('pending', index);
+        }
     }
     return true;
 }

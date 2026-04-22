@@ -293,13 +293,13 @@ export function cleanseMessageDataAtIndex(index) {
 /**
  * 执行增量净化：处理单条消息并刷新对应 DOM。
  * @param {number|object} payload 事件载荷或消息索引。
- * @param {{visualOnly?: boolean, fallbackLatest?: boolean}} [options={}] 控制选项。
+ * @param {{visualOnly?: boolean, fallbackLatest?: boolean, skipPurifyDom?: boolean}} [options={}] 控制选项。
  * @returns {void}
  */
 export function performIncrementalCleanse(payload, options = {}) {
     const { chat } = getAppContext();
-    buildProcessors();
-    if (runtimeState.activeProcessors.length === 0) return;
+    if (!options.skipPurifyDom) buildProcessors();
+    if (!options.skipPurifyDom && runtimeState.activeProcessors.length === 0) return;
 
     const fallbackLatest = options.fallbackLatest !== false;
     let index = getMessageIndexFromEvent(payload);
@@ -334,7 +334,7 @@ export function performIncrementalCleanse(payload, options = {}) {
     const dataChanged = options.visualOnly ? false : cleanseMessageDataAtIndex(index);
     const messageNode = getMessageDomNode(index);
     if (messageNode) {
-        purifyDOM(messageNode);
+        if (!options.skipPurifyDom) purifyDOM(messageNode);
         ensureMessageDiffButton(index, messageNode);
     }
 
