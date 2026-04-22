@@ -275,13 +275,8 @@ export function cleanseMessageDataAtIndex(index) {
     }
 
     if (isAssistant) {
-        Object.defineProperty(msg, '__bl_diff_source_signature', { 
-            value: currentSignature, writable: true, enumerable: false, configurable: true 
-        });
-        Object.defineProperty(msg, '__bl_diff_last_cleaned_mes', { 
-            value: typeof msg.mes === 'string' ? msg.mes : '', writable: true, enumerable: false, configurable: true 
-        });
-
+        msg.__bl_diff_source_signature = currentSignature;
+        msg.__bl_diff_last_cleaned_mes = typeof msg.mes === 'string' ? msg.mes : '';
         writeReadyDiffCache(index, currentSignature, {
             snippets: mainCache.snippets,
             fullDiff: mainCache.fullDiff,
