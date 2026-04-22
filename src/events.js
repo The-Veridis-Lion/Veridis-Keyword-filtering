@@ -28,6 +28,25 @@ import { performDeepCleanse } from './cleanse.js';
 import { purifyDOM, isProtectedNode } from './dom.js';
 import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
+// 流式期间 diff 按钮注入的节流状态（模块级别，避免 initRealtimeInterceptor 调用时函数未定义）
+let streamingDiffInjectTimer = null;
+let streamingPendingDiffIndices = [];
+
+export function injectDiffButtonsStreamingSafe(indices = []) {
+    if (runtimeState.isStreamingGeneration) {
+        indices.forEach(i => { if (!streamingPendingDiffIndices.includes(i)) streamingPendingDiffIndices.push(i); });
+        if (streamingDiffInjectTimer) return;
+        streamingDiffInjectTimer = setTimeout(() => {
+            streamingDiffInjectTimer = null;
+            const pending = [...streamingPendingDiffIndices];
+            streamingPendingDiffIndices = [];
+            if (pending.length > 0) injectDiffButtons(pending);
+        }, 100);
+    } else {
+        if (indices.length > 0) injectDiffButtons(indices);
+    }
+}
+
 export function initRealtimeInterceptor() {
     let isPurifying = false;
 
@@ -591,35 +610,6 @@ export function bindEvents() {
         };
         input.click();
     });
-    // ==========================================
-    // 流式期间性能优化：批量 diff 按钮注入 + 延迟持久化
-    // ==========================================
-    let streamingDiffInjectTimer = null;
-    let streamingPendingDiffIndices = [];
-
-    const injectDiffButtonsStreamingSafe = (indices = []) => {
-        if (runtimeState.isStreamingGeneration) {
-            indices.forEach(i => { if (!streamingPendingDiffIndices.includes(i)) streamingPendingDiffIndices.push(i); });
-            if (streamingDiffInjectTimer) return;
-            streamingDiffInjectTimer = setTimeout(() => {
-                streamingDiffInjectTimer = null;
-                const pending = [...streamingPendingDiffIndices];
-                streamingPendingDiffIndices = [];
-                if (pending.length > 0) injectDiffButtons(pending);
-            }, 100);
-        } else {
-            if (indices.length > 0) injectDiffButtons(indices);
-        }
-    };
-
-    let streamingPersistTimer = null;
-    const scheduleStreamingPersist = () => {
-        if (streamingPersistTimer) return;
-        streamingPersistTimer = setTimeout(() => {
-            streamingPersistTimer = null;
-            persistTrackedDiffState();
-        }, 200);
-    };
     // ==========================================
 
     const markPendingFromPayload = (payload, options = {}) => {
