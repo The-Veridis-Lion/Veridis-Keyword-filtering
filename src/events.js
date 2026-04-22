@@ -1,4 +1,5 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { parseInputToWords, getCurrentCharacterContext } from './utils.js';
 import {
     applyPresetByName,
@@ -25,7 +26,26 @@ import {
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 import { purifyDOM, isProtectedNode } from './dom.js';
-import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
+import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
+
+// 流式期间 diff 按钮注入的节流状态（模块级别，避免 initRealtimeInterceptor 调用时函数未定义）
+let streamingDiffInjectTimer = null;
+let streamingPendingDiffIndices = [];
+
+export function injectDiffButtonsStreamingSafe(indices = []) {
+    if (runtimeState.isStreamingGeneration) {
+        indices.forEach(i => { if (!streamingPendingDiffIndices.includes(i)) streamingPendingDiffIndices.push(i); });
+        if (streamingDiffInjectTimer) return;
+        streamingDiffInjectTimer = setTimeout(() => {
+            streamingDiffInjectTimer = null;
+            const pending = [...streamingPendingDiffIndices];
+            streamingPendingDiffIndices = [];
+            if (pending.length > 0) injectDiffButtons(pending);
+        }, 100);
+    } else {
+        if (indices.length > 0) injectDiffButtons(indices);
+    }
+}
 
 export function initRealtimeInterceptor() {
     let isPurifying = false;
@@ -49,19 +69,22 @@ export function initRealtimeInterceptor() {
         node.querySelectorAll?.('.mes').forEach((mes) => bucket.push(mes));
     };
 
-    const primePendingComparisonForNode = (messageNode) => {
+    const primePendingComparisonForNode = (messageNode, options = {}) => {
         const { chat } = getAppContext();
         const index = resolveNodeMessageIndex(messageNode);
         if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return -1;
-        markDiffComparisonPending(index, computeMessageSignature(chat[index]));
+        markDiffComparisonPending(index, computeMessageSignature(chat[index]), options);
         return index;
     };
 
     const chatObserver = new MutationObserver((mutations) => {
         if (isPurifying) return;
 
-        buildProcessors();
-        if (runtimeState.activeProcessors.length === 0) return;
+        const isStreaming = runtimeState.isStreamingGeneration;
+        if (!isStreaming) {
+            buildProcessors();
+            if (runtimeState.activeProcessors.length === 0) return;
+        }
 
         const touchedMessageIndices = new Set();
         isPurifying = true;
@@ -73,14 +96,17 @@ export function initRealtimeInterceptor() {
                     if (node.nodeType === 3 || node.nodeType === 8) {
                         if (node.parentNode && isProtectedNode(node.parentNode)) continue;
                         const original = node.nodeValue;
-                        const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                        if (original !== nextValue) node.nodeValue = nextValue;
+                        const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
+                        if (original !== nextValue) {
+                            node.nodeValue = nextValue;
+                            logger.debug(`MutationObserver 文本替换 ${node.nodeType === 3 ? '文本' : '注释'}节点`);
+                        }
                     } else if (node.nodeType === 1) {
-                        purifyDOM(node);
+                        if (!isStreaming) purifyDOM(node);
                         const messageNodes = [];
                         collectMessageNodes(node, messageNodes);
                         messageNodes.forEach((mesNode) => {
-                            const index = primePendingComparisonForNode(mesNode);
+                            const index = primePendingComparisonForNode(mesNode, { skipPersist: isStreaming });
                             if (index >= 0) touchedMessageIndices.add(index);
                         });
                     }
@@ -88,19 +114,27 @@ export function initRealtimeInterceptor() {
                 if (m.type === 'characterData') {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
-                    const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                    if (original !== nextValue) m.target.nodeValue = nextValue;
+                    const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
+                    if (original !== nextValue) {
+                        m.target.nodeValue = nextValue;
+                        logger.debug(`MutationObserver characterData 替换`);
+                    }
                 }
             }
         } finally {
             chatObserver.takeRecords();
-            injectDiffButtons([...touchedMessageIndices]);
+            injectDiffButtonsStreamingSafe([...touchedMessageIndices]);
             isPurifying = false;
         }
     });
 
     const chatEl = document.getElementById('chat');
-    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
+    if (chatEl) {
+        chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
+        logger.info('实时拦截器已启动，MutationObserver 监听 #chat');
+    } else {
+        logger.warn('实时拦截器启动失败，未找到 #chat 元素');
+    }
 
     let currentTheaterShadow = null;
     const theaterIntervalId = setInterval(() => {
@@ -109,14 +143,20 @@ export function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
+                logger.info('检测到剧场模式，已将 MutationObserver 附加到 ShadowRoot');
                 isPurifying = true;
                 try {
                     purifyDOM(theaterHost.shadowRoot);
+                } catch (err) {
+                    logger.warn(`剧场模式 purifyDOM 出错`, err);
                 } finally {
                     isPurifying = false;
                 }
             }
         } else {
+            if (currentTheaterShadow !== null) {
+                logger.info('剧场模式已退出，ShadowRoot 观察者已断开');
+            }
             currentTheaterShadow = null;
         }
     }, 800);
@@ -138,7 +178,7 @@ export function initRealtimeInterceptor() {
             isPurifying = true;
             try {
                 el.value = cleanedVal;
-                try { el.setSelectionRange(start, start); } catch (err) { }
+                try { el.setSelectionRange(start, start); } catch (err) { logger.warn(`setSelectionRange 失败`, err); }
             } finally {
                 isPurifying = false;
             }
@@ -150,6 +190,7 @@ export function bindEvents() {
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
 
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => {
+        logger.debug('点击了词汇映射工具栏按钮');
         updateToolbarUI();
         renderTags();
         $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
@@ -569,26 +610,28 @@ export function bindEvents() {
         };
         input.click();
     });
-    const markPendingFromPayload = (payload) => {
+    // ==========================================
+
+    const markPendingFromPayload = (payload, options = {}) => {
         const { chat } = getAppContext();
         let index = getMessageIndexFromEvent(payload);
         if (index < 0) index = getLatestMessageIndex();
         if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return;
-        markDiffComparisonPending(index, computeMessageSignature(chat[index]));
-        injectDiffButtons([index]);
+        markDiffComparisonPending(index, computeMessageSignature(chat[index]), options);
+        if (options.skipInject !== true) injectDiffButtonsStreamingSafe([index]);
     };
 
     const visualMaskLatestOnly = (payload) => {
         if (!runtimeState.isStreamingGeneration) return;
-        markPendingFromPayload(payload);
-        performIncrementalCleanse(payload, { visualOnly: true, fallbackLatest: true });
+        markPendingFromPayload(payload, { skipPersist: true, skipInject: true });
+        performIncrementalCleanse(payload, { visualOnly: true, fallbackLatest: true, skipPurifyDom: true });
     };
 
     let delayedCleanseTimer = null;
     let settleCleanseTimer = null;
     const delayedIncrementalCleanse = (payload) => {
         runtimeState.isStreamingGeneration = false;
-        markPendingFromPayload(payload);
+        markPendingFromPayload(payload, { skipPersist: false });
         if (delayedCleanseTimer) clearTimeout(delayedCleanseTimer);
         if (settleCleanseTimer) clearTimeout(settleCleanseTimer);
         delayedCleanseTimer = setTimeout(() => {
@@ -610,19 +653,35 @@ export function bindEvents() {
         });
     }
 
-    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => { runtimeState.isStreamingGeneration = true; });
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => {
+        runtimeState.isStreamingGeneration = true;
+        logger.debug('事件: GENERATION_STARTED');
+    });
     if (event_types.STREAM_TOKEN_RECEIVED) {
         eventSource.on(event_types.STREAM_TOKEN_RECEIVED, (payload) => {
             runtimeState.isStreamingGeneration = true;
-            visualMaskLatestOnly(payload);
+            logger.debug(`事件: STREAM_TOKEN_RECEIVED`);
         });
     }
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, delayedIncrementalCleanse);
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, delayedIncrementalCleanse);
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, delayedIncrementalCleanse);
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, delayedIncrementalCleanse);
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, (payload) => {
+        logger.debug('事件: GENERATION_ENDED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => {
+        logger.debug('事件: GENERATION_STOPPED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => {
+        logger.debug('事件: MESSAGE_RECEIVED');
+        delayedIncrementalCleanse(payload);
+    });
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => {
+        logger.debug('事件: MESSAGE_SWIPED');
+        delayedIncrementalCleanse(payload);
+    });
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
+            logger.info('事件: CHAT_CHANGED，聊天已切换');
             resetDiffRuntimeState();
             runtimeState.currentDiffIndex = undefined;
             $('#bl-diff-modal').hide();

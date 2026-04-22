@@ -1,4 +1,5 @@
 import { extensionName, getAppContext } from './state.js';
+import { logger } from './log.js';
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 
@@ -28,7 +29,7 @@ export function getCurrentCharacterContext() {
             const name = String(ch.name || ch.ch_name || '').trim();
             return byId(chid, name);
         }
-    } catch (e) { }
+    } catch (e) { logger.warn(`getCurrentCharacterContext: window.this_chid 读取失败`, e); }
 
     const selectedCard = document.querySelector('.character_select.selected, .group_select.selected, .character_select[chid].active');
     if (selectedCard) {
@@ -59,6 +60,7 @@ export function getCurrentCharacterContext() {
         return { key: `hash:${hashKey}`, name: `当前聊天(${hashKey.slice(0, 24)})` };
     }
 
+    logger.info('未检测到角色上下文（getCurrentCharacterContext 返回空 key）');
     return { key: "", name: "未检测到角色（可先发送一条消息后再试）" };
 }
 
