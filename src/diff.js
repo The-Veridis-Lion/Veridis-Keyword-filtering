@@ -1,4 +1,5 @@
 import { diffMetadataKey, extensionName, getAppContext, maxTrackedDiffMessages, runtimeState } from './state.js';
+import { logger } from './log.js';
 import { applyReplacements, queueIncrementalChatSave } from './core.js';
 import { getMessageDomNode } from './dom.js';
 
@@ -87,12 +88,12 @@ function notifyDiffStateChanged(reason = 'state', index = runtimeState.currentDi
         try {
             runtimeState.diffModalRefresh(index, { reason, changedIndex: index });
         } catch (err) {
-            console.warn('[Ultimate Purifier] 刷新对比弹窗失败', err);
+            logger.warn(`刷新对比弹窗失败`, err);
         }
     }
 }
 
-function persistTrackedDiffState() {
+export function persistTrackedDiffState() {
     const { chat_metadata } = getAppContext();
     if (!chat_metadata || typeof chat_metadata !== 'object') return;
 
@@ -125,6 +126,7 @@ function persistTrackedDiffState() {
 }
 
 export function resetDiffRuntimeState() {
+    logger.debug('重置差异运行时状态');
     runtimeState.diffSnippetsCache.clear();
     runtimeState.diffMessageStates.clear();
     runtimeState.trackedDiffMessageOrder = [];
@@ -153,6 +155,7 @@ export function restoreDiffStateFromChatMetadata() {
     }
 
     runtimeState.trackedDiffMessageOrder = restoredOrder;
+    logger.debug(`从 chat_metadata 恢复差异状态: 还原了 ${restoredOrder.length} 条记录`);
 }
 
 function removeTrackedIndex(index) {
@@ -191,7 +194,7 @@ export function isTrackedDiffMessage(index) {
     return runtimeState.trackedDiffMessageOrder.includes(index);
 }
 
-export function markDiffComparisonPending(index, signature = '') {
+export function markDiffComparisonPending(index, signature = '', options = {}) {
     const { chat } = getAppContext();
     if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return false;
 
@@ -210,10 +213,13 @@ export function markDiffComparisonPending(index, signature = '') {
         updatedAt: Date.now(),
     });
 
-    if (existingCache || !existingState || existingState.status !== 'pending') {
-        persistTrackedDiffState();
-        injectDiffButtons([index]);
-        notifyDiffStateChanged('pending', index);
+    if (options.skipPersist !== true) {
+        if (existingCache || !existingState || existingState.status !== 'pending') {
+            persistTrackedDiffState();
+            injectDiffButtons([index]);
+            notifyDiffStateChanged('pending', index);
+            logger.debug(`标记差异待比较: index=${index}, signature=${normalizedSignature}`);
+        }
     }
     return true;
 }
@@ -236,6 +242,7 @@ export function writeReadyDiffCache(index, signature, cacheData = {}) {
     persistTrackedDiffState();
     injectDiffButtons([index]);
     notifyDiffStateChanged('cache-written', index);
+    logger.debug(`写入差异缓存: index=${index}, signature=${signature || ''}`);
     return true;
 }
 

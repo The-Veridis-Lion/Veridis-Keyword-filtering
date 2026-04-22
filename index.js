@@ -2,9 +2,11 @@ import { extension_settings } from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
 
 import { defaultSettings, extensionName, initAppContext, runtimeState } from './src/state.js';
+import { logger } from './src/log.js';
 import { bindEvents, initRealtimeInterceptor } from './src/events.js';
 import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPresetBindings } from './src/ui.js';
 import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.js';
+import { performGlobalCleanse } from './src/core.js';
 
 initAppContext({
     extension_settings,
@@ -26,7 +28,8 @@ function ensureSettingsShape() {
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
     if (settings.enableVisualDiff === undefined) settings.enableVisualDiff = true;
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
-    if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false; // <-- 新增：初始化收纳字段
+    if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false;
+    if (settings.logLevel === undefined) settings.logLevel = 2;
     cleanupInvalidPresetBindings();
 
     const timeoutSec = Number(settings.deepCleanTimeoutSec);
@@ -90,13 +93,18 @@ jQuery(() => {
     const boot = () => {
         if (runtimeState.isBooted) return;
         runtimeState.isBooted = true;
+        logger.info('[屏蔽词净化助手] 启动初始化开始...');
         setupUI();
         bindEvents();
         initRealtimeInterceptor();
         updateToolbarUI();
         applyCharacterPresetBinding(true, { skipCleanse: true });
         restoreDiffStateFromChatMetadata();
-        setTimeout(() => injectDiffButtons(), 80);
+        setTimeout(() => {
+            injectDiffButtons();
+            performGlobalCleanse();
+        }, 80);
+        logger.info('[屏蔽词净化助手] 启动初始化完成');
     };
 
     if (typeof eventSource !== 'undefined' && event_types.APP_READY) {
