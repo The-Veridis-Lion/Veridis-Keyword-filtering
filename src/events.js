@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { parseInputToWords, getCurrentCharacterContext } from './utils.js';
+import { deepClone, parseInputToWords, getCurrentCharacterContext } from './utils.js';
 import {
     applyPresetByName,
     renderTags,
@@ -31,6 +31,133 @@ import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMess
 // 流式期间 diff 按钮注入的节流状态（模块级别，避免 initRealtimeInterceptor 调用时函数未定义）
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
+const ruleObjectIdMap = new WeakMap();
+let nextRuleObjectId = 1;
+
+function ensureRuleObjectId(rule) {
+    if (!rule || typeof rule !== 'object') return '';
+    let id = ruleObjectIdMap.get(rule);
+    if (!id) {
+        id = `rule-${nextRuleObjectId++}`;
+        ruleObjectIdMap.set(rule, id);
+    }
+    return id;
+}
+
+function getRuleIdsByIndexes(rules, indexes) {
+    return indexes
+        .map((idx) => rules[idx])
+        .filter(Boolean)
+        .map((rule) => ensureRuleObjectId(rule));
+}
+
+function getSelectedIndexesFromState(rules) {
+    const selectedSet = new Set(runtimeState.batchSelectedRuleIds || []);
+    return rules
+        .map((rule, idx) => (selectedSet.has(ensureRuleObjectId(rule)) ? idx : -1))
+        .filter((idx) => idx >= 0);
+}
+
+function syncBatchSelectionStateFromDom(rules) {
+    const indexes = $('.batch-item-checkbox:checked')
+        .map(function() { return Number($(this).data('index')); })
+        .get()
+        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < rules.length);
+    runtimeState.batchSelectedRuleIds = getRuleIdsByIndexes(rules, indexes);
+}
+
+function applyBatchSelectionStateToDom(rules) {
+    const selectedSet = new Set(runtimeState.batchSelectedRuleIds || []);
+    $('.batch-item-checkbox').each(function() {
+        const idx = Number($(this).data('index'));
+        const rule = rules[idx];
+        const checked = Boolean(rule) && selectedSet.has(ensureRuleObjectId(rule));
+        $(this).prop('checked', checked);
+    });
+}
+
+function getBatchOperationContext(clickedIndex, rules) {
+    const isBatchMode = $('#bl-purifier-popup').hasClass('is-batch-mode');
+    const selectedIndexes = getSelectedIndexesFromState(rules);
+    const selectedSet = new Set(selectedIndexes);
+    const shouldBatch = isBatchMode && selectedIndexes.length > 1 && selectedSet.has(clickedIndex);
+    return { isBatchMode, selectedIndexes, selectedSet, shouldBatch };
+}
+
+function shouldBatchTransferRule(clickedIndex, rules) {
+    if (!Number.isInteger(clickedIndex) || clickedIndex < 0 || clickedIndex >= rules.length) return false;
+    const ctx = getBatchOperationContext(clickedIndex, rules);
+    return ctx.shouldBatch;
+}
+
+function deleteSingleRule(rules, index) {
+    const deletingRule = rules[index];
+    if (!deletingRule) return false;
+    const deletingId = ensureRuleObjectId(deletingRule);
+    rules.splice(index, 1);
+    runtimeState.batchSelectedRuleIds = (runtimeState.batchSelectedRuleIds || []).filter((id) => id !== deletingId);
+    return true;
+}
+
+function deleteSelectedRules(rules, selectedIndexes) {
+    if (!Array.isArray(selectedIndexes) || selectedIndexes.length <= 1) return false;
+    const deletingSet = new Set(selectedIndexes);
+    const deletingIds = new Set(getRuleIdsByIndexes(rules, selectedIndexes));
+    const nextRules = rules.filter((_, idx) => !deletingSet.has(idx));
+    rules.splice(0, rules.length, ...nextRules);
+    runtimeState.batchSelectedRuleIds = (runtimeState.batchSelectedRuleIds || []).filter((id) => !deletingIds.has(id));
+    return true;
+}
+
+function handleDeleteRule(index, rules) {
+    if (shouldBatchTransferRule(index, rules)) {
+        const selectedIndexes = getSelectedIndexesFromState(rules);
+        return deleteSelectedRules(rules, selectedIndexes);
+    }
+    return deleteSingleRule(rules, index);
+}
+
+function renderTagsPreserveBatchSelection() {
+    renderTags();
+    const { extension_settings } = getAppContext();
+    const rules = extension_settings[extensionName]?.rules || [];
+    applyBatchSelectionStateToDom(rules);
+}
+
+function batchMoveRules(rules, selectedIndexes, direction) {
+    if (selectedIndexes.length <= 1) return false;
+    const selectedSet = new Set(selectedIndexes);
+    const sorted = [...selectedIndexes].sort((a, b) => a - b);
+
+    if (direction === 'up') {
+        if (sorted[0] === 0) return false;
+        for (let i = 0; i < sorted.length; i++) {
+            const idx = sorted[i];
+            const prev = idx - 1;
+            if (prev >= 0 && !selectedSet.has(prev)) {
+                [rules[prev], rules[idx]] = [rules[idx], rules[prev]];
+                selectedSet.delete(idx);
+                selectedSet.add(prev);
+            }
+        }
+        return true;
+    }
+
+    if (direction === 'down') {
+        if (sorted[sorted.length - 1] === rules.length - 1) return false;
+        for (let i = sorted.length - 1; i >= 0; i--) {
+            const idx = sorted[i];
+            const next = idx + 1;
+            if (next < rules.length && !selectedSet.has(next)) {
+                [rules[idx], rules[next]] = [rules[next], rules[idx]];
+                selectedSet.delete(idx);
+                selectedSet.add(next);
+            }
+        }
+        return true;
+    }
+    return false;
+}
 
 export function injectDiffButtonsStreamingSafe(indices = []) {
     if (runtimeState.isStreamingGeneration) {
@@ -198,12 +325,81 @@ export function bindEvents() {
 
     $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => $('#bl-purifier-popup').fadeOut(200));
     const settings = extension_settings[extensionName];
+
+    const applyThemeMode = (mode) => {
+        const normalized = ['auto', 'light', 'dark'].includes(mode) ? mode : 'auto';
+        settings.themeMode = normalized;
+        $('#bl-purifier-popup').attr('data-bl-theme', normalized);
+    };
+
+    applyThemeMode(settings.themeMode || 'auto');
+
+    $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function() {
+        const current = settings.themeMode || 'auto';
+        const next = current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto';
+        applyThemeMode(next);
+        saveSettingsDebounced();
+    });
+
     $('#bl-diff-global-toggle').prop('checked', settings.enableVisualDiff !== false);
 
     $(document).off('change', '#bl-diff-global-toggle').on('change', '#bl-diff-global-toggle', function() {
         settings.enableVisualDiff = $(this).prop('checked');
         saveSettingsDebounced();
         injectDiffButtons();
+    });
+
+    $(document).off('click', '#bl-batch-toggle').on('click', '#bl-batch-toggle', function() {
+        const $popup = $('#bl-purifier-popup');
+        const isBatchMode = !$popup.hasClass('is-batch-mode');
+        $popup.toggleClass('is-batch-mode', isBatchMode);
+        $('#bl-batch-operations').toggle(isBatchMode);
+        $('.batch-checkbox-label').toggle(isBatchMode);
+        $(this).toggleClass('active', isBatchMode);
+        if (!isBatchMode) {
+            $('.batch-item-checkbox').prop('checked', false);
+            runtimeState.batchSelectedRuleIds = [];
+        }
+    });
+
+    $(document).off('click', '#bl-btn-select-all').on('click', '#bl-btn-select-all', () => {
+        $('.batch-item-checkbox').prop('checked', true);
+        const rules = extension_settings[extensionName].rules || [];
+        syncBatchSelectionStateFromDom(rules);
+    });
+
+    $(document).off('click', '#bl-btn-select-invert').on('click', '#bl-btn-select-invert', () => {
+        $('.batch-item-checkbox').each(function() {
+            $(this).prop('checked', !$(this).prop('checked'));
+        });
+        const rules = extension_settings[extensionName].rules || [];
+        syncBatchSelectionStateFromDom(rules);
+    });
+
+    $(document).off('click', '#bl-btn-batch-transfer').on('click', '#bl-btn-batch-transfer', () => {
+        const rules = extension_settings[extensionName].rules || [];
+        const selectedIndexes = getSelectedIndexesFromState(rules);
+        if (selectedIndexes.length <= 0) return;
+        openTransferModal(selectedIndexes);
+    });
+
+    $(document).off('click', '#bl-btn-batch-delete').on('click', '#bl-btn-batch-delete', () => {
+        const rules = extension_settings[extensionName].rules || [];
+        const selectedIndexes = getSelectedIndexesFromState(rules);
+        if (selectedIndexes.length <= 0) return;
+        if (!confirm(`确定要删除选中的 ${selectedIndexes.length} 个规则分组吗？删除后无法恢复。`)) return;
+        const changed = selectedIndexes.length > 1
+            ? deleteSelectedRules(rules, selectedIndexes)
+            : deleteSingleRule(rules, selectedIndexes[0]);
+        if (!changed) return;
+        runtimeState.isRegexDirty = true;
+        saveSettingsDebounced();
+        renderTagsPreserveBatchSelection();
+    });
+
+    $(document).off('change', '.batch-item-checkbox').on('change', '.batch-item-checkbox', function() {
+        const rules = extension_settings[extensionName].rules || [];
+        syncBatchSelectionStateFromDom(rules);
     });
     function renderDiffModalContent(index) {
         const { extension_settings } = getAppContext();
@@ -312,45 +508,77 @@ export function bindEvents() {
     });
     $(document).off('click', '#bl-open-new-rule-btn').on('click', '#bl-open-new-rule-btn', () => openEditModal(-1));
     $(document).off('click', '.bl-rule-edit').on('click', '.bl-rule-edit', function() { openEditModal($(this).data('index')); });
-    $(document).off('click', '.bl-rule-transfer').on('click', '.bl-rule-transfer', function() { openTransferModal($(this).data('index')); });
+    $(document).off('click', '.bl-rule-transfer').on('click', '.bl-rule-transfer', function() {
+        const index = Number($(this).data('index'));
+        const rules = extension_settings[extensionName].rules || [];
+        if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
+        if (shouldBatchTransferRule(index, rules)) {
+            const selectedIndexes = getSelectedIndexesFromState(rules);
+            openTransferModal(selectedIndexes);
+            return;
+        }
+        openTransferModal(index);
+    });
 
     $(document).off('click', '.bl-rule-move-up').on('click', '.bl-rule-move-up', function() {
         const index = Number($(this).data('index'));
         const rules = extension_settings[extensionName].rules || [];
-        if (index <= 0 || index >= rules.length) return;
-        [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
+        if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
+        const ctx = getBatchOperationContext(index, rules);
+        if (ctx.shouldBatch) {
+            const moved = batchMoveRules(rules, ctx.selectedIndexes, 'up');
+            if (!moved) return;
+        } else {
+            if (index <= 0) return;
+            [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
+        }
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
-        renderTags();
+        renderTagsPreserveBatchSelection();
     });
 
     $(document).off('click', '.bl-rule-move-down').on('click', '.bl-rule-move-down', function() {
         const index = Number($(this).data('index'));
         const rules = extension_settings[extensionName].rules || [];
-        if (index < 0 || index >= rules.length - 1) return;
-        [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
+        if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
+        const ctx = getBatchOperationContext(index, rules);
+        if (ctx.shouldBatch) {
+            const moved = batchMoveRules(rules, ctx.selectedIndexes, 'down');
+            if (!moved) return;
+        } else {
+            if (index >= rules.length - 1) return;
+            [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
+        }
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
-        renderTags();
+        renderTagsPreserveBatchSelection();
     });
 
     $(document).off('change', '.bl-rule-toggle').on('change', '.bl-rule-toggle', function() {
-        const index = $(this).data('index');
-        extension_settings[extensionName].rules[index].enabled = $(this).prop('checked');
+        const rules = extension_settings[extensionName].rules || [];
+        const index = Number($(this).data('index'));
+        if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
+        const targetEnabled = $(this).prop('checked');
+        const ctx = getBatchOperationContext(index, rules);
+        if (ctx.shouldBatch) ctx.selectedIndexes.forEach((idx) => { rules[idx].enabled = targetEnabled; });
+        else rules[index].enabled = targetEnabled;
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
-        renderTags();
+        renderTagsPreserveBatchSelection();
         performGlobalCleanse();
     });
 
     $(document).off('click', '.bl-rule-del').on('click', '.bl-rule-del', function() {
         // 误触拦截
         if (!confirm('确定要删除这个规则分组吗？删除后无法恢复。')) return; 
-        
-        extension_settings[extensionName].rules.splice($(this).data('index'), 1);
+        const rules = extension_settings[extensionName].rules || [];
+        const index = Number($(this).data('index'));
+        if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
+        const changed = handleDeleteRule(index, rules);
+        if (!changed) return;
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
-        renderTags();
+        renderTagsPreserveBatchSelection();
     });
 
     $(document).off('click', '#bl-add-subrule-btn').on('click', '#bl-add-subrule-btn', () => {

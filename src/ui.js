@@ -16,40 +16,55 @@ export function setupUI() {
     }
 
     $('body').append(`
-        <div id="bl-purifier-popup" style="display:none;">
-        <div class="bl-header-compact">
-                <h3 class="bl-title">全局映射预设</h3>
-                <div class="bl-header-actions">
-                    <button id="bl-default-toggle" title="设为默认预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-star"></i></button>
-                    <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-icon-btn bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
-                    <div class="bl-divider-v"></div>
-                    <button id="bl-preset-import" title="导入存档" class="bl-icon-btn"><i class="fas fa-file-import"></i></button>
-                    <button id="bl-preset-export" title="导出存档" class="bl-icon-btn"><i class="fas fa-file-export"></i></button>
-                    <button id="bl-close-btn" class="bl-close-icon" title="关闭">&times;</button>
+        <div id="bl-purifier-popup" data-bl-theme="auto" style="display:none;">
+            <div class="header">
+                <div class="title">
+                    <i class="fas fa-globe"></i>
+                    全局映射预设
                 </div>
-            </div>
-            
-            <div class="bl-preset-compact-row">
-                <select id="bl-preset-select" class="bl-preset-select"></select>
-                <div class="bl-preset-actions">
-                    <button id="bl-preset-rename" title="重命名" class="bl-icon-btn"><i class="fas fa-pen"></i></button>
-                    <button id="bl-preset-save" title="保存" class="bl-icon-btn"><i class="fas fa-save"></i></button>
-                    <button id="bl-preset-new" title="新建" class="bl-icon-btn"><i class="fas fa-plus"></i></button>
-                    <button id="bl-preset-delete" title="删除存档" class="bl-icon-btn bl-danger-btn"><i class="fas fa-trash"></i></button>
+                <div class="icon-group">
+                    <button id="bl-theme-toggle" title="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
+                    <button id="bl-default-toggle" title="设为默认预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
+                    <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
+                    <button id="bl-preset-import" title="导入存档"><i class="fas fa-file-import"></i></button>
+                    <button id="bl-preset-export" title="导出存档"><i class="fas fa-file-export"></i></button>
+                    <button id="bl-close-btn" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
             </div>
 
-            <button id="bl-open-new-rule-btn" class="bl-add-rule-btn"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
-            <div id="bl-tags-container" class="bl-scroll-region"></div>
-            <div class="bl-footer">
-                <div class="bl-footer-meta">
-                    <label class="bl-toggle-switch" title="开启后，被修改过的消息旁会显示溯源按钮">
-                        <input type="checkbox" id="bl-diff-global-toggle">
-                        <span class="bl-toggle-slider"></span>
-                    </label>
-                    <span class="bl-footer-meta-text">透视模式</span>
+            <div class="toolbar">
+                <select id="bl-preset-select" class="select-box"></select>
+                <div class="icon-group">
+                    <button id="bl-preset-rename" title="重命名"><i class="fas fa-pen"></i></button>
+                    <button id="bl-preset-save" title="保存"><i class="fas fa-save"></i></button>
+                    <button id="bl-preset-new" title="新建"><i class="fas fa-plus"></i></button>
+                    <button id="bl-preset-delete" title="删除存档"><i class="fas fa-trash"></i></button>
                 </div>
-                <button id="bl-deep-clean-btn" class="bl-deep-clean-btn"><i class="fas fa-broom"></i> 深度清理</button>
+            </div>
+
+            <div class="action-buttons">
+                <button id="bl-open-new-rule-btn" class="btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
+                <button class="btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
+            </div>
+
+            <div class="batch-operations" id="bl-batch-operations">
+                <button class="batch-btn" id="bl-btn-select-all"><i class="far fa-check-square"></i> 全选</button>
+                <button class="batch-btn" id="bl-btn-select-invert"><i class="fas fa-minus-square"></i> 反选</button>
+                <button class="batch-btn" id="bl-btn-batch-transfer"><i class="fas fa-copy"></i> 复制 / 转移</button>
+                <button class="batch-btn danger" id="bl-btn-batch-delete"><i class="fas fa-trash"></i> 删除</button>
+            </div>
+
+            <div class="divider"></div>
+
+            <div id="bl-tags-container" class="card-list" style="overflow-y:auto; flex:1;"></div>
+
+            <div class="bottom-bar">
+                <label class="checkbox-label" title="开启后，被修改过的消息旁会显示溯源按钮">
+                    <input type="checkbox" id="bl-diff-global-toggle">
+                    <span class="custom-checkbox square"></span>
+                    <span class="bottom-text">透视模式</span>
+                </label>
+                <button id="bl-deep-clean-btn" class="btn-danger"><i class="fas fa-broom"></i> 深度清理</button>
             </div>
         </div>`);
 
@@ -279,62 +294,60 @@ export function renderTags() {
     const rules = extension_settings[extensionName]?.rules || [];
     const html = rules.map((r, i) => {
         const name = r.name || `未命名合集 ${i + 1}`;
-        let subRulesHtml = '';
+        const subRules = r.subRules || [];
         const maxPreview = 3;
 
-        (r.subRules || []).slice(0, maxPreview).forEach(sub => {
+        const subRulesHtml = subRules.slice(0, maxPreview).map((sub) => {
             const mode = sub.mode || 'text';
-            let badgeHTML = '';
-            if (mode === 'regex') badgeHTML = '<span class="bl-badge bl-badge-regex bl-badge-compact">正则</span>';
-            else if (mode === 'simple') badgeHTML = '<span class="bl-badge bl-badge-simple bl-badge-compact">简易</span>';
-            else badgeHTML = '<span class="bl-badge bl-badge-text bl-badge-compact">普通</span>';
+            const tagText = mode === 'regex' ? '正则' : mode === 'simple' ? '简易' : '普通';
+            const tPreview = (sub.targets || []).join(mode === 'text' ? ', ' : ' | ') || '（空）';
+            const rPreview = (sub.replacements || []).join(', ') || '【直接删除】';
+            return `
+                <div class="rule-item">
+                    <span class="tag">${tagText}</span>
+                    <span class="source">${tPreview}</span>
+                    <i class="fas fa-arrow-right arrow"></i>
+                    <span class="target">${rPreview}</span>
+                </div>`;
+        }).join('');
 
-            let tPreview = sub.targets.join(mode === 'text' ? ', ' : ' | ');
-            let rPreview = sub.replacements.join(', ');
-            if (!rPreview) rPreview = '【直接删除】';
-
-            subRulesHtml += `
-            <div class="bl-rule-preview-row">
-                ${badgeHTML}
-                <b class="bl-rule-preview-source">${tPreview}</b>
-                <i class="fas fa-arrow-right bl-rule-preview-arrow"></i>
-                <span class="bl-rule-preview-target">${rPreview}</span>
-            </div>`;
-        });
-
-        if ((r.subRules || []).length > maxPreview) {
-            subRulesHtml += `<div class="bl-rule-preview-more">... 以及其他 ${(r.subRules || []).length - maxPreview} 组映射</div>`;
-        }
-        if (!subRulesHtml) subRulesHtml = '<div class="bl-rule-preview-empty">无有效映射规则</div>';
+        const moreHtml = subRules.length > maxPreview
+            ? `<div class="more-text">... 以及其他 ${subRules.length - maxPreview} 组映射</div>`
+            : '';
+        const bodyHtml = subRules.length > 0
+            ? `<div class="card-body">${subRulesHtml}${moreHtml}</div>`
+            : '';
 
         const isEnabled = r.enabled !== false;
         const checkedAttr = isEnabled ? 'checked' : '';
-        const cardClass = isEnabled ? 'bl-rule-card' : 'bl-rule-card bl-rule-disabled';
         const moveUpDisabled = i === 0 ? 'disabled' : '';
         const moveDownDisabled = i === rules.length - 1 ? 'disabled' : '';
+        const headerClass = subRules.length > 0 ? 'card-header has-border' : 'card-header';
 
         return `
-        <div class="${cardClass}">
-            <div class="bl-rule-card-header">
-                <div class="bl-rule-card-main">
-                    <label class="bl-toggle-switch bl-rule-toggle-wrap" title="启用/禁用此合集">
-                        <input type="checkbox" class="bl-rule-toggle" data-index="${i}" ${checkedAttr}>
-                        <span class="bl-toggle-slider"></span>
-                    </label>
-                    <div class="bl-rule-name">
-                        ${name} <span class="bl-rule-count">(${(r.subRules || []).length}组)</span>
+            <div class="card ${!isEnabled ? 'is-disabled' : ''}" data-index="${i}">
+                <div class="${headerClass}">
+                    <div class="header-left">
+                        <label class="batch-checkbox-label">
+                            <input type="checkbox" class="batch-item-checkbox" data-index="${i}">
+                            <span class="custom-checkbox square-2px"></span>
+                        </label>
+                        <label class="checkbox-label">
+                            <input type="checkbox" class="bl-rule-toggle" data-index="${i}" ${checkedAttr}>
+                            <span class="custom-checkbox"></span>
+                            <span class="group-title">${name}</span>
+                        </label>
+                    </div>
+                    <div class="icon-group compact">
+                        <button class="bl-rule-move-up" data-index="${i}" title="上移合集" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
+                        <button class="bl-rule-move-down" data-index="${i}" title="下移合集" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
+                        <button class="bl-rule-transfer" data-index="${i}" title="复制/转移到其他存档"><i class="fas fa-copy"></i></button>
+                        <button class="bl-rule-edit" data-index="${i}" title="编辑合集"><i class="fas fa-pen"></i></button>
+                        <button class="bl-rule-del" data-index="${i}" title="删除合集"><i class="fas fa-trash"></i></button>
                     </div>
                 </div>
-                <div class="bl-rule-actions">
-                    <button class="bl-rule-move-up" data-index="${i}" title="上移合集" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
-                    <button class="bl-rule-move-down" data-index="${i}" title="下移合集" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
-                    <button class="bl-rule-transfer" data-index="${i}" title="复制/转移到其他存档"><i class="fas fa-copy"></i></button>
-                    <button class="bl-rule-edit" data-index="${i}" title="编辑合集"><i class="fas fa-pen"></i></button>
-                    <button class="bl-rule-del" data-index="${i}" title="删除合集"><i class="fas fa-trash"></i></button>
-                </div>
-            </div>
-            <div class="bl-rule-preview">${subRulesHtml}</div>
-        </div>`;
+                ${bodyHtml}
+            </div>`;
     }).join('');
 
     $('#bl-tags-container').html(html || '<div class="bl-empty-state">当前无规则，请点击上方按钮新增</div>');
@@ -438,7 +451,7 @@ export function syncSubrulesFromDOM() {
     });
 }
 
-export function openTransferModal(ruleIndex) {
+export function openTransferModal(ruleIndexOrIndexes) {
     const { extension_settings } = getAppContext();
     const settings = extension_settings[extensionName];
     const presets = settings?.presets || {};
@@ -449,7 +462,11 @@ export function openTransferModal(ruleIndex) {
         return;
     }
 
-    runtimeState.currentTransferRuleIndex = ruleIndex;
+    const indexes = Array.isArray(ruleIndexOrIndexes) ? ruleIndexOrIndexes : [ruleIndexOrIndexes];
+    runtimeState.currentTransferRuleIndexes = indexes
+        .map((v) => Number(v))
+        .filter((v) => Number.isInteger(v) && v >= 0);
+    runtimeState.currentTransferRuleIndex = runtimeState.currentTransferRuleIndexes[0] ?? -1;
     const $select = $('#bl-transfer-target');
     $select.empty();
     targetNames.forEach(name => $select.append($('<option>', { value: name, text: name })));
@@ -458,6 +475,7 @@ export function openTransferModal(ruleIndex) {
 
 export function closeTransferModal() {
     runtimeState.currentTransferRuleIndex = -1;
+    runtimeState.currentTransferRuleIndexes = [];
     $('#bl-rule-transfer-modal').hide();
 }
 
@@ -465,22 +483,39 @@ export function runRuleTransfer(isMove) {
     const { extension_settings, saveSettingsDebounced } = getAppContext();
     const settings = extension_settings[extensionName];
     const targetPreset = String($('#bl-transfer-target').val() || '');
-    if (runtimeState.currentTransferRuleIndex < 0) return;
+    const sourcePreset = String(settings.activePreset || '');
+    const transferIndexes = Array.isArray(runtimeState.currentTransferRuleIndexes) && runtimeState.currentTransferRuleIndexes.length > 0
+        ? runtimeState.currentTransferRuleIndexes
+        : [runtimeState.currentTransferRuleIndex];
+    const validIndexes = transferIndexes
+        .map((v) => Number(v))
+        .filter((v) => Number.isInteger(v) && v >= 0);
+    if (validIndexes.length === 0) return;
     if (!targetPreset) {
         alert('请选择目标存档。');
         return;
     }
+    if (targetPreset === sourcePreset) {
+        closeTransferModal();
+        return;
+    }
 
     const sourceRules = settings.rules || [];
-    const selectedRule = sourceRules[runtimeState.currentTransferRuleIndex];
-    if (!selectedRule) {
+    const uniqueIndexes = [...new Set(validIndexes)].sort((a, b) => a - b).filter((idx) => idx < sourceRules.length);
+    if (uniqueIndexes.length === 0) {
         closeTransferModal();
         return;
     }
 
     if (!Array.isArray(settings.presets[targetPreset])) settings.presets[targetPreset] = [];
-    settings.presets[targetPreset].push(JSON.parse(JSON.stringify(selectedRule)));
-    if (isMove) sourceRules.splice(runtimeState.currentTransferRuleIndex, 1);
+    const movingRules = uniqueIndexes.map((idx) => sourceRules[idx]).filter(Boolean);
+    movingRules.forEach((rule) => settings.presets[targetPreset].push(JSON.parse(JSON.stringify(rule))));
+    if (isMove) {
+        for (let i = uniqueIndexes.length - 1; i >= 0; i--) {
+            sourceRules.splice(uniqueIndexes[i], 1);
+        }
+        runtimeState.batchSelectedRuleIds = [];
+    }
 
     runtimeState.isRegexDirty = true;
     closeTransferModal();
