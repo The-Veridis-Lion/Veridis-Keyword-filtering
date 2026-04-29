@@ -9,7 +9,7 @@ import {
     showConfirmModal,
     refreshCharacterBindingUI,
     applyCharacterPresetBinding,
-    syncSubrulesFromDOM,
+    openSingleRuleModal,
     openTransferModal,
     closeTransferModal,
     runRuleTransfer,
@@ -28,7 +28,6 @@ import { performDeepCleanse } from './cleanse.js';
 import { purifyDOM, isProtectedNode } from './dom.js';
 import { computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
-// 流式期间 diff 按钮注入的节流状态（模块级别，避免 initRealtimeInterceptor 调用时函数未定义）
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
 const ruleObjectIdMap = new WeakMap();
@@ -45,24 +44,16 @@ function ensureRuleObjectId(rule) {
 }
 
 function getRuleIdsByIndexes(rules, indexes) {
-    return indexes
-        .map((idx) => rules[idx])
-        .filter(Boolean)
-        .map((rule) => ensureRuleObjectId(rule));
+    return indexes.map((idx) => rules[idx]).filter(Boolean).map((rule) => ensureRuleObjectId(rule));
 }
 
 function getSelectedIndexesFromState(rules) {
     const selectedSet = new Set(runtimeState.batchSelectedRuleIds || []);
-    return rules
-        .map((rule, idx) => (selectedSet.has(ensureRuleObjectId(rule)) ? idx : -1))
-        .filter((idx) => idx >= 0);
+    return rules.map((rule, idx) => (selectedSet.has(ensureRuleObjectId(rule)) ? idx : -1)).filter((idx) => idx >= 0);
 }
 
 function syncBatchSelectionStateFromDom(rules) {
-    const indexes = $('.batch-item-checkbox:checked')
-        .map(function() { return Number($(this).data('index')); })
-        .get()
-        .filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < rules.length);
+    const indexes = $('.batch-item-checkbox:checked').map(function() { return Number($(this).data('index')); }).get().filter((idx) => Number.isInteger(idx) && idx >= 0 && idx < rules.length);
     runtimeState.batchSelectedRuleIds = getRuleIdsByIndexes(rules, indexes);
 }
 
@@ -86,8 +77,7 @@ function getBatchOperationContext(clickedIndex, rules) {
 
 function shouldBatchTransferRule(clickedIndex, rules) {
     if (!Number.isInteger(clickedIndex) || clickedIndex < 0 || clickedIndex >= rules.length) return false;
-    const ctx = getBatchOperationContext(clickedIndex, rules);
-    return ctx.shouldBatch;
+    return getBatchOperationContext(clickedIndex, rules).shouldBatch;
 }
 
 function deleteSingleRule(rules, index) {
@@ -111,8 +101,7 @@ function deleteSelectedRules(rules, selectedIndexes) {
 
 function handleDeleteRule(index, rules) {
     if (shouldBatchTransferRule(index, rules)) {
-        const selectedIndexes = getSelectedIndexesFromState(rules);
-        return deleteSelectedRules(rules, selectedIndexes);
+        return deleteSelectedRules(rules, getSelectedIndexesFromState(rules));
     }
     return deleteSingleRule(rules, index);
 }
@@ -120,8 +109,7 @@ function handleDeleteRule(index, rules) {
 function renderTagsPreserveBatchSelection() {
     renderTags();
     const { extension_settings } = getAppContext();
-    const rules = extension_settings[extensionName]?.rules || [];
-    applyBatchSelectionStateToDom(rules);
+    applyBatchSelectionStateToDom(extension_settings[extensionName]?.rules || []);
 }
 
 function batchMoveRules(rules, selectedIndexes, direction) {
@@ -176,7 +164,6 @@ export function injectDiffButtonsStreamingSafe(indices = []) {
 
 export function initRealtimeInterceptor() {
     let isPurifying = false;
-
     const resolveNodeMessageIndex = (node) => {
         if (!node || node.nodeType !== 1) return -1;
         const attrs = [node.getAttribute('mesid'), node.getAttribute('data-mesid'), node.getAttribute('messageid'), node.getAttribute('data-message-id')];
@@ -186,8 +173,7 @@ export function initRealtimeInterceptor() {
         }
         const chatEl = document.getElementById('chat');
         if (!chatEl) return -1;
-        const nodes = Array.from(chatEl.querySelectorAll('.mes'));
-        return nodes.indexOf(node);
+        return Array.from(chatEl.querySelectorAll('.mes')).indexOf(node);
     };
 
     const collectMessageNodes = (node, bucket) => {
@@ -205,14 +191,12 @@ export function initRealtimeInterceptor() {
     };
 
     const chatObserver = new MutationObserver((mutations) => {
-        if (isPurifying) return;
-
-        const isStreaming = runtimeState.isStreamingGeneration;
-        if (!isStreaming) {
-            buildProcessors();
-            if (runtimeState.activeProcessors.length === 0) return;
-        }
-
+    if (isPurifying) return;
+    const isStreaming = runtimeState.isStreamingGeneration;
+    
+    buildProcessors();
+    if (runtimeState.activeProcessors.length === 0) return;
+        
         const touchedMessageIndices = new Set();
         isPurifying = true;
         try {
@@ -224,14 +208,11 @@ export function initRealtimeInterceptor() {
                         if (node.parentNode && isProtectedNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                        if (original !== nextValue) {
-                            node.nodeValue = nextValue;
-                            logger.debug(`MutationObserver 文本替换 ${node.nodeType === 3 ? '文本' : '注释'}节点`);
-                        }
-                    } else if (node.nodeType === 1) {
-                        if (!isStreaming) purifyDOM(node);
-                        const messageNodes = [];
-                        collectMessageNodes(node, messageNodes);
+                        if (original !== nextValue) node.nodeValue = nextValue;
+                        } else if (node.nodeType === 1) {
+                            purifyDOM(node);
+                            const messageNodes = [];
+                            collectMessageNodes(node, messageNodes);
                         messageNodes.forEach((mesNode) => {
                             const index = primePendingComparisonForNode(mesNode, { skipPersist: isStreaming });
                             if (index >= 0) touchedMessageIndices.add(index);
@@ -242,10 +223,7 @@ export function initRealtimeInterceptor() {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
-                    if (original !== nextValue) {
-                        m.target.nodeValue = nextValue;
-                        logger.debug(`MutationObserver characterData 替换`);
-                    }
+                    if (original !== nextValue) m.target.nodeValue = nextValue;
                 }
             }
         } finally {
@@ -256,12 +234,7 @@ export function initRealtimeInterceptor() {
     });
 
     const chatEl = document.getElementById('chat');
-    if (chatEl) {
-        chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
-        logger.info('实时拦截器已启动，MutationObserver 监听 #chat');
-    } else {
-        logger.warn('实时拦截器启动失败，未找到 #chat 元素');
-    }
+    if (chatEl) chatObserver.observe(chatEl, { childList: true, subtree: true, characterData: true });
 
     let currentTheaterShadow = null;
     const theaterIntervalId = setInterval(() => {
@@ -270,20 +243,10 @@ export function initRealtimeInterceptor() {
             if (currentTheaterShadow !== theaterHost) {
                 chatObserver.observe(theaterHost.shadowRoot, { childList: true, subtree: true, characterData: true });
                 currentTheaterShadow = theaterHost;
-                logger.info('检测到剧场模式，已将 MutationObserver 附加到 ShadowRoot');
                 isPurifying = true;
-                try {
-                    purifyDOM(theaterHost.shadowRoot);
-                } catch (err) {
-                    logger.warn(`剧场模式 purifyDOM 出错`, err);
-                } finally {
-                    isPurifying = false;
-                }
+                try { purifyDOM(theaterHost.shadowRoot); } catch (err) {} finally { isPurifying = false; }
             }
         } else {
-            if (currentTheaterShadow !== null) {
-                logger.info('剧场模式已退出，ShadowRoot 观察者已断开');
-            }
             currentTheaterShadow = null;
         }
     }, 800);
@@ -291,21 +254,17 @@ export function initRealtimeInterceptor() {
 
     document.addEventListener('input', (e) => {
         const el = e.target;
-        if (!['TEXTAREA', 'INPUT'].includes(el.tagName)) return;
-        if (isProtectedNode(el)) return;
-
+        if (!['TEXTAREA', 'INPUT'].includes(el.tagName) || isProtectedNode(el)) return;
         buildProcessors();
         if (runtimeState.activeProcessors.length === 0) return;
-
         const originalVal = el.value || '';
         const cleanedVal = applyReplacements(originalVal, { deterministic: true });
-
         if (originalVal !== cleanedVal) {
             const start = el.selectionStart;
             isPurifying = true;
             try {
                 el.value = cleanedVal;
-                try { el.setSelectionRange(start, start); } catch (err) { logger.warn(`setSelectionRange 失败`, err); }
+                try { el.setSelectionRange(start, start); } catch (err) {}
             } finally {
                 isPurifying = false;
             }
@@ -317,7 +276,6 @@ export function bindEvents() {
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
 
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => {
-        logger.debug('点击了词汇映射工具栏按钮');
         updateToolbarUI();
         renderTags();
         $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
@@ -329,15 +287,14 @@ export function bindEvents() {
     const applyThemeMode = (mode) => {
         const normalized = ['auto', 'light', 'dark'].includes(mode) ? mode : 'auto';
         settings.themeMode = normalized;
-        $('#bl-purifier-popup').attr('data-bl-theme', normalized);
+        $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal').attr('data-bl-theme', normalized);
     };
 
     applyThemeMode(settings.themeMode || 'auto');
 
     $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function() {
         const current = settings.themeMode || 'auto';
-        const next = current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto';
-        applyThemeMode(next);
+        applyThemeMode(current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto');
         saveSettingsDebounced();
     });
 
@@ -364,45 +321,33 @@ export function bindEvents() {
 
     $(document).off('click', '#bl-btn-select-all').on('click', '#bl-btn-select-all', () => {
         $('.batch-item-checkbox').prop('checked', true);
-        const rules = extension_settings[extensionName].rules || [];
-        syncBatchSelectionStateFromDom(rules);
+        syncBatchSelectionStateFromDom(extension_settings[extensionName].rules || []);
     });
 
     $(document).off('click', '#bl-btn-select-invert').on('click', '#bl-btn-select-invert', () => {
-        $('.batch-item-checkbox').each(function() {
-            $(this).prop('checked', !$(this).prop('checked'));
-        });
-        const rules = extension_settings[extensionName].rules || [];
-        syncBatchSelectionStateFromDom(rules);
+        $('.batch-item-checkbox').each(function() { $(this).prop('checked', !$(this).prop('checked')); });
+        syncBatchSelectionStateFromDom(extension_settings[extensionName].rules || []);
     });
 
     $(document).off('click', '#bl-btn-batch-transfer').on('click', '#bl-btn-batch-transfer', () => {
-        const rules = extension_settings[extensionName].rules || [];
-        const selectedIndexes = getSelectedIndexesFromState(rules);
-        if (selectedIndexes.length <= 0) return;
-        openTransferModal(selectedIndexes);
+        const selectedIndexes = getSelectedIndexesFromState(extension_settings[extensionName].rules || []);
+        if (selectedIndexes.length > 0) openTransferModal(selectedIndexes);
     });
 
     $(document).off('click', '#bl-btn-batch-delete').on('click', '#bl-btn-batch-delete', () => {
         const rules = extension_settings[extensionName].rules || [];
         const selectedIndexes = getSelectedIndexesFromState(rules);
-        if (selectedIndexes.length <= 0) return;
-        if (!confirm(`确定要删除选中的 ${selectedIndexes.length} 个规则分组吗？删除后无法恢复。`)) return;
-        const changed = selectedIndexes.length > 1
-            ? deleteSelectedRules(rules, selectedIndexes)
-            : deleteSingleRule(rules, selectedIndexes[0]);
-        if (!changed) return;
-        runtimeState.isRegexDirty = true;
-        saveSettingsDebounced();
-        renderTagsPreserveBatchSelection();
+        if (selectedIndexes.length <= 0 || !confirm(`确定要删除选中的 ${selectedIndexes.length} 个规则分组吗？`)) return;
+        if (selectedIndexes.length > 1 ? deleteSelectedRules(rules, selectedIndexes) : deleteSingleRule(rules, selectedIndexes[0])) {
+            runtimeState.isRegexDirty = true;
+            saveSettingsDebounced();
+            renderTagsPreserveBatchSelection();
+        }
     });
 
-    $(document).off('change', '.batch-item-checkbox').on('change', '.batch-item-checkbox', function() {
-        const rules = extension_settings[extensionName].rules || [];
-        syncBatchSelectionStateFromDom(rules);
-    });
+    $(document).off('change', '.batch-item-checkbox').on('change', '.batch-item-checkbox', () => syncBatchSelectionStateFromDom(extension_settings[extensionName].rules || []));
+
     function renderDiffModalContent(index) {
-        const { extension_settings } = getAppContext();
         const settings = extension_settings[extensionName];
         const mode = settings.diffViewMode || 'snippet';
         const state = getDiffStateForMessage(index);
@@ -410,27 +355,17 @@ export function bindEvents() {
         const contentEl = $('#bl-diff-modal-content');
 
         if (state.status !== 'ready') {
-            contentEl.html(`
-                <div class="bl-diff-loading">
-                    <i class="fas fa-spinner fa-spin"></i>
-                    <span>Loading...</span>
-                </div>
-            `);
+            contentEl.html(`<div class="bl-diff-loading"><i class="fas fa-spinner fa-spin"></i><span>Loading...</span></div>`);
             $('#bl-diff-mode-text').text(mode === 'full' ? '切回片段' : '全文模式');
             $('#bl-diff-mode-icon').attr('class', mode === 'full' ? 'fa-solid fa-list-ul' : 'fa-solid fa-file-lines');
             return;
         }
-
         if (mode === 'full') {
-            const fullHtml = cached.fullDiff || '<div class="bl-diff-empty">当前消息未触发净化差异。</div>';
-            contentEl.html(`<div class="bl-diff-full-text">${fullHtml}</div>`);
+            contentEl.html(`<div class="bl-diff-full-text">${cached.fullDiff || '<div class="bl-diff-empty">当前消息未触发差异。</div>'}</div>`);
             $('#bl-diff-mode-text').text('切回片段');
             $('#bl-diff-mode-icon').attr('class', 'fa-solid fa-list-ul');
         } else {
-            const html = cached.snippets.length > 0
-                ? cached.snippets.join('<hr class="bl-diff-divider">')
-                : '<div class="bl-diff-empty">当前消息未触发净化差异。</div>';
-            contentEl.html(html);
+            contentEl.html(cached.snippets.length > 0 ? cached.snippets.join('<hr class="bl-diff-divider">') : '<div class="bl-diff-empty">当前消息未触发差异。</div>');
             $('#bl-diff-mode-text').text('全文模式');
             $('#bl-diff-mode-icon').attr('class', 'fa-solid fa-file-lines');
         }
@@ -439,19 +374,12 @@ export function bindEvents() {
     runtimeState.diffModalRefresh = (index) => {
         if (runtimeState.currentDiffIndex === undefined) return;
         if (index !== undefined && index !== runtimeState.currentDiffIndex) return;
-        if (!$('#bl-diff-modal').is(':visible')) return;
-        renderDiffModalContent(runtimeState.currentDiffIndex);
+        if ($('#bl-diff-modal').is(':visible')) renderDiffModalContent(runtimeState.currentDiffIndex);
     };
 
-    // ==========================================
-    // 新修改的区域开始：透视弹窗按钮与收纳逻辑
-    // ==========================================
     $(document).off('click', '.bl-diff-btn').on('click', '.bl-diff-btn', function() {
         const index = Number($(this).attr('data-index'));
         if (!Number.isInteger(index) || index < 0) return;
-
-        // --- 新增：同步收纳按钮的图标和文本状态 ---
-        const { extension_settings } = getAppContext();
         const settings = extension_settings[extensionName];
         if (settings.diffButtonInExtraMenu) {
             $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-thumbtack');
@@ -460,22 +388,15 @@ export function bindEvents() {
             $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-ellipsis');
             $('#bl-diff-pos-text').text('收纳按钮');
         }
-        // ------------------------------------------
-
         runtimeState.currentDiffIndex = index;
         renderDiffModalContent(index);
         $('#bl-diff-modal').css('display', 'flex');
     });
 
     $(document).off('click', '#bl-diff-pos-toggle').on('click', '#bl-diff-pos-toggle', function() {
-        const { extension_settings, saveSettingsDebounced } = getAppContext();
         const settings = extension_settings[extensionName];
-        
-        // 切换布尔值状态并存盘
         settings.diffButtonInExtraMenu = !settings.diffButtonInExtraMenu;
         saveSettingsDebounced();
-
-        // 切换UI显示
         if (settings.diffButtonInExtraMenu) {
             $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-thumbtack');
             $('#bl-diff-pos-text').text('外显按钮');
@@ -483,41 +404,27 @@ export function bindEvents() {
             $('#bl-diff-pos-icon').attr('class', 'fa-solid fa-ellipsis');
             $('#bl-diff-pos-text').text('收纳按钮');
         }
-
-        // 重新渲染当前屏幕上所有的透视按钮层级
         injectDiffButtons();
     });
-    // ==========================================
-    // 新修改的区域结束
-    // ==========================================
 
     $(document).off('click', '#bl-diff-mode-toggle').on('click', '#bl-diff-mode-toggle', function() {
-        const { extension_settings, saveSettingsDebounced } = getAppContext();
         const settings = extension_settings[extensionName];
         settings.diffViewMode = settings.diffViewMode === 'full' ? 'snippet' : 'full';
         saveSettingsDebounced();
-
-        if (runtimeState.currentDiffIndex !== undefined) {
-            renderDiffModalContent(runtimeState.currentDiffIndex);
-        }
+        if (runtimeState.currentDiffIndex !== undefined) renderDiffModalContent(runtimeState.currentDiffIndex);
     });
 
     $(document).off('click', '#bl-diff-modal-close').on('click', '#bl-diff-modal-close', () => $('#bl-diff-modal').hide());
-    $(document).off('click', '#bl-diff-modal').on('click', '#bl-diff-modal', function(e) {
-        if (e.target && e.target.id === 'bl-diff-modal') $('#bl-diff-modal').hide();
-    });
+    $(document).off('click', '#bl-diff-modal').on('click', '#bl-diff-modal', function(e) { if (e.target && e.target.id === 'bl-diff-modal') $('#bl-diff-modal').hide(); });
+    
     $(document).off('click', '#bl-open-new-rule-btn').on('click', '#bl-open-new-rule-btn', () => openEditModal(-1));
     $(document).off('click', '.bl-rule-edit').on('click', '.bl-rule-edit', function() { openEditModal($(this).data('index')); });
     $(document).off('click', '.bl-rule-transfer').on('click', '.bl-rule-transfer', function() {
         const index = Number($(this).data('index'));
         const rules = extension_settings[extensionName].rules || [];
         if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
-        if (shouldBatchTransferRule(index, rules)) {
-            const selectedIndexes = getSelectedIndexesFromState(rules);
-            openTransferModal(selectedIndexes);
-            return;
-        }
-        openTransferModal(index);
+        if (shouldBatchTransferRule(index, rules)) openTransferModal(getSelectedIndexesFromState(rules));
+        else openTransferModal(index);
     });
 
     $(document).off('click', '.bl-rule-move-up').on('click', '.bl-rule-move-up', function() {
@@ -525,13 +432,8 @@ export function bindEvents() {
         const rules = extension_settings[extensionName].rules || [];
         if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
         const ctx = getBatchOperationContext(index, rules);
-        if (ctx.shouldBatch) {
-            const moved = batchMoveRules(rules, ctx.selectedIndexes, 'up');
-            if (!moved) return;
-        } else {
-            if (index <= 0) return;
-            [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]];
-        }
+        if (ctx.shouldBatch) { if (!batchMoveRules(rules, ctx.selectedIndexes, 'up')) return; }
+        else { if (index <= 0) return; [rules[index - 1], rules[index]] = [rules[index], rules[index - 1]]; }
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
         renderTagsPreserveBatchSelection();
@@ -542,13 +444,8 @@ export function bindEvents() {
         const rules = extension_settings[extensionName].rules || [];
         if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
         const ctx = getBatchOperationContext(index, rules);
-        if (ctx.shouldBatch) {
-            const moved = batchMoveRules(rules, ctx.selectedIndexes, 'down');
-            if (!moved) return;
-        } else {
-            if (index >= rules.length - 1) return;
-            [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]];
-        }
+        if (ctx.shouldBatch) { if (!batchMoveRules(rules, ctx.selectedIndexes, 'down')) return; }
+        else { if (index >= rules.length - 1) return; [rules[index], rules[index + 1]] = [rules[index + 1], rules[index]]; }
         runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
         renderTagsPreserveBatchSelection();
@@ -569,28 +466,24 @@ export function bindEvents() {
     });
 
     $(document).off('click', '.bl-rule-del').on('click', '.bl-rule-del', function() {
-        // 误触拦截
         if (!confirm('确定要删除这个规则分组吗？删除后无法恢复。')) return; 
         const rules = extension_settings[extensionName].rules || [];
         const index = Number($(this).data('index'));
         if (!Number.isInteger(index) || index < 0 || index >= rules.length) return;
-        const changed = handleDeleteRule(index, rules);
-        if (!changed) return;
-        runtimeState.isRegexDirty = true;
-        saveSettingsDebounced();
-        renderTagsPreserveBatchSelection();
+        if (handleDeleteRule(index, rules)) {
+            runtimeState.isRegexDirty = true;
+            saveSettingsDebounced();
+            renderTagsPreserveBatchSelection();
+        }
     });
 
-    $(document).off('click', '#bl-add-subrule-btn').on('click', '#bl-add-subrule-btn', () => {
-        syncSubrulesFromDOM();
-        runtimeState.currentEditingSubrules.push({ targets: [], replacements: [], mode: 'simple', isEditing: true });
-        renderSubrulesToModal();
-        const container = $('#bl-edit-subrules-container');
-        container.scrollTop(container[0].scrollHeight);
-    });
+    // ==========================================
+    // 独立子映射管理
+    // ==========================================
+    
+    $(document).off('click', '#bl-add-subrule-btn').on('click', '#bl-add-subrule-btn', () => openSingleRuleModal(-1));
 
     $(document).off('click', '.bl-move-subrule-up-btn').on('click', '.bl-move-subrule-up-btn', function() {
-        syncSubrulesFromDOM();
         const index = Number($(this).data('index'));
         if (index <= 0 || index >= runtimeState.currentEditingSubrules.length) return;
         [runtimeState.currentEditingSubrules[index - 1], runtimeState.currentEditingSubrules[index]] = [runtimeState.currentEditingSubrules[index], runtimeState.currentEditingSubrules[index - 1]];
@@ -598,39 +491,92 @@ export function bindEvents() {
     });
 
     $(document).off('click', '.bl-move-subrule-down-btn').on('click', '.bl-move-subrule-down-btn', function() {
-        syncSubrulesFromDOM();
         const index = Number($(this).data('index'));
         if (index < 0 || index >= runtimeState.currentEditingSubrules.length - 1) return;
         [runtimeState.currentEditingSubrules[index], runtimeState.currentEditingSubrules[index + 1]] = [runtimeState.currentEditingSubrules[index + 1], runtimeState.currentEditingSubrules[index]];
         renderSubrulesToModal();
     });
 
-    $(document).off('click', '.bl-edit-subrule-btn').on('click', '.bl-edit-subrule-btn', function() {
-        syncSubrulesFromDOM();
-        runtimeState.currentEditingSubrules[$(this).data('index')].isEditing = true;
-        renderSubrulesToModal();
-    });
-
-    $(document).off('click', '.bl-save-subrule-btn').on('click', '.bl-save-subrule-btn', function() {
-        syncSubrulesFromDOM();
-        runtimeState.currentEditingSubrules[$(this).data('index')].isEditing = false;
-        renderSubrulesToModal();
-    });
-
-    $(document).off('change', '.bl-sub-mode').on('change', '.bl-sub-mode', function() {
-        const idx = $(this).closest('.bl-subrule-row').find('.bl-save-subrule-btn').data('index');
-        syncSubrulesFromDOM();
-        runtimeState.currentEditingSubrules[idx].mode = $(this).val();
-        renderSubrulesToModal();
-    });
-
     $(document).off('click', '.bl-del-subrule-btn').on('click', '.bl-del-subrule-btn', function() {
-        syncSubrulesFromDOM();
         runtimeState.currentEditingSubrules.splice($(this).data('index'), 1);
         renderSubrulesToModal();
     });
 
-    $(document).off('click', '#bl-edit-cancel').on('click', '#bl-edit-cancel', () => $('#bl-rule-edit-modal').hide());
+    $(document).off('click', '.bl-edit-subrule-btn').on('click', '.bl-edit-subrule-btn', function() {
+        openSingleRuleModal($(this).data('index'));
+    });
+
+    // ==========================================
+    // 独立编辑弹窗事件 (包含备注的快捷修改与保存)
+    // ==========================================
+    
+    $(document).off('click', '.bl-remark-subrule-btn').on('click', '.bl-remark-subrule-btn', function(e) {
+        e.preventDefault();
+        const index = $(this).data('index');
+        const sub = runtimeState.currentEditingSubrules[index];
+        const newRemark = prompt("📝 快捷修改规则备注：\n(若不需要备注，请直接清空并点击确定)", sub.remark || '');
+        
+        if (newRemark !== null) {
+            sub.remark = newRemark.trim();
+            renderSubrulesToModal(); 
+        }
+    });
+
+    $(document).off('change', '#bl-modal-sub-mode').on('change', '#bl-modal-sub-mode', function() {
+        const mode = $(this).val();
+        const $t = $('#bl-modal-sub-target');
+        const $r = $('#bl-modal-sub-rep');
+        
+        if (mode === 'regex') {
+            $t.attr('placeholder', "正则匹配规则 (每行一条)\n例如：/(宛若|如同)(神明|恶魔)/g");
+            $r.attr('placeholder', "替换后词汇 (每行一条，允许含逗号，可留空)\n支持 $1, $2 捕获组引用");
+        } else if (mode === 'simple') {
+            $t.attr('placeholder', "简易语法 (每行一条)\n例如：{宛若,如同}{神明,恶魔}?");
+            $r.attr('placeholder', "替换后词汇 (每行一条，支持随机，可留空)");
+        } else {
+            $t.attr('placeholder', "被替换词汇 (逗号/空格分隔)\n例如：嘴角勾起, 并不存在");
+            $r.attr('placeholder', "替换后词汇 (逗号/空格分隔，留空直接删除)");
+        }
+    });
+
+    $(document).off('click', '#bl-modal-sub-save').on('click', '#bl-modal-sub-save', function() {
+        const mode = $('#bl-modal-sub-mode').val();
+        const tStr = $('#bl-modal-sub-target').val();
+        const rStr = $('#bl-modal-sub-rep').val();
+        const remarkStr = $('#bl-modal-sub-remark').val().trim();
+        
+        const targets = parseInputToWords(tStr, mode, { isTarget: true });
+        const replacements = parseInputToWords(rStr, mode === 'text' ? 'text' : 'regex', { isTarget: false });
+
+        if (targets.length === 0) {
+            alert("查找内容不能为空！");
+            return;
+        }
+
+        const subRule = { targets, replacements, mode, remark: remarkStr };
+
+        if (runtimeState.currentSubruleEditIndex === -1) {
+            runtimeState.currentEditingSubrules.push(subRule);
+        } else {
+            runtimeState.currentEditingSubrules[runtimeState.currentSubruleEditIndex] = subRule;
+        }
+
+        $('#bl-subrule-edit-modal').fadeOut(150);
+        renderSubrulesToModal();
+        
+        if (runtimeState.currentSubruleEditIndex === -1) {
+            const container = $('#bl-edit-subrules-container');
+            container.scrollTop(container[0].scrollHeight);
+        }
+    });
+
+    $(document).off('click', '#bl-modal-sub-cancel').on('click', '#bl-modal-sub-cancel', () => $('#bl-subrule-edit-modal').fadeOut(150));
+
+    // ==========================================
+    // ✨ 修复：编辑合集弹窗上的叉号按钮 (已改为绑定 #bl-edit-cancel-x)
+    // ==========================================
+
+    $(document).off('click', '#bl-edit-cancel-x').on('click', '#bl-edit-cancel-x', () => $('#bl-rule-edit-modal').hide());
     $(document).off('click', '#bl-transfer-cancel').on('click', '#bl-transfer-cancel', () => closeTransferModal());
     $(document).off('click', '#bl-transfer-copy').on('click', '#bl-transfer-copy', () => runRuleTransfer(false));
     $(document).off('click', '#bl-transfer-move').on('click', '#bl-transfer-move', () => runRuleTransfer(true));
@@ -639,16 +585,13 @@ export function bindEvents() {
     });
 
     $(document).off('click', '#bl-edit-save').on('click', '#bl-edit-save', () => {
-        syncSubrulesFromDOM();
         const nameVal = $('#bl-edit-name').val().trim();
-
-        const validSubrules = runtimeState.currentEditingSubrules.filter(sub => sub.targets.length > 0);
+        const validSubrules = runtimeState.currentEditingSubrules.filter(sub => sub.targets && sub.targets.length > 0);
+        
         if (validSubrules.length === 0) {
-            alert("至少需要提供一组有效的目标词！(被替换词不能全空)");
+            alert("合集内至少需要保留一组有效映射！");
             return;
         }
-
-        validSubrules.forEach(sub => delete sub.isEditing);
 
         let isEnabled = true;
         if (runtimeState.currentEditingIndex !== -1) {
@@ -682,10 +625,7 @@ export function bindEvents() {
     $(document).off('click', '#bl-default-toggle').on('click', '#bl-default-toggle', function() {
         const settings = extension_settings[extensionName];
         const activePreset = String(settings.activePreset || '');
-        if (!activePreset) {
-            alert('请先在下拉框中选择一个预设。');
-            return;
-        }
+        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
         settings.defaultPreset = settings.defaultPreset === activePreset ? "" : activePreset;
         saveSettingsDebounced();
         refreshCharacterBindingUI();
@@ -694,16 +634,9 @@ export function bindEvents() {
     $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function() {
         const settings = extension_settings[extensionName];
         const activePreset = String(settings.activePreset || '');
-        if (!activePreset) {
-            alert('请先在下拉框中选择一个预设。');
-            return;
-        }
+        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
         const context = getCurrentCharacterContext();
-        if (!context.key) {
-            alert('当前页面未识别到可绑定角色。请进入单角色聊天后再绑定。');
-            refreshCharacterBindingUI();
-            return;
-        }
+        if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
 
         if (!settings.characterBindings) settings.characterBindings = {};
         const isCurrentlyBound = settings.characterBindings[context.key] === activePreset;
@@ -801,7 +734,6 @@ export function bindEvents() {
                     if (typeof importedRules === 'object' && !Array.isArray(importedRules) && importedRules.rules) {
                         importedRules = importedRules.rules;
                     }
-
                     if (!Array.isArray(importedRules)) throw new Error("格式非数组");
 
                     const defaultName = file.name.replace(/\.json$/i, '');
@@ -841,7 +773,6 @@ export function bindEvents() {
         };
         input.click();
     });
-    // ==========================================
 
     const markPendingFromPayload = (payload, options = {}) => {
         const { chat } = getAppContext();
@@ -852,12 +783,6 @@ export function bindEvents() {
         if (options.skipInject !== true) injectDiffButtonsStreamingSafe([index]);
     };
 
-    const visualMaskLatestOnly = (payload) => {
-        if (!runtimeState.isStreamingGeneration) return;
-        markPendingFromPayload(payload, { skipPersist: true, skipInject: true });
-        performIncrementalCleanse(payload, { visualOnly: true, fallbackLatest: true, skipPurifyDom: true });
-    };
-
     let delayedCleanseTimer = null;
     let settleCleanseTimer = null;
     const delayedIncrementalCleanse = (payload) => {
@@ -865,12 +790,8 @@ export function bindEvents() {
         markPendingFromPayload(payload, { skipPersist: false });
         if (delayedCleanseTimer) clearTimeout(delayedCleanseTimer);
         if (settleCleanseTimer) clearTimeout(settleCleanseTimer);
-        delayedCleanseTimer = setTimeout(() => {
-            performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
-        }, 150);
-        settleCleanseTimer = setTimeout(() => {
-            performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
-        }, 700);
+        delayedCleanseTimer = setTimeout(() => { performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }); }, 150);
+        settleCleanseTimer = setTimeout(() => { performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }); }, 700);
     };
 
     let editCleanseTimer = null;
@@ -878,50 +799,24 @@ export function bindEvents() {
         eventSource.on(event_types.MESSAGE_EDITED, (payload) => {
             markPendingFromPayload(payload);
             if (editCleanseTimer) clearTimeout(editCleanseTimer);
-            editCleanseTimer = setTimeout(() => {
-                performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true });
-            }, 100);
+            editCleanseTimer = setTimeout(() => { performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }); }, 100);
         });
     }
 
-    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => {
-        runtimeState.isStreamingGeneration = true;
-        logger.debug('事件: GENERATION_STARTED');
-    });
-    if (event_types.STREAM_TOKEN_RECEIVED) {
-        eventSource.on(event_types.STREAM_TOKEN_RECEIVED, (payload) => {
-            runtimeState.isStreamingGeneration = true;
-            logger.debug(`事件: STREAM_TOKEN_RECEIVED`);
-        });
-    }
-    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, (payload) => {
-        logger.debug('事件: GENERATION_ENDED');
-        delayedIncrementalCleanse(payload);
-    });
-    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => {
-        logger.debug('事件: GENERATION_STOPPED');
-        delayedIncrementalCleanse(payload);
-    });
-    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => {
-        logger.debug('事件: MESSAGE_RECEIVED');
-        delayedIncrementalCleanse(payload);
-    });
-    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => {
-        logger.debug('事件: MESSAGE_SWIPED');
-        delayedIncrementalCleanse(payload);
-    });
+    if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => { runtimeState.isStreamingGeneration = true; });
+    if (event_types.STREAM_TOKEN_RECEIVED) eventSource.on(event_types.STREAM_TOKEN_RECEIVED, () => { runtimeState.isStreamingGeneration = true; });
+    if (event_types.GENERATION_ENDED) eventSource.on(event_types.GENERATION_ENDED, (payload) => delayedIncrementalCleanse(payload));
+    if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => delayedIncrementalCleanse(payload));
+    if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => delayedIncrementalCleanse(payload));
+    if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => delayedIncrementalCleanse(payload));
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
-            logger.info('事件: CHAT_CHANGED，聊天已切换');
             resetDiffRuntimeState();
             runtimeState.currentDiffIndex = undefined;
             $('#bl-diff-modal').hide();
             applyCharacterPresetBinding(true, { skipCleanse: true });
             restoreDiffStateFromChatMetadata();
-            setTimeout(() => {
-                injectDiffButtons();
-                performGlobalCleanse();
-            }, 120);
+            setTimeout(() => { injectDiffButtons(); performGlobalCleanse(); }, 120);
         });
     }
 

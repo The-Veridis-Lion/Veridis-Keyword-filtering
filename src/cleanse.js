@@ -15,7 +15,7 @@ export function shouldSkipDbExtensionField(pathKeys = [], isGlobalSettings = fal
     const rootNamespace = String(pathKeys[0] || '');
     if (!rootNamespace.includes('shujuku_v120')) return false;
     const currentKey = String(pathKeys[pathKeys.length - 1] || '');
-    return /(Prompt|Settings|Template)/.test(currentKey);
+    return currentKey.includes('Prompt') || currentKey.includes('Settings') || currentKey.includes('Template');
 }
 
 function shouldSkipDbExtensionFieldByMeta(depth, rootNamespace, currentKey, isGlobalSettings = false) {
@@ -23,7 +23,7 @@ function shouldSkipDbExtensionFieldByMeta(depth, rootNamespace, currentKey, isGl
     const rootNs = String(rootNamespace || '');
     if (!rootNs.includes('shujuku_v120')) return false;
     const key = String(currentKey || '');
-    return /(Prompt|Settings|Template)/.test(key);
+    return key.includes('Prompt') || key.includes('Settings') || key.includes('Template');
 }
 
 /**

@@ -6,7 +6,7 @@ import { performDeepCleanse } from './cleanse.js';
 
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
-    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal').remove();
+    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal').remove();
 
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
@@ -71,16 +71,23 @@ export function setupUI() {
     $('body').append(`
         <div id="bl-rule-edit-modal" class="bl-modal-shell">
             <div class="bl-modal-card bl-edit-modal-card">
-                <h3 id="bl-edit-modal-title" class="bl-edit-modal-title">编辑规则合集</h3>
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; flex-shrink: 0;">
+                    <h3 id="bl-edit-modal-title" class="bl-edit-modal-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
+                        <i class="fas fa-pen"></i> 编辑规则合集
+                    </h3>
+                    <button id="bl-edit-cancel-x" class="bl-icon-btn" style="background: transparent !important; border: none !important; box-shadow: none !important; font-size: 20px !important; color: var(--text-mute); padding: 0 !important; min-width: auto !important; height: auto !important; cursor: pointer;">
+                        <i class="fas fa-times"></i>
+                    </button>
+                </div>
                 <div class="bl-edit-field">
                     <label class="bl-field-label">规则组合集名称</label>
                     <input type="text" id="bl-edit-name" class="bl-input" placeholder="例如：程度副词与认知失能净化">
                 </div>
                 <label class="bl-field-label" style="margin-bottom:6px; flex-shrink:0;">映射规则列表</label>
                 <div id="bl-edit-subrules-container"></div>
-                <button id="bl-add-subrule-btn" class="bl-ghost-btn bl-add-subrule-btn"><i class="fas fa-plus"></i> 添加一组新映射</button>
+                
                 <div class="bl-modal-actions">
-                    <button id="bl-edit-cancel" class="bl-secondary-btn">取消</button>
+                    <button id="bl-add-subrule-btn" class="bl-secondary-btn"><i class="fas fa-plus"></i> 新增规则</button>
                     <button id="bl-edit-save" class="bl-primary-btn"><i class="fas fa-check"></i> 保存合集</button>
                 </div>
             </div>
@@ -140,7 +147,42 @@ export function setupUI() {
             </div>
         </div>
     `);
-} // <--- 之前就是漏掉了这个大括号导致报错！！！
+
+    $('body').append(`
+        <div id="bl-subrule-edit-modal" class="bl-modal-shell" style="z-index: 10000005;">
+            <div class="bl-modal-card bl-edit-modal-card" style="padding: 20px !important;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px dotted var(--border-dash); padding-bottom: 12px;">
+                    <div style="position: relative; flex: 1; margin-right: 15px;">
+                        <select id="bl-modal-sub-mode" class="bl-input" style="margin: 0; width: 100%; font-size: 16px !important; font-weight: bold; background-color: transparent !important; border: none !important; padding: 0 !important; color: var(--text-main) !important; appearance: none; -webkit-appearance: none;">
+                            <option value="simple">🧩 简易组合 (推荐! 支持{}与*号)</option>
+                            <option value="text">📝 普通文本 (长词优先替换)</option>
+                            <option value="regex">⚙️ 正则表达式 (专业模式)</option>
+                        </select>
+                        <i class="fas fa-chevron-down" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); color: var(--text-mute); pointer-events: none; font-size: 14px;"></i>
+                    </div>
+                    <button id="bl-modal-sub-save" class="bl-icon-btn" style="background: transparent !important; border: none !important; color: var(--text-main) !important; font-size: 24px !important; padding: 0 5px !important; min-width: auto !important; height: auto !important;" title="完成保存"><i class="fas fa-check"></i></button>
+                </div>
+                
+                <div class="bl-subrule-field" style="margin-bottom: 12px;">
+                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">备注说明 (可选)</label>
+                    <input type="text" id="bl-modal-sub-remark" class="bl-input" placeholder="例如：处理特定角色的口头禅" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;">
+                </div>
+                
+                <div class="bl-subrule-field" style="margin-bottom: 12px;">
+                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">查找内容</label>
+                    <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                </div>
+                
+                <div class="bl-subrule-field" style="margin-bottom: 15px;">
+                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">替换为</label>
+                    <textarea id="bl-modal-sub-rep" class="bl-textarea" rows="4" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                </div>
+                
+                <button id="bl-modal-sub-cancel" class="bl-secondary-btn" style="margin-top: auto; border: none !important; background: var(--bg-button) !important;">取消修改</button>
+            </div>
+        </div>
+    `);
+} 
 
 export function showDeepCleanOverlay() {
     $('body').append(`
@@ -358,97 +400,82 @@ export function renderSubrulesToModal() {
     container.empty();
 
     if (runtimeState.currentEditingSubrules.length === 0) {
-        container.html('<div style="text-align:center; color:var(--bl-text-secondary); font-size:12px; padding:10px;">当前合集没有映射规则，请点击下方按钮添加。</div>');
+        container.html('<div style="text-align:center; color:var(--bl-text-secondary); font-size:12px; padding:20px;">当前合集没有映射规则，请点击下方按钮添加。</div>');
         return;
     }
 
     runtimeState.currentEditingSubrules.forEach((sub, i) => {
         const mode = sub.mode || 'text';
-        const isEditing = sub.isEditing !== false;
+        const remark = sub.remark ? sub.remark.trim() : '';
         const moveUpDisabled = i === 0 ? 'disabled' : '';
         const moveDownDisabled = i === runtimeState.currentEditingSubrules.length - 1 ? 'disabled' : '';
 
-        if (!isEditing) {
-            let badgeHTML = '';
-            if (mode === 'regex') badgeHTML = '<span class="bl-badge bl-badge-regex">正则</span>';
-            else if (mode === 'simple') badgeHTML = '<span class="bl-badge bl-badge-simple">简易</span>';
-            else badgeHTML = '<span class="bl-badge bl-badge-text">普通</span>';
+        const badgeBaseStyle = "display:inline-flex; align-items:center; justify-content:center; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:800; color:#fff; min-width:40px; margin:0; line-height:1; flex-shrink:0;";
+        let badgeHTML = '';
+        if (mode === 'regex') badgeHTML = `<span style="${badgeBaseStyle} background:var(--bl-accent-color);">正则</span>`;
+        else if (mode === 'simple') badgeHTML = `<span style="${badgeBaseStyle} background:color-mix(in srgb, var(--bl-accent-color) 72%, #3b82f6 28%);">简易</span>`;
+        else badgeHTML = `<span style="${badgeBaseStyle} background:var(--bl-text-secondary); color:var(--bl-background-popup);">普通</span>`;
 
-            let tPreview = sub.targets.join(mode === 'text' ? ', ' : ' | ');
-            let rPreview = sub.replacements.join(', ');
-            if (!rPreview) rPreview = '【直接删除】';
+        let tPreview = sub.targets.join(mode === 'text' ? ', ' : ' | ');
+        let rPreview = sub.replacements.join(', ');
+        if (!rPreview) rPreview = '【直接删除】';
 
-            container.append(`
-                <div class="bl-subrule-summary">
-                    <div class="bl-subrule-summary-head">
-                        <div class="bl-subrule-main">
-                            ${badgeHTML}
-                        </div>
-                        <div class="bl-subrule-summary-actions">
-                            <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
-                            <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
-                            <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="展开编辑"><i class="fas fa-pen"></i></button>
-                            <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除"><i class="fas fa-trash"></i></button>
-                        </div>
-                    </div>
-                    <div class="bl-subrule-summary-body">
-                        <div class="bl-subrule-text">
-                            <b>${tPreview}</b> <i class="fas fa-arrow-right bl-inline-arrow"></i> <span>${rPreview}</span>
-                        </div>
-                    </div>
+        let remarkHTML = '';
+        if (remark) {
+            remarkHTML = `
+                <div style="margin-top: 8px; padding-top: 10px; border-top: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5)); font-size: 11px; color: var(--text-mute); font-style: italic;">
+                    <i class="fas fa-info-circle" style="margin-right: 4px;"></i>${remark}
                 </div>
-            `);
-        } else {
-            const tStr = sub.targets.join(mode === 'text' ? ', ' : '\n');
-            const rStr = sub.replacements.join(mode === 'regex' ? '\n' : ', ');
-            let tPlaceholder;
-            let rPlaceholder;
-            if (mode === 'regex') {
-                tPlaceholder = "正则匹配规则 (每行一条)\n例如：/(宛若|如同)(神明|恶魔)/g";
-                rPlaceholder = "替换后词汇 (每行一条，允许含逗号，可留空)\n支持 $1, $2 捕获组引用";
-            } else if (mode === 'simple') {
-                tPlaceholder = "简易语法 (每行一条)\n语法：用 {词1,词2} 组合，用 * 通配模糊，用 ? 标记可有可无\n例如：{宛若,如同}{神明,恶魔}{般,一样}?";
-                rPlaceholder = "替换后词汇 (每行一条，支持随机，可留空删除)";
-            } else {
-                tPlaceholder = "被替换词汇 (逗号/空格分隔)\n例如：嘴角勾起, 并不存在";
-                rPlaceholder = "替换后词汇 (逗号/空格分隔，留空则直接删除)";
-            }
-
-            container.append(`
-                <div class="bl-subrule-row">
-                    <div class="bl-subrule-row-head">
-                        <select class="bl-sub-mode bl-input bl-subrule-mode-select">
-                            <option value="simple" ${mode === 'simple' ? 'selected' : ''}>🧩 简易组合 (推荐! 支持{}与*号)</option>
-                            <option value="text" ${mode === 'text' ? 'selected' : ''}>📝 普通文本 (长词优先替换)</option>
-                            <option value="regex" ${mode === 'regex' ? 'selected' : ''}>⚙️ 正则表达式 (专业模式)</option>
-                        </select>
-                        <div class="bl-subrule-summary-actions">
-                            <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
-                            <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
-                            <button class="bl-save-subrule-btn bl-icon-btn bl-accent-btn" data-index="${i}" title="完成并折叠"><i class="fas fa-check"></i></button>
-                            <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除此组"><i class="fas fa-trash"></i></button>
-                        </div>
-                    </div>
-                    <textarea class="bl-sub-target bl-textarea" rows="2" placeholder="${tPlaceholder}">${tStr}</textarea>
-                    <div class="bl-subrule-flow-label"><i class="fas fa-arrow-down"></i> 随机替换为 <i class="fas fa-arrow-down"></i></div>
-                    <textarea class="bl-sub-rep bl-textarea" rows="2" placeholder="${rPlaceholder}">${rStr}</textarea>
-                </div>
-            `);
+            `;
         }
+
+        container.append(`
+            <div style="flex-shrink: 0 !important; background: var(--bl-background-secondary); border: 1px solid var(--bl-border-color); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; box-shadow: 0 4px 10px rgba(0,0,0,0.04);">
+                <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5));">
+                    <div style="display: flex; align-items: center; margin: 0; padding: 0;">
+                        ${badgeHTML}
+                    </div>
+                    <div style="display: flex; gap: 5px; align-items: center; margin: 0; padding: 0;">
+                        <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled} style="margin:0;"><i class="fas fa-arrow-up"></i></button>
+                        <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled} style="margin:0;"><i class="fas fa-arrow-down"></i></button>
+                        <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑" style="margin:0;"><i class="fas fa-pen"></i></button>
+                        <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除" style="margin:0;"><i class="fas fa-trash"></i></button>
+                        <button class="bl-remark-subrule-btn bl-icon-btn" data-index="${i}" title="快捷修改备注" style="margin:0;"><i class="fas fa-comment-dots"></i></button>
+                    </div>
+                </div>
+                <div style="font-size: 13px !important; color: var(--bl-text-primary); line-height: 1.5; word-break: break-all;">
+                    <b style="font-size: 13px !important;">${tPreview}</b> 
+                    <i class="fas fa-arrow-right" style="color: var(--text-mute); font-size: 11px; margin: 0 6px;"></i> 
+                    <span style="font-size: 13px !important;">${rPreview}</span>
+                </div>
+                ${remarkHTML}
+            </div>
+        `);
     });
 }
 
-export function syncSubrulesFromDOM() {
-    $('.bl-subrule-row').each(function() {
-        const index = $(this).find('.bl-save-subrule-btn').data('index');
-        const mode = $(this).find('.bl-sub-mode').val();
-        const tStr = $(this).find('.bl-sub-target').val();
-        const rStr = $(this).find('.bl-sub-rep').val();
+export function openSingleRuleModal(index) {
+    runtimeState.currentSubruleEditIndex = index;
+    let mode = 'simple';
+    let tStr = '';
+    let rStr = '';
+    let remark = '';
 
-        runtimeState.currentEditingSubrules[index].mode = mode;
-        runtimeState.currentEditingSubrules[index].targets = parseInputToWords(tStr, mode, { isTarget: true });
-        runtimeState.currentEditingSubrules[index].replacements = parseInputToWords(rStr, mode === 'text' ? 'text' : 'regex', { isTarget: false });
-    });
+    if (index >= 0 && runtimeState.currentEditingSubrules[index]) {
+        const sub = runtimeState.currentEditingSubrules[index];
+        mode = sub.mode || 'simple';
+        tStr = (sub.targets || []).join(mode === 'text' ? ', ' : '\n');
+        rStr = (sub.replacements || []).join(mode === 'regex' ? '\n' : ', ');
+        remark = sub.remark || '';
+    }
+
+    $('#bl-modal-sub-mode').val(mode);
+    $('#bl-modal-sub-target').val(tStr);
+    $('#bl-modal-sub-rep').val(rStr);
+    $('#bl-modal-sub-remark').val(remark);
+    
+    $('#bl-modal-sub-mode').trigger('change');
+    $('#bl-subrule-edit-modal').css('display', 'flex').hide().fadeIn(150);
 }
 
 export function openTransferModal(ruleIndexOrIndexes) {
@@ -532,7 +559,7 @@ export function openEditModal(index = -1) {
     if (index === -1) {
         $('#bl-edit-modal-title').html('<i class="fas fa-folder-plus"></i> 新增规则合集');
         $('#bl-edit-name').val('');
-        runtimeState.currentEditingSubrules = [{ targets: [], replacements: [], mode: 'simple', isEditing: true }];
+        runtimeState.currentEditingSubrules = [{ targets: [], replacements: [], mode: 'simple', isEditing: false }];
     } else {
         const rule = settings.rules[index];
         $('#bl-edit-modal-title').html('<i class="fas fa-pen"></i> 编辑规则合集');
