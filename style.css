@@ -476,7 +476,10 @@
     .action-buttons .btn-secondary { min-height: 38px !important; font-size: 13px !important; display: flex !important; align-items: center !important; justify-content: center !important; }
     .btn-secondary, .batch-btn, .bottom-text, .group-title, .rule-item, .btn-danger { font-size: 11px; }
     .btn-secondary, .btn-danger { padding: 6px; }
-    .card { padding: 6px 8px; }
+    .card { 
+          padding: 6px 8px; 
+          flex-shrink: 0 !important; 
+      }
     .bl-rule-card { padding: 8px 10px !important; }
     .bottom-bar { padding-top: 6px; gap: 8px; }
     #bl-purifier-popup .bl-footer { gap: 10px !important; align-items: stretch !important; }
