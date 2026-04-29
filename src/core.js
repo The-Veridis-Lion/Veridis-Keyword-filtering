@@ -2,7 +2,7 @@ import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
 import { buildSimpleWildcardPattern } from './utils.js';
 import { deepCleanObjectSync } from './cleanse.js';
-import { buildDiffSnippetsFromText, clearDiffSnippetsCache, computeMessageSignature, ensureMessageDiffButton, getLatestAssistantMessageIndices, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, updateDiffSnippetCache, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
+import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 
 /**
@@ -201,7 +201,7 @@ export function queueIncrementalChatSave() {
             runtimeState.chatSaveInFlight = false;
             if (runtimeState.pendingChatSave) queueIncrementalChatSave();
         }
-    }, 180);
+    }, 600);
 }
 
 /**
@@ -230,32 +230,70 @@ export function getLatestMessageIndex() {
 }
 
 /**
+ * 解析“可追踪非 user 消息”的最新索引。
+ * @param {number|object} payload 事件载荷或消息索引。
+ * @returns {number} 可追踪消息索引，失败返回 -1。
+ */
+export function resolveLatestTrackableMessageIndex(payload) {
+    const { chat } = getAppContext();
+    if (!Array.isArray(chat)) return -1;
+
+    const explicit = getMessageIndexFromEvent(payload);
+
+    if (explicit >= 0 && explicit < chat.length) {
+        if (isAssistantMessage(chat[explicit])) return explicit;
+
+        for (let i = explicit + 1; i < chat.length; i++) {
+            if (isAssistantMessage(chat[i])) return i;
+        }
+    }
+
+    for (let i = chat.length - 1; i >= 0; i--) {
+        if (isAssistantMessage(chat[i])) return i;
+    }
+
+    return -1;
+}
+
+/**
  * 清理指定索引消息的数据并更新差异缓存。
  * @param {number} index 消息索引。
  * @returns {boolean} 是否发生数据变更。
  */
-export function cleanseMessageDataAtIndex(index) {
+export function cleanseMessageDataAtIndex(index, options = {}) {
     const { chat } = getAppContext();
     if (!Array.isArray(chat) || index < 0 || index >= chat.length) return false;
     const msg = chat[index];
     if (!msg || typeof msg !== 'object') return false;
 
     const isAssistant = isAssistantMessage(msg);
-    const rawMes = typeof msg.mes === 'string' ? msg.mes : '';
-    const currentSignature = isAssistant ? computeMessageSignature(msg) : '';
+    if (!isAssistant) {
+        clearTrackedDiffEntry(index);
+        return false;
+    }
+
+    const diffSourceMes = typeof options.diffSourceMes === 'string' ? options.diffSourceMes : null;
+    const currentMes = typeof msg.mes === 'string' ? msg.mes : '';
+    const sourceMes = diffSourceMes || currentMes;
+
+    const sourceSignature = computeMessageSignature({
+        ...msg,
+        mes: sourceMes,
+        __bl_diff_source_signature: '',
+        __bl_diff_last_cleaned_mes: '',
+    });
     let changed = false;
 
-    let mainCache = { snippets: [], fullDiff: '' };
-    if (typeof msg.mes === 'string') {
-        const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(msg.mes);
-        mainCache = {
-            snippets: Array.from(new Set(mesSnippets)),
-            fullDiff,
-        };
-        if (cleanedText !== msg.mes) {
-            msg.mes = cleanedText;
-            changed = true;
-        }
+    const diffResult = buildDiffSnippetsFromText(sourceMes);
+    const dataResult = buildDiffSnippetsFromText(currentMes);
+    const mainCache = {
+        snippets: Array.from(new Set(diffResult.snippets || [])),
+        fullDiff: diffResult.fullDiff || '',
+    };
+
+    if (typeof msg.mes === 'string' && dataResult.cleanedText !== msg.mes) {
+        msg.mes = dataResult.cleanedText;
+        changed = true;
     }
 
     if (Array.isArray(msg.swipes)) {
@@ -276,20 +314,73 @@ export function cleanseMessageDataAtIndex(index) {
         }
     }
 
-    if (isAssistant) {
-        msg.__bl_diff_source_signature = currentSignature;
-        msg.__bl_diff_last_cleaned_mes = typeof msg.mes === 'string' ? msg.mes : '';
-        writeReadyDiffCache(index, currentSignature, {
-            snippets: mainCache.snippets,
-            fullDiff: mainCache.fullDiff,
-            signature: currentSignature,
-            rawMes,
-        });
-    } else {
-        clearTrackedDiffEntry(index);
-    }
+    msg.__bl_diff_source_signature = sourceSignature;
+    msg.__bl_diff_last_cleaned_mes = typeof msg.mes === 'string' ? msg.mes : '';
+    writeReadyDiffCache(index, sourceSignature, {
+        snippets: mainCache.snippets,
+        fullDiff: mainCache.fullDiff,
+        signature: sourceSignature,
+    }, {
+        preserveExistingRealDiff: options.preserveExistingRealDiff === true,
+    });
+    runtimeState.diffRawSourceCache.delete(index);
 
     return changed;
+}
+
+/**
+ * 非流式生成结束后的专用收敛流程。
+ * @param {number|object} payload 事件载荷或消息索引。
+ * @returns {void}
+ */
+export function performNonStreamingFinalCleanse(payload) {
+    const { chat } = getAppContext();
+
+    buildProcessors();
+    if (runtimeState.activeProcessors.length === 0) return;
+
+    const index = resolveLatestTrackableMessageIndex(payload);
+    if (index < 0 || !Array.isArray(chat)) return;
+
+    const msg = chat[index];
+    if (!isAssistantMessage(msg)) return;
+
+    const previousState = runtimeState.diffMessageStates.get(index);
+    const currentSignature = computeMessageSignature(msg);
+    const alreadyFinalizedSameSource = previousState?.status === 'ready'
+        && previousState.signature === currentSignature
+        && typeof msg?.mes === 'string'
+        && typeof msg?.__bl_diff_last_cleaned_mes === 'string'
+        && msg.mes === msg.__bl_diff_last_cleaned_mes;
+
+    if (alreadyFinalizedSameSource && hasRealDiffCache(index)) {
+        const messageNode = getMessageDomNode(index);
+        if (messageNode) {
+            purifyDOM(messageNode);
+            ensureMessageDiffButton(index, messageNode);
+        }
+        return;
+    }
+
+    const dataChanged = cleanseMessageDataAtIndex(index, {
+        preserveExistingRealDiff: true,
+    });
+    runtimeState.nonStreamingRawMessageCache.delete(index);
+
+    const messageNode = getMessageDomNode(index);
+    if (messageNode) {
+        purifyDOM(messageNode);
+        ensureMessageDiffButton(index, messageNode);
+    }
+
+    if (dataChanged) {
+        try {
+            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
+        } catch (e) {
+            logger?.warn?.(`updateMessageBlock 调用失败 index=${index}`, e);
+        }
+        queueIncrementalChatSave();
+    }
 }
 
 /**
@@ -304,13 +395,21 @@ export function performIncrementalCleanse(payload, options = {}) {
     if (!options.skipPurifyDom) buildProcessors();
     if (!options.skipPurifyDom && runtimeState.activeProcessors.length === 0) return;
 
-    const fallbackLatest = options.fallbackLatest !== false;
+    const fallbackLatest = options.fallbackLatest === true;
     let index = getMessageIndexFromEvent(payload);
-    if (index < 0 && fallbackLatest) index = getLatestMessageIndex();
+    if (index < 0 && fallbackLatest && Array.isArray(chat)) {
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (isAssistantMessage(chat[i])) {
+                index = i;
+                break;
+            }
+        }
+    }
     if (index < 0) return;
 
     const msg = Array.isArray(chat) ? chat[index] : null;
     const assistant = isAssistantMessage(msg);
+    if (!assistant) return;
     if (assistant) {
         const signature = computeMessageSignature(msg);
         if (options.visualOnly) markDiffComparisonPending(index, signature);
@@ -357,15 +456,13 @@ export function performGlobalCleanse() {
     logger.info(`[performGlobalCleanse] 全局净化开始`);
     const { chat, saveChat } = getAppContext();
     buildProcessors();
-    clearDiffSnippetsCache();
-
     if (runtimeState.activeProcessors.length === 0) {
         injectDiffButtons();
         return;
     }
 
     let chatChanged = false;
-    const latestDiffIndices = new Set(getLatestAssistantMessageIndices(chat));
+    const latestDiffIndices = new Set(getLatestTrackableDiffIndices(3));
 
     if (chat && Array.isArray(chat)) {
         chat.forEach((msg, index) => {
@@ -405,12 +502,9 @@ export function performGlobalCleanse() {
             }
 
             if (assistant && latestDiffIndices.has(index)) {
-                updateDiffSnippetCache(index, {
-                    snippets: mainCache.snippets,
-                    fullDiff: mainCache.fullDiff,
-                    signature,
+                writeReadyDiffCache(index, signature, mainCache, {
+                    preserveExistingRealDiff: true,
                 });
-                writeReadyDiffCache(index, signature, mainCache);
             } else {
                 clearTrackedDiffEntry(index, { persist: false });
             }
@@ -438,11 +532,7 @@ export function performGlobalCleanse() {
     syncTrackedIndicesToLatestAssistantMessages();
 
     if (chatChanged) {
-        try {
-            if (typeof saveChat === 'function') saveChat();
-        } catch (e) {
-            logger.error(`存盘失败`, e);
-        }
+        queueIncrementalChatSave(); // 使用排队保存
     }
     purifyDOM(document.getElementById('chat'));
     injectDiffButtons();

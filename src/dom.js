@@ -9,6 +9,7 @@ import { applyReplacements, applyVisualMask, buildProcessors } from './core.js';
  */
 export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
+    if (node.closest('.name_text')) return true;
     if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-diff-modal')) return true;
     if (node.closest('#advanced_formatting, #api_settings')) return true;
     if ((node.id && node.id.includes('shujuku_v120-')) || node.closest('[id*="shujuku_v120-"]')) return true;
@@ -39,12 +40,16 @@ export function purifyDOM(rootNode) {
 
     const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT | NodeFilter.SHOW_COMMENT, null, false);
 
-    let node;
+let node;
     while (node = walker.nextNode()) {
         const parent = node.parentNode;
         if (parent && (isProtectedNode(parent) || (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))))) continue;
 
         const original = node.nodeValue || '';
+        
+        // --- 直接跳过纯空白节点 ---
+        if (original.trim() === '') continue;
+
         const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
         if (original !== nextValue) node.nodeValue = nextValue;
     }
@@ -75,16 +80,56 @@ export function purifyDOM(rootNode) {
 /**
  * 根据消息索引获取对应 DOM 节点。
  * @param {number} index 消息索引。
- * @returns {Element | null} 对应消息节点，找不到时返回最后一条或 null。
+ * @returns {Element | null} 对应消息节点，找不到时返回 null。
  */
 export function getMessageDomNode(index) {
     const chatEl = document.getElementById('chat');
-    if (!chatEl) return null;
+    if (!chatEl || !Number.isInteger(index) || index < 0) return null;
     const selectors = [`.mes[mesid="${index}"]`, `.mes[data-mesid="${index}"]`, `.mes[messageid="${index}"]`, `.mes[data-message-id="${index}"]`];
     for (const selector of selectors) {
         const node = chatEl.querySelector(selector);
         if (node) return node;
     }
-    const allMes = chatEl.querySelectorAll('.mes');
-    return allMes.length > 0 ? allMes[allMes.length - 1] : null;
+    const allMes = Array.from(chatEl.querySelectorAll('.mes'));
+    const byOrder = allMes[index];
+    if (byOrder && resolveMessageIndexFromDomNode(byOrder) === index) return byOrder;
+    return null;
+}
+
+export function isUserMessageDomNode(node) {
+    if (!node || node.nodeType !== 1) return false;
+    const mesNode = node.matches?.('.mes') ? node : node.closest?.('.mes');
+    if (!mesNode) return false;
+    return mesNode.getAttribute('is_user') === 'true' || mesNode.dataset?.isUser === 'true';
+}
+
+export function isTrackableMessageDomNode(node) {
+    if (!node || node.nodeType !== 1) return false;
+    const mesNode = node.matches?.('.mes') ? node : node.closest?.('.mes');
+    if (!mesNode) return false;
+    return !isUserMessageDomNode(mesNode);
+}
+
+export function resolveMessageIndexFromDomNode(node) {
+    if (!node || node.nodeType !== 1) return -1;
+    const mesNode = node.matches?.('.mes') ? node : node.closest?.('.mes');
+    if (!mesNode) return -1;
+
+    const attrs = [
+        mesNode.getAttribute('mesid'),
+        mesNode.getAttribute('data-mesid'),
+        mesNode.getAttribute('messageid'),
+        mesNode.getAttribute('data-message-id')
+    ];
+
+    for (const raw of attrs) {
+        const n = Number(raw);
+        if (Number.isInteger(n) && n >= 0) return n;
+    }
+
+    const chatEl = document.getElementById('chat');
+    if (!chatEl) return -1;
+    const nodes = Array.from(chatEl.querySelectorAll('.mes'));
+    const index = nodes.indexOf(mesNode);
+    return index >= 0 ? index : -1;
 }
