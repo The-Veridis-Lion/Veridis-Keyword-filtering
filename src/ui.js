@@ -4,6 +4,10 @@ import { deepClone, getCurrentCharacterContext, getPresetForCharacter, parseInpu
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
+function safeHtml(str) {
+    return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
     $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal').remove();
@@ -81,7 +85,7 @@ export function setupUI() {
                 </div>
                 <div class="bl-edit-field">
                     <label class="bl-field-label">规则组合集名称</label>
-                    <input type="text" id="bl-edit-name" class="bl-input" placeholder="例如：程度副词与认知失能净化">
+                    <input type="text" id="bl-edit-name" class="bl-input" placeholder="例如：程度副词与认知失能净化" style="background: var(--bg-button) !important; border: 1px solid var(--border-color) !important; color: var(--text-main) !important;">
                 </div>
                 <label class="bl-field-label" style="margin-bottom:6px; flex-shrink:0;">映射规则列表</label>
                 <div id="bl-edit-subrules-container"></div>
@@ -335,15 +339,15 @@ export function renderTags() {
     const { extension_settings } = getAppContext();
     const rules = extension_settings[extensionName]?.rules || [];
     const html = rules.map((r, i) => {
-        const name = r.name || `未命名合集 ${i + 1}`;
+        const name = safeHtml(r.name) || `未命名合集 ${i + 1}`;
         const subRules = r.subRules || [];
         const maxPreview = 3;
 
         const subRulesHtml = subRules.slice(0, maxPreview).map((sub) => {
             const mode = sub.mode || 'text';
             const tagText = mode === 'regex' ? '正则' : mode === 'simple' ? '简易' : '普通';
-            const tPreview = (sub.targets || []).join(mode === 'text' ? ', ' : ' | ') || '（空）';
-            const rPreview = (sub.replacements || []).join(', ') || '【直接删除】';
+            const tPreview = safeHtml((sub.targets || []).join(mode === 'text' ? ', ' : ' | ')) || '（空）';
+            const rPreview = safeHtml((sub.replacements || []).join(', ')) || '【直接删除】';
             return `
                 <div class="rule-item">
                     <span class="tag">${tagText}</span>
@@ -410,21 +414,21 @@ export function renderSubrulesToModal() {
         const moveUpDisabled = i === 0 ? 'disabled' : '';
         const moveDownDisabled = i === runtimeState.currentEditingSubrules.length - 1 ? 'disabled' : '';
 
-        const badgeBaseStyle = "display:inline-flex; align-items:center; justify-content:center; padding:3px 8px; border-radius:4px; font-size:11px; font-weight:800; color:#fff; min-width:40px; margin:0; line-height:1; flex-shrink:0;";
+        const badgeBaseStyle = "display:inline-flex; align-items:center; justify-content:center; padding:4px 10px; border-radius:6px; font-size:13px; font-weight:800; color:#fff; min-width:45px; margin:0; line-height:1; flex-shrink:0;";
         let badgeHTML = '';
         if (mode === 'regex') badgeHTML = `<span style="${badgeBaseStyle} background:var(--bl-accent-color);">正则</span>`;
         else if (mode === 'simple') badgeHTML = `<span style="${badgeBaseStyle} background:color-mix(in srgb, var(--bl-accent-color) 72%, #3b82f6 28%);">简易</span>`;
         else badgeHTML = `<span style="${badgeBaseStyle} background:var(--bl-text-secondary); color:var(--bl-background-popup);">普通</span>`;
 
-        let tPreview = sub.targets.join(mode === 'text' ? ', ' : ' | ');
-        let rPreview = sub.replacements.join(', ');
+        let tPreview = safeHtml(sub.targets.join(mode === 'text' ? ', ' : ' | '));
+        let rPreview = safeHtml(sub.replacements.join(', '));
         if (!rPreview) rPreview = '【直接删除】';
 
         let remarkHTML = '';
         if (remark) {
             remarkHTML = `
                 <div style="margin-top: 8px; padding-top: 10px; border-top: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5)); font-size: 11px; color: var(--text-mute); font-style: italic;">
-                    <i class="fas fa-info-circle" style="margin-right: 4px;"></i>${remark}
+                    <i class="fas fa-info-circle" style="margin-right: 4px;"></i>${safeHtml(remark)}
                 </div>
             `;
         }
@@ -435,12 +439,12 @@ export function renderSubrulesToModal() {
                     <div style="display: flex; align-items: center; margin: 0; padding: 0;">
                         ${badgeHTML}
                     </div>
-                    <div style="display: flex; gap: 5px; align-items: center; margin: 0; padding: 0;">
-                        <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled} style="margin:0;"><i class="fas fa-arrow-up"></i></button>
-                        <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled} style="margin:0;"><i class="fas fa-arrow-down"></i></button>
-                        <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑" style="margin:0;"><i class="fas fa-pen"></i></button>
-                        <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除" style="margin:0;"><i class="fas fa-trash"></i></button>
-                        <button class="bl-remark-subrule-btn bl-icon-btn" data-index="${i}" title="快捷修改备注" style="margin:0;"><i class="fas fa-comment-dots"></i></button>
+                    <div class="bl-subrule-btn-group" style="display: flex; justify-content: space-between; align-items: center; flex: 0 0 35%; margin: 0; padding: 0;">
+                        <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
+                        <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
+                        <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑"><i class="fas fa-pen"></i></button>
+                        <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除"><i class="fas fa-trash"></i></button>
+                        <button class="bl-remark-subrule-btn bl-icon-btn" data-index="${i}" title="快捷修改备注"><i class="fas fa-comment-dots"></i></button>
                     </div>
                 </div>
                 <div style="font-size: 13px !important; color: var(--bl-text-primary); line-height: 1.5; word-break: break-all;">
