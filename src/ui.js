@@ -439,12 +439,12 @@ export function renderSubrulesToModal() {
                     <div style="display: flex; align-items: center; margin: 0; padding: 0;">
                         ${badgeHTML}
                     </div>
-                    <div class="bl-subrule-btn-group">
-                        <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
-                        <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
-                        <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑"><i class="fas fa-pen"></i></button>
-                        <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除"><i class="fas fa-trash"></i></button>
-                        <button class="bl-remark-subrule-btn bl-icon-btn" data-index="${i}" title="快捷修改备注"><i class="fas fa-comment-dots"></i></button>
+                    <div class="bl-subrule-btn-group" style="display: flex; justify-content: space-between; align-items: center; flex: 0 0 35%; margin: 0; padding: 0;">
+                        <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled} style="margin:0;"><i class="fas fa-arrow-up"></i></button>
+                        <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled} style="margin:0;"><i class="fas fa-arrow-down"></i></button>
+                        <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑" style="margin:0;"><i class="fas fa-pen"></i></button>
+                        <button class="bl-del-subrule-btn bl-icon-btn bl-danger-btn" data-index="${i}" title="删除" style="margin:0;"><i class="fas fa-trash"></i></button>
+                        <button class="bl-remark-subrule-btn bl-icon-btn" data-index="${i}" title="快捷修改备注" style="margin:0;"><i class="fas fa-comment-dots"></i></button>
                     </div>
                 </div>
                 <div style="font-size: 13px !important; color: var(--bl-text-primary); line-height: 1.5; word-break: break-all;">
