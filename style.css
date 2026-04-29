@@ -217,7 +217,7 @@
 
 /* --- 4. 列表与卡片设计 --- */
 .card-list { display: flex; flex-direction: column; gap: 8px; flex: 1; }
-#bl-tags-container { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding-right: 5px !important; }
+#bl-tags-container { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; overflow-x: hidden !important; padding-right: 5px !important; }
 .card { 
     background-color: var(--bg-card); 
     border-radius: 8px; 
@@ -259,10 +259,10 @@
 /* 卡片内容排版 */
 .group-title { font-size: 13px; font-weight: 600; color: var(--text-main); display: flex; align-items: center; word-break: break-all; }
 .card-body { display: flex; flex-direction: column; gap: 4px; }
-.rule-item { display: flex; align-items: center; font-size: 12px; color: var(--text-main); gap: 4px; }
+.rule-item { display: flex; align-items: center; font-size: 12px; color: var(--text-main); gap: 4px; min-width: 0 !important; }
 .tag { background-color: var(--tag-bg); color: white; padding: 2px 6px; border-radius: 10px; font-size: 10px; white-space: nowrap; display: inline-flex; align-items: center; justify-content: center; }
-.source { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-main); font-weight: 500; display: flex; align-items: center; }
-.target { color: var(--text-sub); white-space: nowrap; display: flex; align-items: center; }
+.source { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--text-main); font-weight: 500; display: block !important; min-width: 0; }
+.target { color: var(--text-sub); white-space: nowrap; display: block !important; flex-shrink: 0 !important; }
 .arrow { color: var(--text-mute); font-size: 10px; display: flex; align-items: center; }
 .more-text { text-align: center; font-size: 12px; color: var(--text-mute); margin-top: 4px; display: flex; justify-content: center; align-items: center; }
 .bl-empty-state { opacity: 0.58 !important; width: 100% !important; text-align: center !important; font-size: 13px !important; padding: 20px 0 !important; color: var(--text-sub) !important; }
@@ -887,9 +887,9 @@
 .card-header .icon-group.compact {
     flex: 0 0 30% !important; /* 限制在后30% */
     display: flex !important;
-    justify-content: space-between !important; /* 均匀分布 */
+    justify-content: flex-end !important; /* 均匀分布 */
     align-items: center !important;
-    gap: 0 !important;
+    gap: 6px !important;
 }
 
 .bl-rule-move-up, .bl-rule-move-down, .bl-rule-transfer, .bl-rule-edit, .bl-rule-del {
