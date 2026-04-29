@@ -991,7 +991,6 @@
     /* 放宽占比，防止手机端图标挤压无法点击 */
     .card-header .icon-group.compact { flex: 0 0 50% !important; }
     #bl-purifier-popup .toolbar .icon-group { flex: 0 0 45% !important; }
-    .bl-subrule-btn-group { flex: 0 0 52% !important; }
     
     /* 抹除旧的移动端死板高宽 */
     #bl-purifier-popup .toolbar .icon-group button,
@@ -1005,4 +1004,41 @@
         font-size: 15px !important;
         padding: 4px !important;
     }
+}
+
+
+/* --- 修复图标贴边问题：固定边缘距离，内部真正均匀等分 --- */
+.bl-subrule-btn-group {
+    display: flex !important;
+    flex: 1 !important; /* 占据剩余全部空间 */
+    justify-content: flex-end !important; /* 整体靠右 */
+    align-items: center !important;
+    gap: 10px !important; /* 强制按钮之间保持均匀间距 */
+    padding-right: 6px !important; /* 距离边缘留出 6px 的安全距离 */
+    margin: 0 !important;
+}
+
+/* --- 修复所有弹窗底栏的横向滑动条溢出问题 --- */
+.bl-modal-actions, .bl-transfer-actions {
+    display: flex !important;
+    width: 100% !important;
+    max-width: 100% !important;
+    box-sizing: border-box !important; /* 确保 padding 和 gap 不会撑破 100% 宽度 */
+    flex-wrap: nowrap !important; /* 绝不换行 */
+    gap: 12px !important; /* 按钮间距 */
+    overflow: hidden !important; /* 强制拦截任何溢出，杜绝滑动条 */
+    padding: 0 2px !important; /* 微调边缘 */
+}
+
+/* 强制底栏内部所有按钮等宽，且不被长文字撑破 */
+.bl-modal-actions button,
+.bl-transfer-actions button,
+.bl-modal-actions .bl-secondary-btn,
+.bl-modal-actions .bl-primary-btn {
+    flex: 1 1 0 !important; /* 核心：强制等分剩余空间 */
+    min-width: 0 !important; /* 核心：打破文字撑开最小宽度的限制 */
+    white-space: nowrap !important;
+    text-overflow: ellipsis !important; /* 文字过长显示省略号，而不是挤出屏幕 */
+    overflow: hidden !important;
+    margin: 0 !important;
 }
