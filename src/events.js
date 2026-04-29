@@ -273,6 +273,15 @@ export function initRealtimeInterceptor() {
 }
 
 export function bindEvents() {
+
+    function checkUnsavedChanges() {
+        const settings = extension_settings[extensionName];
+        const active = settings.activePreset;
+        if (!active) return false;
+        const currentRules = JSON.stringify(settings.rules || []);
+        const savedRules = JSON.stringify(settings.presets[active] || []);
+        return currentRules !== savedRules;
+    }
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
 
     $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => {
@@ -281,7 +290,17 @@ export function bindEvents() {
         $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
     });
 
-    $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => $('#bl-purifier-popup').fadeOut(200));
+    $(document).off('click', '#bl-close-btn').on('click', '#bl-close-btn', () => {
+        if (checkUnsavedChanges()) {
+            if (confirm(`预设 "${extension_settings[extensionName].activePreset}" 有未保存的改动，是否保存？\n点击【确定】保存，点击【取消】直接关闭放弃改动。`)) {
+                $('#bl-preset-save').click();
+            } else {
+                // 如果用户选择不保存，则将界面状态回滚到已保存状态，避免脏数据残留
+                applyPresetByName(extension_settings[extensionName].activePreset, { skipRender: true });
+            }
+        }
+        $('#bl-purifier-popup').fadeOut(200);
+    });
     const settings = extension_settings[extensionName];
 
     const applyThemeMode = (mode) => {
@@ -617,7 +636,18 @@ export function bindEvents() {
     $(document).off('click', '#bl-deep-clean-btn').on('click', '#bl-deep-clean-btn', () => showConfirmModal(() => performDeepCleanse()));
 
     $(document).off('change', '#bl-preset-select').on('change', '#bl-preset-select', function() {
-        applyPresetByName($(this).val(), { skipRender: true });
+        const settings = extension_settings[extensionName];
+        const oldPreset = settings.activePreset;
+        const newPreset = $(this).val();
+
+        if (oldPreset && newPreset !== oldPreset && checkUnsavedChanges()) {
+            if (confirm(`预设 "${oldPreset}" 有未保存的改动，是否在切换前保存？\n点击【确定】保存，点击【取消】放弃改动。`)) {
+                settings.presets[oldPreset] = JSON.parse(JSON.stringify(settings.rules));
+                saveSettingsDebounced();
+            }
+        }
+
+        applyPresetByName(newPreset, { skipRender: true });
         renderTags();
         refreshCharacterBindingUI();
     });
@@ -694,10 +724,13 @@ export function bindEvents() {
         const name = prompt("输入新存档名称：");
         if (!name) return;
         if (settings.presets[name]) { alert("存档名称已存在。"); return; }
-        settings.presets[name] = JSON.parse(JSON.stringify(settings.rules));
+        settings.presets[name] = [];
         settings.activePreset = name;
+        settings.rules = [];
+        runtimeState.isRegexDirty = true;
         saveSettingsDebounced();
         updateToolbarUI();
+        renderTags(); // 必须重新渲染以清空列表
     });
 
     $(document).off('click', '#bl-preset-save').on('click', '#bl-preset-save', function() {
