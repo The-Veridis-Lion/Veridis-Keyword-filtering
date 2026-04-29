@@ -217,7 +217,15 @@
 /* --- 4. 列表与卡片设计 --- */
 .card-list { display: flex; flex-direction: column; gap: 8px; flex: 1; }
 #bl-tags-container { flex: 1 1 auto !important; min-height: 0 !important; overflow-y: auto !important; padding-right: 5px !important; }
-.card { background-color: var(--bg-card); border-radius: 8px; padding: 8px 10px; display: flex; flex-direction: column; border: 1px solid var(--card-border); }
+.card { 
+    background-color: var(--bg-card); 
+    border-radius: 8px; 
+    padding: 8px 10px; 
+    display: flex; 
+    flex-direction: column; 
+    border: 1px solid var(--card-border); 
+    flex-shrink: 0 !important; /* 严禁 Android 端强行压缩卡片高度 */
+}
 .card.is-disabled { opacity: 0.65; }
 .card-header { display: flex; justify-content: space-between; align-items: center; padding-bottom: 6px; }
 .card-header.has-border { border-bottom: 1px dashed var(--border-dash); margin-bottom: 6px; }
