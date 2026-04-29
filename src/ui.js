@@ -439,7 +439,7 @@ export function renderSubrulesToModal() {
                     <div style="display: flex; align-items: center; margin: 0; padding: 0;">
                         ${badgeHTML}
                     </div>
-                    <div class="bl-subrule-btn-group" style="display: flex; justify-content: space-between; align-items: center; flex: 0 0 35%; margin: 0; padding: 0;">
+                    <div class="bl-subrule-btn-group">
                         <button class="bl-move-subrule-up-btn bl-icon-btn" data-index="${i}" title="上移" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
                         <button class="bl-move-subrule-down-btn bl-icon-btn" data-index="${i}" title="下移" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
                         <button class="bl-edit-subrule-btn bl-icon-btn" data-index="${i}" title="独立编辑"><i class="fas fa-pen"></i></button>
