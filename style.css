@@ -93,23 +93,10 @@
 .bl-icon-btn {
     padding: 0 10px !important; min-height: 30px !important; min-width: 30px !important;
     font-size: 13px !important; line-height: 1 !important; border-radius: 8px !important;
-    background: var(--bl-background-secondary) !important; border: 1px solid var(--bl-border-color) !important;
+    background: transparent !important; border: none !important; box-shadow: none !important;
     cursor: pointer !important; color: var(--bl-text-primary) !important;
 }
-.bl-icon-btn:hover { background: var(--bl-background-tertiary) !important; }
-
-/* --- 强制去除子规则列表中的按钮框 --- */
-.bl-subrule-btn-group .bl-icon-btn {
-    background: transparent !important; border: none !important; box-shadow: none !important;
-    color: var(--icon-color) !important; font-size: 15px !important; padding: 4px !important;
-    min-width: auto !important; width: auto !important; height: auto !important;
-    transition: transform 0.2s, color 0.2s !important;
-}
-.bl-subrule-btn-group .bl-icon-btn.bl-danger-btn { color: var(--btn-danger) !important; }
-.bl-subrule-btn-group .bl-icon-btn:hover {
-    background: transparent !important; color: var(--bl-accent-color) !important; transform: scale(1.15);
-}
-
+.bl-icon-btn:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
 
 /* 徽章 */
 .bl-badge {
@@ -143,7 +130,7 @@
 
 .icon-group { display: flex; align-items: center; gap: 2px; }
 .icon-group button {
-    background-color: var(--bg-button); border: none; border-radius: 6px; color: var(--icon-color);
+    background: transparent !important; border: none !important; box-shadow: none !important; border-radius: 6px; color: var(--icon-color);
     min-width: 24px; min-height: 24px; padding: 3px; display: flex; align-items: center; justify-content: center;
     cursor: pointer; font-size: 14px; box-sizing: border-box;
 }
@@ -154,7 +141,8 @@
     background: transparent !important; border: none !important; box-shadow: none !important;
 }
 #bl-purifier-popup .header .icon-group { gap: var(--bl-control-gap) !important; }
-#bl-purifier-popup .header .icon-group button:hover { background: rgba(80, 72, 64, 0.08) !important; }
+.icon-group button:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
+#bl-purifier-popup .header .icon-group button:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
 
 /* 绑定状态按钮 */
 .bl-bind-toggle { color: var(--icon-color) !important; }
@@ -167,18 +155,14 @@
     align-items: center !important; gap: var(--bl-control-gap) !important;
 }
 #bl-purifier-popup .toolbar .icon-group {
-    display: flex !important; justify-content: space-between !important;
-    align-items: center !important; flex: 0 0 30% !important; gap: 0 !important;
+    display: grid !important; grid-template-columns: repeat(4, var(--bl-control-height));
+    align-items: center !important; gap: var(--bl-control-gap) !important;
 }
 #bl-purifier-popup .toolbar .icon-group button {
-    background: transparent !important; border: none !important; box-shadow: none !important;
-    color: var(--icon-color) !important; font-size: 16px !important;
-    min-width: auto !important; width: auto !important; min-height: auto !important; height: auto !important;
-    padding: 4px !important; transition: transform 0.2s, color 0.2s !important;
+    min-width: var(--bl-control-height) !important; width: var(--bl-control-height) !important;
+    min-height: var(--bl-control-height) !important; height: var(--bl-control-height) !important;
+    padding: 0 !important; border-radius: var(--bl-control-radius) !important; font-size: 17px !important;
     display: inline-flex !important; align-items: center !important; justify-content: center !important;
-}
-#bl-purifier-popup .toolbar .icon-group button:hover {
-    background: transparent !important; color: var(--bl-accent-color) !important; transform: scale(1.15);
 }
 #bl-purifier-popup .toolbar .icon-group button i, #bl-purifier-popup .toolbar .icon-group button svg {
     width: 18px !important; height: 18px !important; line-height: 1 !important; display: inline-flex !important; align-items: center !important; justify-content: center !important;
@@ -250,22 +234,12 @@
 
 /* 列表内控制按钮 */
 .icon-group.compact { gap: 3px; }
-.card-header .icon-group.compact {
-    flex: 0 0 30% !important;
-    display: flex !important;
-    justify-content: space-between !important;
-    align-items: center !important;
-    gap: 0 !important;
-}
 .bl-rule-move-up, .bl-rule-move-down, .bl-rule-transfer, .bl-rule-edit, .bl-rule-del {
-    background: transparent !important; border: none !important; box-shadow: none !important;
-    font-size: 15px !important; color: var(--icon-color) !important;
-    min-width: auto !important; width: auto !important; height: auto !important;
-    padding: 4px !important; transition: transform 0.2s, color 0.2s !important;
+    border-radius: 10px !important; min-width: 30px !important; width: 30px !important; min-height: 30px !important;
+    height: 30px !important; padding: 0 !important; border: none !important; box-shadow: none !important;
+    background: transparent !important; color: var(--bl-text-primary) !important;
 }
-.bl-rule-move-up:hover, .bl-rule-move-down:hover, .bl-rule-transfer:hover, .bl-rule-edit:hover, .bl-rule-del:hover {
-    background: transparent !important; color: var(--bl-accent-color) !important; transform: scale(1.15);
-}
+.bl-rule-move-up:hover, .bl-rule-move-down:hover, .bl-rule-transfer:hover, .bl-rule-edit:hover, .bl-rule-del:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
 .bl-rule-move-up:disabled, .bl-rule-move-down:disabled { opacity: 0.38 !important; cursor: not-allowed !important; }
 
 /* 自定义复选框 */
@@ -991,6 +965,7 @@
     /* 放宽占比，防止手机端图标挤压无法点击 */
     .card-header .icon-group.compact { flex: 0 0 50% !important; }
     #bl-purifier-popup .toolbar .icon-group { flex: 0 0 45% !important; }
+    .bl-subrule-btn-group { flex: 0 0 52% !important; }
     
     /* 抹除旧的移动端死板高宽 */
     #bl-purifier-popup .toolbar .icon-group button,
@@ -1004,41 +979,4 @@
         font-size: 15px !important;
         padding: 4px !important;
     }
-}
-
-
-/* --- 修复图标贴边问题：固定边缘距离，内部真正均匀等分 --- */
-.bl-subrule-btn-group {
-    display: flex !important;
-    flex: 1 !important; /* 占据剩余全部空间 */
-    justify-content: flex-end !important; /* 整体靠右 */
-    align-items: center !important;
-    gap: 10px !important; /* 强制按钮之间保持均匀间距 */
-    padding-right: 6px !important; /* 距离边缘留出 6px 的安全距离 */
-    margin: 0 !important;
-}
-
-/* --- 修复所有弹窗底栏的横向滑动条溢出问题 --- */
-.bl-modal-actions, .bl-transfer-actions {
-    display: flex !important;
-    width: 100% !important;
-    max-width: 100% !important;
-    box-sizing: border-box !important; /* 确保 padding 和 gap 不会撑破 100% 宽度 */
-    flex-wrap: nowrap !important; /* 绝不换行 */
-    gap: 12px !important; /* 按钮间距 */
-    overflow: hidden !important; /* 强制拦截任何溢出，杜绝滑动条 */
-    padding: 0 2px !important; /* 微调边缘 */
-}
-
-/* 强制底栏内部所有按钮等宽，且不被长文字撑破 */
-.bl-modal-actions button,
-.bl-transfer-actions button,
-.bl-modal-actions .bl-secondary-btn,
-.bl-modal-actions .bl-primary-btn {
-    flex: 1 1 0 !important; /* 核心：强制等分剩余空间 */
-    min-width: 0 !important; /* 核心：打破文字撑开最小宽度的限制 */
-    white-space: nowrap !important;
-    text-overflow: ellipsis !important; /* 文字过长显示省略号，而不是挤出屏幕 */
-    overflow: hidden !important;
-    margin: 0 !important;
 }
