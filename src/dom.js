@@ -10,7 +10,7 @@ import { applyReplacements, applyVisualMask, buildProcessors } from './core.js';
 export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
     if (node.closest('.name_text')) return true;
-    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-diff-modal')) return true;
+    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
     if (node.closest('#advanced_formatting, #api_settings')) return true;
     if ((node.id && node.id.includes('shujuku_v120-')) || node.closest('[id*="shujuku_v120-"]')) return true;
 
