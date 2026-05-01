@@ -4,8 +4,7 @@ import { applyReplacements, buildProcessors } from './core.js';
 import { showDeepCleanOverlay, updateDeepCleanOverlay } from './ui.js';
 
 /**
- * 判断是否应跳过数据库扩展字段（全局设置模式）。
- * 兼容逻辑：当根命名空间属于 shujuku_v120 且键名命中 Prompt/Settings/Template 时放行不清理。
+ * 判断是否应跳过数据库扩展字段。
  * @param {string[]} [pathKeys=[]] 当前字段路径键列表。
  * @param {boolean} [isGlobalSettings=false] 是否处于全局设置扫描。
  * @returns {boolean} true 表示跳过该字段。
@@ -26,6 +25,10 @@ function shouldSkipDbExtensionFieldByMeta(depth, rootNamespace, currentKey, isGl
     return key.includes('Prompt') || key.includes('Settings') || key.includes('Template');
 }
 
+function isRevertedMessageObject(value) {
+    return !!(value && typeof value === 'object' && value.__bl_is_reverted === true);
+}
+
 /**
  * 同步深度清理对象中的所有字符串字段。
  * @param {object} rootObj 待清理对象。
@@ -41,9 +44,11 @@ export function deepCleanObjectSync(rootObj) {
         const current = stack.pop();
         if (!current || seen.has(current)) continue;
         seen.add(current);
+        if (isRevertedMessageObject(current)) continue;
 
         for (let key in current) {
             if (!Object.prototype.hasOwnProperty.call(current, key)) continue;
+            if (key === '__bl_original_mes') continue;
             const val = current[key];
             if (typeof val === 'string') {
                 const cleaned = applyReplacements(val);
@@ -60,10 +65,10 @@ export function deepCleanObjectSync(rootObj) {
 }
 
 /**
- * 异步深层洗刷：分片遍历 + 超时截止，防止长任务导致页面卡死。
+ * 分片执行异步深度清理。
  * @param {object} rootObj 待清理对象根节点。
- * @param {boolean} [isGlobalSettings=false] 是否对全局设置执行清理（会应用白名单跳过规则）。
- * @param {{onProgress?: Function, deadline?: number}} [options={}] 进度回调与绝对截止时间。
+ * @param {boolean} [isGlobalSettings=false] 是否对全局设置执行清理。
+ * @param {{onProgress?: Function, deadline?: number}} [options={}] 进度回调与截止时间。
  * @returns {Promise<number>} 命中并替换的字段数量。
  */
 export async function safeDeepScrub(rootObj, isGlobalSettings = false, options = {}) {
@@ -91,11 +96,13 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
         const rootNamespace = currentItem?.rootNamespace || '';
         if (!current || seen.has(current)) continue;
         seen.add(current);
+        if (isRevertedMessageObject(current)) continue;
 
         try {
             for (let key in current) {
                 if (Object.prototype.hasOwnProperty.call(current, key)) {
                     if (isGlobalSettings && key === extensionName) continue;
+                    if (key === '__bl_original_mes') continue;
                     const nextDepth = depth + 1;
                     const nextRootNamespace = depth === 0 ? key : rootNamespace;
                     if (shouldSkipDbExtensionFieldByMeta(nextDepth, nextRootNamespace, key, isGlobalSettings)) continue;
@@ -119,8 +126,8 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
 }
 
 /**
- * 获取深度清理超时时间（毫秒），并对配置进行边界收敛。
- * @returns {number} 介于 10000 到 1800000 之间的超时毫秒值。
+ * 获取深度清理超时时间。
+ * @returns {number} 超时毫秒值。
  */
 export function getDeepCleanTimeoutMs() {
     const { extension_settings } = getAppContext();
@@ -130,7 +137,7 @@ export function getDeepCleanTimeoutMs() {
 }
 
 /**
- * 执行全域深度清理流程：分阶段洗刷、进度展示、超时保护与最终落盘。
+ * 执行全域深度清理流程。
  * @returns {Promise<void>}
  */
 export async function performDeepCleanse() {

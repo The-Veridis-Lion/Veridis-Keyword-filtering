@@ -8,9 +8,22 @@ function safeHtml(str) {
     return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+export function showToast(message) {
+    $('.bl-toast').remove();
+    // 替换为 100% 兼容的 fas fa-exclamation-circle 图标
+    const $toast = $('<div class="bl-toast" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>');
+    $toast.find('.bl-toast-text').text(String(message || ''));
+    $('body').append($toast);
+    setTimeout(() => $toast.addClass('show'), 10);
+    setTimeout(() => {
+        $toast.removeClass('show');
+        setTimeout(() => $toast.remove(), 300);
+    }, 2000);
+}
+
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
-    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal').remove();
+    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal, .bl-toast').remove();
 
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
@@ -138,6 +151,9 @@ export function setupUI() {
                 <div class="bl-diff-modal-header">
                     <h3 class="bl-diff-modal-title"><i class="fa-solid fa-eye"></i> 净化前文透视</h3>
                     <div class="bl-diff-header-actions">
+                        <button id="bl-diff-revert-toggle" class="bl-icon-btn bl-diff-header-btn" title="撤回净化并保护原文">
+                            <i id="bl-diff-revert-icon" class="fas fa-rotate-left"></i> <span id="bl-diff-revert-text">撤回</span>
+                        </button>
                         <button id="bl-diff-pos-toggle" class="bl-icon-btn bl-diff-header-btn" title="将顶部按钮收纳进三点菜单">
                             <i id="bl-diff-pos-icon" class="fa-solid fa-ellipsis"></i> <span id="bl-diff-pos-text">收纳按钮</span>
                         </button>
@@ -155,16 +171,19 @@ export function setupUI() {
     $('body').append(`
         <div id="bl-subrule-edit-modal" class="bl-modal-shell" style="z-index: 10000005;">
             <div class="bl-modal-card bl-edit-modal-card" style="padding: 20px !important;">
-                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 15px; border-bottom: 1px dotted var(--border-dash); padding-bottom: 12px;">
-                    <div style="position: relative; flex: 1; margin-right: 15px;">
-                        <select id="bl-modal-sub-mode" class="bl-input" style="margin: 0; width: 100%; font-size: 16px !important; font-weight: bold; background-color: transparent !important; border: none !important; padding: 0 !important; color: var(--text-main) !important; appearance: none; -webkit-appearance: none;">
-                            <option value="simple">🧩 简易组合 (推荐! 支持{}与*号)</option>
-                            <option value="text">📝 普通文本 (长词优先替换)</option>
-                            <option value="regex">⚙️ 正则表达式 (专业模式)</option>
-                        </select>
-                        <i class="fas fa-chevron-down" style="position: absolute; right: 0; top: 50%; transform: translateY(-50%); color: var(--text-mute); pointer-events: none; font-size: 14px;"></i>
+                <div class="bl-subrule-modal-header">
+                    <div class="bl-subrule-mode-block">
+                        <div class="bl-subrule-mode-select-wrap">
+                            <select id="bl-modal-sub-mode" class="bl-input bl-subrule-mode-select">
+                                <option value="simple">🧩 简易组合</option>
+                                <option value="text">📝 普通文本</option>
+                                <option value="regex">⚙️ 正则表达式</option>
+                            </select>
+                            <i class="fas fa-chevron-down bl-subrule-mode-arrow"></i>
+                        </div>
+                        <div id="bl-modal-sub-mode-hint" class="bl-subrule-mode-hint" aria-live="polite"></div>
                     </div>
-                    <button id="bl-modal-sub-save" class="bl-icon-btn" style="background: transparent !important; border: none !important; color: var(--text-main) !important; font-size: 24px !important; padding: 0 5px !important; min-width: auto !important; height: auto !important;" title="完成保存"><i class="fas fa-check"></i></button>
+                    <button id="bl-modal-sub-save" class="bl-icon-btn bl-subrule-save-btn" title="完成保存"><i class="fas fa-check"></i></button>
                 </div>
                 
                 <div class="bl-subrule-field" style="margin-bottom: 12px;">
@@ -175,6 +194,7 @@ export function setupUI() {
                 <div class="bl-subrule-field" style="margin-bottom: 12px;">
                     <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">查找内容</label>
                     <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                    <div id="bl-modal-sub-target-error" class="bl-field-error" aria-live="polite"></div>
                 </div>
                 
                 <div class="bl-subrule-field" style="margin-bottom: 15px;">
@@ -187,6 +207,31 @@ export function setupUI() {
         </div>
     `);
 } 
+
+export function focusLatestRuleCard() {
+    const container = document.getElementById('bl-tags-container');
+    if (!container) return;
+
+    const cards = container.querySelectorAll('.card');
+    const latestCard = cards[cards.length - 1];
+    if (!latestCard) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const cardRect = latestCard.getBoundingClientRect();
+    const isVisible = cardRect.top >= containerRect.top && cardRect.bottom <= containerRect.bottom;
+
+    if (!isVisible) {
+        latestCard.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+
+    latestCard.classList.remove('bl-highlight-flash');
+    void latestCard.offsetWidth;
+    latestCard.classList.add('bl-highlight-flash');
+
+    window.setTimeout(() => {
+        latestCard.classList.remove('bl-highlight-flash');
+    }, 1600);
+}
 
 export function showDeepCleanOverlay() {
     $('body').append(`
