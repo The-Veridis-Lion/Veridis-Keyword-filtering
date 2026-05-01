@@ -47,9 +47,7 @@ export function computeMessageSignature(msg) {
         ? msg.__bl_diff_last_cleaned_mes
         : '';
 
-    // 正式替换后 msg.mes 会被写成净化后的文本。
-    // 如果随后同一条消息又收到一次结束事件，这里仍需返回“原始源文本”的签名，
-    // 避免把同一条消息误判成新内容，导致对比缓存被空结果覆盖。
+    // 已净化消息再次收到结束事件时，继续沿用原始源文本签名，避免空差异覆盖缓存。
     if (storedSourceSignature && lastCleanedMes && base === lastCleanedMes) {
         return storedSourceSignature;
     }
@@ -368,11 +366,7 @@ export function getDiffStateForMessage(index) {
 
 /**
  * 生成两段文本的行内差异 HTML。
- *
- * 算法说明：
- * - 先通过动态规划求出 oldStr/newStr 的最长公共子序列（LCS）长度矩阵；
- * - 再从矩阵右下角回溯，公共字符保持原样，新增字符包裹在 <ins>，删除字符包裹在 <del>；
- * - 最后合并连续同类标签，得到可读性更高的高亮结果。
+ * 先裁剪公共前后缀，再对中间片段做 LCS 回溯。
  * @param {string} oldStr 原始文本。
  * @param {string} newStr 净化后文本。
  * @returns {string} 包含 <ins>/<del> 标记的差异 HTML。
@@ -381,13 +375,11 @@ export function getInlineDiff(oldStr, newStr) {
     if (oldStr === newStr) return escapeHtml(oldStr);
     if (!oldStr && !newStr) return "";
 
-    // --- 剥离公共前缀 ---
     let start = 0;
     while (start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) {
         start++;
     }
 
-    // --- 剥离公共后缀 ---
     let endOld = oldStr.length - 1;
     let endNew = newStr.length - 1;
     while (endOld >= start && endNew >= start && oldStr[endOld] === newStr[endNew]) {
@@ -395,7 +387,6 @@ export function getInlineDiff(oldStr, newStr) {
         endNew--;
     }
 
-    // --- 提取相同部分与差异部分 ---
     const prefix = escapeHtml(oldStr.substring(0, start));
     const suffix = escapeHtml(oldStr.substring(endOld + 1));
     const midOld = Array.from(oldStr.substring(start, endOld + 1));
@@ -404,10 +395,8 @@ export function getInlineDiff(oldStr, newStr) {
     const m = midOld.length;
     const n = midNew.length;
 
-    // --- 如果差异部分为空，直接拼接 ---
     if (m === 0 && n === 0) return prefix + suffix;
 
-    // 仅对中间差异部分执行 O(M*N) 的 DP 计算
     const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
     for (let i = 1; i <= m; i++) {
         for (let j = 1; j <= n; j++) {
@@ -435,17 +424,12 @@ export function getInlineDiff(oldStr, newStr) {
         }
     }
 
-    // 拼接：前缀 + DP高亮部分 + 后缀
     return prefix + diff.reverse().join('')
         .replace(/<\/ins><ins>/g, '')
         .replace(/<\/del><del>/g, '') + suffix;
 }
 /**
- * 从原始消息文本中构建净化结果与可视化差异缓存。
- *
- * 解析逻辑：
- * - Snippet 模式：按行比较原文与净化结果，仅收集发生变化的行，生成紧凑差异片段；
- * - Full Text 模式：优先抽取 <content>...</content> 主体，再逐行生成完整对照（含未修改行）。
+ * 从原始消息文本构建净化结果与差异缓存。
  * @param {string} rawText 原始消息文本。
  * @returns {{cleanedText: string, snippets: string[], fullDiff: string}} 净化文本、片段差异和全文差异。
  */

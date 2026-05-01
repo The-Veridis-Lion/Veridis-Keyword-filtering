@@ -1,13 +1,13 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { buildSimpleWildcardPattern } from './utils.js';
+import { buildSimpleWildcardPattern, compileRegexTarget } from './utils.js';
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 
 /**
- * 根据当前规则构建净化处理器（文本/正则/简易语法）。
- * @returns {Array} 可复用的处理器数组。
+ * 按当前规则构建净化处理器。
+ * @returns {Array} 处理器数组。
  */
 export function buildProcessors() {
     if (!runtimeState.isRegexDirty) return runtimeState.activeProcessors;
@@ -37,28 +37,12 @@ export function buildProcessors() {
             } else if (mode === 'regex') {
                 for (const t of targets) {
                     if (t) {
-                        try {
-                            let pattern = t;
-                            let flags = 'gmu';
-                            if (t.startsWith('/')) {
-                                const lastSlash = t.lastIndexOf('/');
-                                if (lastSlash > 0) {
-                                    pattern = t.substring(1, lastSlash);
-                                    flags = t.substring(lastSlash + 1);
-                                    if (!flags.includes('g')) flags += 'g';
-                                }
-                            }
-
-                            let testRegex = new RegExp(pattern, flags);
-                            if (testRegex.test("")) {
-                                logger.warn(`拦截到危险的空匹配正则，已忽略: ${t}`);
-                                return;
-                            }
-
-                            processors.push({ regex: testRegex, replacements, isRegexMode: true });
-                        } catch (e) {
-                            logger.warn(`忽略非法正则表达式: ${t}`);
+                        const compiled = compileRegexTarget(t);
+                        if (!compiled.ok) {
+                            logger.warn(`忽略非法正则表达式: ${t} (${compiled.error.message})`);
+                            continue;
                         }
+                        processors.push({ regex: compiled.value.regex, replacements, isRegexMode: true });
                     }
                 }
             } else if (mode === 'simple') {
@@ -66,11 +50,10 @@ export function buildProcessors() {
                     if (t) {
                         try {
                             let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
-                            // 解析简易语法中的 {A,B} 备选分组。
+                            // 展开 {A,B} 备选分组，并将 * 转为受限通配片段。
                             escaped = escaped.replace(/\{([^}]+)\}/g, (match, group) => {
                                 return '(?:' + group.split(',').map(s => s.trim()).join('|') + ')';
                             });
-                            // 解析简易语法中的 * 通配符为受限匹配片段。
                             escaped = escaped.replace(/\*/g, buildSimpleWildcardPattern());
 
                             let testRegex = new RegExp(escaped, 'gmu');
@@ -172,7 +155,7 @@ export function applyVisualMask(originalText) {
 }
 
 /**
- * 排队执行增量聊天保存，合并短时间内的重复请求。
+ * 排队执行增量聊天保存。
  * @returns {void}
  */
 export function queueIncrementalChatSave() {
@@ -265,6 +248,7 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
     if (!Array.isArray(chat) || index < 0 || index >= chat.length) return false;
     const msg = chat[index];
     if (!msg || typeof msg !== 'object') return false;
+    if (msg.__bl_is_reverted) return false;
 
     const isAssistant = isAssistantMessage(msg);
     if (!isAssistant) {
@@ -292,6 +276,7 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
     };
 
     if (typeof msg.mes === 'string' && dataResult.cleanedText !== msg.mes) {
+        if (typeof msg.__bl_original_mes !== 'string') msg.__bl_original_mes = sourceMes;
         msg.mes = dataResult.cleanedText;
         changed = true;
     }
@@ -344,6 +329,11 @@ export function performNonStreamingFinalCleanse(payload) {
 
     const msg = chat[index];
     if (!isAssistantMessage(msg)) return;
+    if (msg?.__bl_is_reverted) {
+        clearTrackedDiffEntry(index);
+        injectDiffButtons([index]);
+        return;
+    }
 
     const previousState = runtimeState.diffMessageStates.get(index);
     const currentSignature = computeMessageSignature(msg);
@@ -410,6 +400,11 @@ export function performIncrementalCleanse(payload, options = {}) {
     const msg = Array.isArray(chat) ? chat[index] : null;
     const assistant = isAssistantMessage(msg);
     if (!assistant) return;
+    if (msg?.__bl_is_reverted) {
+        clearTrackedDiffEntry(index);
+        injectDiffButtons([index]);
+        return;
+    }
     if (assistant) {
         const signature = computeMessageSignature(msg);
         if (options.visualOnly) markDiffComparisonPending(index, signature);
@@ -470,20 +465,22 @@ export function performGlobalCleanse() {
             let mainCache = { snippets: [], fullDiff: '' };
             const assistant = isAssistantMessage(msg);
             const signature = assistant ? computeMessageSignature(msg) : '';
+            const isReverted = msg?.__bl_is_reverted === true;
 
-            if (typeof msg?.mes === 'string') {
+            if (!isReverted && typeof msg?.mes === 'string') {
                 const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(msg.mes);
                 mainCache = {
                     snippets: Array.from(new Set(mesSnippets)),
                     fullDiff,
                 };
                 if (msg.mes !== cleanedText) {
+                    if (typeof msg.__bl_original_mes !== 'string') msg.__bl_original_mes = msg.mes;
                     msg.mes = cleanedText;
                     msgChanged = true;
                 }
             }
 
-            if (msg?.swipes && Array.isArray(msg.swipes)) {
+            if (!isReverted && msg?.swipes && Array.isArray(msg.swipes)) {
                 for (let i = 0; i < msg.swipes.length; i++) {
                     if (typeof msg.swipes[i] === 'string') {
                         const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i]);
@@ -501,7 +498,7 @@ export function performGlobalCleanse() {
                 }
             }
 
-            if (assistant && latestDiffIndices.has(index)) {
+            if (assistant && latestDiffIndices.has(index) && !isReverted) {
                 writeReadyDiffCache(index, signature, mainCache, {
                     preserveExistingRealDiff: true,
                 });

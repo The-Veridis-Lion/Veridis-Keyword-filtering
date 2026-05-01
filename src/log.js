@@ -1,14 +1,5 @@
 /**
- * 日志模块：[屏蔽词净化助手]
- *
- * 支持四级日志，通过设置项 `extension_settings[extensionName].logLevel` 控制：
- *   0 = off（全部禁用）
- *   1 = error（仅错误）
- *   2 = warn  （默认，警告及以上）
- *   3 = info  （信息及以上）
- *   4 = debug （全部，包括 debug）
- *
- * 修改设置项后无需重载，下次调用即生效。
+ * 统一日志输出，级别由 `extension_settings[extensionName].logLevel` 控制。
  */
 
 import { extensionName, getAppContext } from './state.js';
