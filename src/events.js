@@ -29,7 +29,7 @@ import {
     queueIncrementalChatSave,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, isProtectedNode } from './dom.js';
+import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
 let streamingDiffInjectTimer = null;
@@ -210,6 +210,7 @@ export function initRealtimeInterceptor() {
                     const node = m.addedNodes[ni];
                     if (node.nodeType === 3 || node.nodeType === 8) {
                         if (node.parentNode && isProtectedNode(node.parentNode)) continue;
+                        if (node.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
                         if (original !== nextValue) node.nodeValue = nextValue;
@@ -225,6 +226,7 @@ export function initRealtimeInterceptor() {
                 }
                 if (m.type === 'characterData') {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) continue;
+                    if (m.target.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
                     if (original !== nextValue) m.target.nodeValue = nextValue;
@@ -381,6 +383,13 @@ export function bindEvents() {
         settings.enableVisualDiff = $(this).prop('checked');
         saveSettingsDebounced();
         injectDiffButtons();
+    });
+
+    $('#bl-skip-user-toggle').prop('checked', settings.skipUserMessages === true);
+
+    $(document).off('change', '#bl-skip-user-toggle').on('change', '#bl-skip-user-toggle', function() {
+        settings.skipUserMessages = $(this).prop('checked');
+        saveSettingsDebounced();
     });
 
     $(document).off('click', '#bl-batch-toggle').on('click', '#bl-batch-toggle', function() {
