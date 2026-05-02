@@ -460,10 +460,13 @@ export function performGlobalCleanse() {
     const latestDiffIndices = new Set(getLatestTrackableDiffIndices(3));
 
     if (chat && Array.isArray(chat)) {
+        const { extension_settings } = getAppContext();
+        const skipUser = extension_settings[extensionName]?.skipUserMessages === true;
         chat.forEach((msg, index) => {
             let msgChanged = false;
             let mainCache = { snippets: [], fullDiff: '' };
             const assistant = isAssistantMessage(msg);
+            if (skipUser && !assistant) return;
             const signature = assistant ? computeMessageSignature(msg) : '';
             const isReverted = msg?.__bl_is_reverted === true;
 

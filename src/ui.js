@@ -81,6 +81,11 @@ export function setupUI() {
                     <span class="custom-checkbox square"></span>
                     <span class="bottom-text">透视模式</span>
                 </label>
+                <label class="checkbox-label" title="开启后仅过滤 AI 回复，用户消息不受影响">
+                    <input type="checkbox" id="bl-skip-user-toggle">
+                    <span class="custom-checkbox square"></span>
+                    <span class="bottom-text">跳过用户消息</span>
+                </label>
                 <button id="bl-deep-clean-btn" class="btn-danger"><i class="fas fa-broom"></i> 深度清理</button>
             </div>
         </div>`);
