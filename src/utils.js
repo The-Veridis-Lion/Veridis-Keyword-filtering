@@ -175,6 +175,57 @@ export function parseInputToWords(text, mode = 'text', options = {}) {
     return isTarget ? words.filter(w => w) : words;
 }
 
+function isRuleLikeObject(value) {
+    if (!value || typeof value !== 'object' || Array.isArray(value)) return false;
+    return Array.isArray(value.subRules)
+        || Array.isArray(value.targets)
+        || (typeof value.name === 'string' && ('enabled' in value || 'subRules' in value));
+}
+
+/**
+ * 兼容多种预设导入格式，统一提取为规则数组。
+ * 支持原生数组、{ rules }、{ __content__ }、以及带数字键的对象包装。
+ * @param {any} payload 导入的 JSON 对象。
+ * @returns {Array<object>} 规则数组。
+ */
+export function normalizeImportedRulesPayload(payload) {
+    if (Array.isArray(payload)) return payload;
+
+    if (!payload || typeof payload !== 'object') {
+        throw new Error('格式非对象或数组');
+    }
+
+    if ('rules' in payload) {
+        return normalizeImportedRulesPayload(payload.rules);
+    }
+
+    if ('__content__' in payload) {
+        return normalizeImportedRulesPayload(payload.__content__);
+    }
+
+    if ('content' in payload) {
+        return normalizeImportedRulesPayload(payload.content);
+    }
+
+    const numericKeys = Object.keys(payload)
+        .filter((key) => /^\d+$/.test(key))
+        .sort((a, b) => Number(a) - Number(b));
+    if (numericKeys.length > 0) {
+        const numericRules = numericKeys
+            .map((key) => payload[key])
+            .filter(isRuleLikeObject);
+        if (numericRules.length > 0) return numericRules;
+    }
+
+    const candidateRules = Object.entries(payload)
+        .filter(([key]) => !String(key).startsWith('_'))
+        .map(([, value]) => value)
+        .filter(isRuleLikeObject);
+    if (candidateRules.length > 0) return candidateRules;
+
+    throw new Error('未识别的预设格式');
+}
+
 export function buildSimpleWildcardPattern() {
     const escapedStops = SIMPLE_WILDCARD_STOP_CHARS.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
     return `[^${escapedStops}]{0,15}?`;

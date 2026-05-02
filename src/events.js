@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { deepClone, parseInputToWords, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
+import { deepClone, parseInputToWords, getCurrentCharacterContext, validateRegexTargetInput, normalizeImportedRulesPayload } from './utils.js';
 import {
     applyPresetByName,
     renderTags,
@@ -882,10 +882,7 @@ export function bindEvents() {
             const reader = new FileReader();
             reader.onload = event => {
                 try {
-                    let importedRules = JSON.parse(event.target.result);
-                    if (typeof importedRules === 'object' && !Array.isArray(importedRules) && importedRules.rules) {
-                        importedRules = importedRules.rules;
-                    }
+                    let importedRules = normalizeImportedRulesPayload(JSON.parse(event.target.result));
                     if (!Array.isArray(importedRules)) throw new Error("格式非数组");
 
                     const defaultName = file.name.replace(/\.json$/i, '');

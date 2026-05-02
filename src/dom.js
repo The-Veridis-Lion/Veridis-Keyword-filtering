@@ -2,6 +2,47 @@ import { getAppContext, runtimeState } from './state.js';
 import { applyReplacements, applyVisualMask, buildProcessors } from './core.js';
 
 /**
+ * 判断节点是否位于宿主应用的脚本编辑弹窗中。
+ * 该弹窗可能同时存在多个实例，但内部结构一致，因此使用稳定的结构特征做匹配。
+ * @param {Element} node 待检查节点。
+ * @returns {boolean} true 表示节点位于脚本编辑弹窗内。
+ */
+function isScriptEditorDialogNode(node) {
+    if (!node || !node.closest) return false;
+    const dialog = node.closest('[role="dialog"], .popup, .vfm__content');
+    if (!dialog) return false;
+    return Boolean(
+        dialog.querySelector('.TH-script-editor-container')
+        && dialog.querySelector('#TH-script-editor-button-enabled-toggle')
+        && dialog.querySelector('.text_pole')
+    );
+}
+
+/**
+ * 判断节点是否属于宿主应用的正则脚本编辑字段。
+ * 同一套字段会出现在全局预设、角色卡等不同位置，因此按字段类名和占位标识匹配。
+ * @param {Element} node 待检查节点。
+ * @returns {boolean} true 表示节点属于正则编辑字段。
+ */
+function isRegexScriptEditorNode(node) {
+    if (!node || !node.matches) return false;
+    const regexFieldSelector = [
+        '.regex_script_name',
+        '.find_regex',
+        '.regex_replace_string',
+        '.regex_trim_strings',
+        '[data-i18n*="ext_regex_replace_string_placeholder"]',
+        '[data-i18n*="ext_regex_trim_placeholder"]',
+    ].join(', ');
+    if (node.matches(regexFieldSelector)) return true;
+
+    const placeholder = typeof node.getAttribute === 'function' ? String(node.getAttribute('placeholder') || '') : '';
+    return placeholder.includes('使用 {{match}}')
+        || placeholder.includes('查找正则表达式')
+        || placeholder.includes('全局修剪正则表达式匹配');
+}
+
+/**
  * 判断节点是否属于受保护区域。
  * @param {Element} node 待检查节点。
  * @returns {boolean} true 表示应跳过净化。
@@ -10,6 +51,8 @@ export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
     if (node.closest('.name_text')) return true;
     if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
+    if (isScriptEditorDialogNode(node)) return true;
+    if (isRegexScriptEditorNode(node)) return true;
     if (node.closest('#advanced_formatting, #api_settings')) return true;
     if ((node.id && node.id.includes('shujuku_v120-')) || node.closest('[id*="shujuku_v120-"]')) return true;
 
