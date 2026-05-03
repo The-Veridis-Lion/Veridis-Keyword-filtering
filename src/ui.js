@@ -1,4 +1,4 @@
-import { extensionName, getAppContext, runtimeState } from './state.js';
+import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markRulesUiDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
 import { deepClone, getCurrentCharacterContext, getPresetForCharacter, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
@@ -8,22 +8,160 @@ function safeHtml(str) {
     return String(str || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
+function formatReplacementCandidatePreview(value) {
+    const normalized = String(value ?? '').replace(/\r/g, '');
+    return normalized ? safeHtml(normalized).replace(/\n/g, ' ↵ ') : '【直接删除】';
+}
+
+function formatReplacementPreview(replacements, mode = 'text') {
+    if (!Array.isArray(replacements) || replacements.length === 0) return '【直接删除】';
+    if (mode === 'regex') {
+        return replacements.map((value) => `〔${formatReplacementCandidatePreview(value)}〕`).join(' / ');
+    }
+    const joined = replacements.join(', ');
+    return safeHtml(joined) || '【直接删除】';
+}
+
+function normalizeReplacementList(replacements) {
+    return Array.isArray(replacements) ? replacements.map((value) => String(value ?? '')) : [];
+}
+
+function getRulePreviewTagText(mode = 'text') {
+    if (mode === 'regex') return '正则';
+    if (mode === 'simple') return '简易';
+    return '普通';
+}
+
+function getRuleSourcePreviewText(sub = {}) {
+    const mode = sub.mode || 'text';
+    return safeHtml((sub.targets || []).join(mode === 'text' ? ', ' : ' | ')) || '（空）';
+}
+
+function getRuleSearchMenuKey(ruleIndex, subRuleIndex) {
+    return `${ruleIndex}:${subRuleIndex}`;
+}
+
+function buildRuleSearchHaystack(sub = {}) {
+    const mode = sub.mode || 'text';
+    const targets = Array.isArray(sub.targets) ? sub.targets.join(mode === 'text' ? ' ' : '\n') : '';
+    const replacements = Array.isArray(sub.replacements) ? sub.replacements.join('\n') : '';
+    return `${targets}\n${replacements}`.toLowerCase();
+}
+
+function buildRuleSearchResults(keyword) {
+    const normalizedKeyword = String(keyword || '').trim().toLowerCase();
+    if (!normalizedKeyword) return [];
+
+    const { extension_settings } = getAppContext();
+    const rules = extension_settings?.[extensionName]?.rules || [];
+    const results = [];
+
+    rules.forEach((rule, ruleIndex) => {
+        (rule.subRules || []).forEach((sub, subRuleIndex) => {
+            if (!buildRuleSearchHaystack(sub).includes(normalizedKeyword)) return;
+            const mode = sub.mode || 'text';
+            results.push({
+                key: getRuleSearchMenuKey(ruleIndex, subRuleIndex),
+                ruleIndex,
+                subRuleIndex,
+                groupName: safeHtml(rule.name || `合集 ${ruleIndex + 1}`),
+                tagText: getRulePreviewTagText(mode),
+                sourcePreview: getRuleSourcePreviewText(sub),
+                replacementPreview: formatReplacementPreview(sub.replacements || [], mode),
+                isEnabled: rule.enabled !== false,
+            });
+        });
+    });
+
+    return results;
+}
+
+function getRegexReplacementEditIndex() {
+    const rawIndex = Number($('#bl-modal-sub-rep').data('regex-edit-index'));
+    return Number.isInteger(rawIndex) ? rawIndex : -1;
+}
+
+function getRegexReplacementChipValues() {
+    return $('#bl-modal-sub-regex-list').children('.bl-regex-replacement-chip').map(function() {
+        return String($(this).data('value') ?? '');
+    }).get();
+}
+
+function buildRegexReplacementChip(value = '') {
+    const normalizedValue = String(value ?? '');
+    const preview = formatReplacementCandidatePreview(normalizedValue);
+    const $chip = $(`
+        <div class="bl-regex-replacement-chip" data-index="0">
+            <button type="button" class="bl-regex-replacement-chip-main" data-index="0" title="点击编辑替换项"></button>
+            <button type="button" class="bl-regex-replacement-chip-remove" data-index="0" title="删除替换项">
+                <i class="fas fa-times"></i>
+            </button>
+        </div>
+    `);
+    $chip.data('value', normalizedValue);
+    $chip.find('.bl-regex-replacement-chip-main').html(preview).attr('title', normalizedValue || '点击编辑替换项');
+    return $chip;
+}
+
+function appendRegexReplacementInputs(values = [], options = {}) {
+    const normalizedValues = normalizeReplacementList(values);
+    const { sync = true } = options;
+    if (normalizedValues.length === 0) return $();
+
+    const $container = $('#bl-modal-sub-regex-list');
+    const fragment = document.createDocumentFragment();
+    const nodes = [];
+    normalizedValues.forEach((value) => {
+        const node = buildRegexReplacementChip(value)[0];
+        nodes.push(node);
+        fragment.appendChild(node);
+    });
+    $container.append(fragment);
+    if (sync) syncRegexReplacementInputState();
+    return $(nodes);
+}
+
+function syncRegexReplacementInputState() {
+    const $container = $('#bl-modal-sub-regex-list');
+    const $textarea = $('#bl-modal-sub-rep');
+    const $items = $container.children('.bl-regex-replacement-chip');
+    let editIndex = getRegexReplacementEditIndex();
+    if (editIndex >= $items.length) {
+        editIndex = -1;
+        $textarea.data('regex-edit-index', -1);
+    }
+    $items.each((index, element) => {
+        const $element = $(element);
+        $element.attr('data-index', index);
+        $element.toggleClass('is-active', index === editIndex);
+        $element.find('.bl-regex-replacement-chip-main').attr('data-index', index);
+        $element.find('.bl-regex-replacement-chip-remove').attr('data-index', index);
+    });
+    const isEditing = editIndex >= 0;
+    const defaultPlaceholder = String($textarea.data('regex-default-placeholder') || '');
+    const editPlaceholder = String($textarea.data('regex-edit-placeholder') || defaultPlaceholder);
+    $('#bl-modal-sub-regex-list').prop('hidden', $items.length === 0);
+    $('#bl-modal-sub-regex-recognize').text(isEditing ? '更新替换项' : '按行识别');
+    $textarea.attr('placeholder', isEditing ? editPlaceholder : defaultPlaceholder);
+}
+
 export function showToast(message) {
     $('.bl-toast').remove();
+    const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     // 替换为 100% 兼容的 fas fa-exclamation-circle 图标
-    const $toast = $('<div class="bl-toast" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>');
+    const $toast = $(`<div class="bl-toast" data-bl-theme="${themeMode}" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>`);
     $toast.find('.bl-toast-text').text(String(message || ''));
     $('body').append($toast);
-    setTimeout(() => $toast.addClass('show'), 10);
+    setTimeout(() => $toast.addClass('bl-show'), 10);
     setTimeout(() => {
-        $toast.removeClass('show');
+        $toast.removeClass('bl-show');
         setTimeout(() => $toast.remove(), 300);
     }, 2000);
 }
 
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
-    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-diff-modal, #bl-subrule-edit-modal, .bl-toast').remove();
+    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay, .bl-toast').remove();
 
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
@@ -34,12 +172,12 @@ export function setupUI() {
 
     $('body').append(`
         <div id="bl-purifier-popup" data-bl-theme="auto" style="display:none;">
-            <div class="header">
-                <div class="title">
+            <div class="bl-header">
+                <div class="bl-title">
                     <i class="fas fa-globe"></i>
                     全局映射预设
                 </div>
-                <div class="icon-group">
+                <div class="bl-icon-group">
                     <button id="bl-theme-toggle" title="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
                     <button id="bl-default-toggle" title="设为默认预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
                     <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
@@ -49,44 +187,45 @@ export function setupUI() {
                 </div>
             </div>
 
-            <div class="toolbar">
-                <select id="bl-preset-select" class="select-box"></select>
-                <div class="icon-group">
+            <div class="bl-toolbar">
+                <select id="bl-preset-select" class="bl-select-box"></select>
+                <div class="bl-icon-group">
                     <button id="bl-preset-rename" title="重命名"><i class="fas fa-pen"></i></button>
                     <button id="bl-preset-save" title="保存"><i class="fas fa-save"></i></button>
                     <button id="bl-preset-new" title="新建"><i class="fas fa-plus"></i></button>
                     <button id="bl-preset-delete" title="删除存档"><i class="fas fa-trash"></i></button>
+                    <button id="bl-preset-search" title="搜索规则"><i class="fas fa-magnifying-glass"></i></button>
                 </div>
             </div>
 
-            <div class="action-buttons">
-                <button id="bl-open-new-rule-btn" class="btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
-                <button class="btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
+            <div class="bl-action-buttons">
+                <button id="bl-open-new-rule-btn" class="bl-btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
+                <button class="bl-btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
             </div>
 
-            <div class="batch-operations" id="bl-batch-operations">
-                <button class="batch-btn" id="bl-btn-select-all"><i class="far fa-check-square"></i> 全选</button>
-                <button class="batch-btn" id="bl-btn-select-invert"><i class="fas fa-minus-square"></i> 反选</button>
-                <button class="batch-btn" id="bl-btn-batch-transfer"><i class="fas fa-copy"></i> 复制 / 转移</button>
-                <button class="batch-btn danger" id="bl-btn-batch-delete"><i class="fas fa-trash"></i> 删除</button>
+            <div class="bl-batch-operations" id="bl-batch-operations">
+                <button class="bl-batch-btn" id="bl-btn-select-all"><i class="far fa-check-square"></i> 全选</button>
+                <button class="bl-batch-btn" id="bl-btn-select-invert"><i class="fas fa-minus-square"></i> 反选</button>
+                <button class="bl-batch-btn" id="bl-btn-batch-transfer"><i class="fas fa-copy"></i> 复制 / 转移</button>
+                <button class="bl-batch-btn bl-danger" id="bl-btn-batch-delete"><i class="fas fa-trash"></i> 删除</button>
             </div>
 
-            <div class="divider"></div>
+            <div class="bl-divider"></div>
 
-            <div id="bl-tags-container" class="card-list" style="overflow-y:auto; flex:1;"></div>
+            <div id="bl-tags-container" class="bl-card-list" style="overflow-y:auto; flex:1;"></div>
 
-            <div class="bottom-bar">
-                <label class="checkbox-label" title="开启后，被修改过的消息旁会显示溯源按钮">
+            <div class="bl-bottom-bar">
+                <label class="bl-checkbox-label" title="开启后，被修改过的消息旁会显示溯源按钮">
                     <input type="checkbox" id="bl-diff-global-toggle">
-                    <span class="custom-checkbox square"></span>
-                    <span class="bottom-text">透视模式</span>
+                    <span class="bl-custom-checkbox bl-square"></span>
+                    <span class="bl-bottom-text">透视模式</span>
                 </label>
-                <label class="checkbox-label" title="开启后仅过滤 AI 回复，用户消息不受影响">
+                <label class="bl-checkbox-label" title="开启后仅过滤 AI 回复，用户消息不受影响">
                     <input type="checkbox" id="bl-skip-user-toggle">
-                    <span class="custom-checkbox square"></span>
-                    <span class="bottom-text">跳过用户消息</span>
+                    <span class="bl-custom-checkbox bl-square"></span>
+                    <span class="bl-bottom-text">跳过用户消息</span>
                 </label>
-                <button id="bl-deep-clean-btn" class="btn-danger"><i class="fas fa-broom"></i> 深度清理</button>
+                <button id="bl-deep-clean-btn" class="bl-btn-danger"><i class="fas fa-broom"></i> 深度清理</button>
             </div>
         </div>`);
 
@@ -97,13 +236,13 @@ export function setupUI() {
                     <h3 id="bl-edit-modal-title" class="bl-edit-modal-title" style="margin: 0; display: flex; align-items: center; gap: 8px;">
                         <i class="fas fa-pen"></i> 编辑规则合集
                     </h3>
-                    <button id="bl-edit-cancel-x" class="bl-icon-btn" style="background: transparent !important; border: none !important; box-shadow: none !important; font-size: 20px !important; color: var(--text-mute); padding: 0 !important; min-width: auto !important; height: auto !important; cursor: pointer;">
+                    <button id="bl-edit-cancel-x" class="bl-icon-btn" style="background: transparent !important; border: none !important; box-shadow: none !important; font-size: 20px !important; color: var(--bl-text-mute); padding: 0 !important; min-width: auto !important; height: auto !important; cursor: pointer;">
                         <i class="fas fa-times"></i>
                     </button>
                 </div>
                 <div class="bl-edit-field">
                     <label class="bl-field-label">规则组合集名称</label>
-                    <input type="text" id="bl-edit-name" class="bl-input" placeholder="例如：程度副词与认知失能净化" style="background: var(--bg-button) !important; border: 1px solid var(--border-color) !important; color: var(--text-main) !important;">
+                    <input type="text" id="bl-edit-name" class="bl-input" placeholder="例如：程度副词与认知失能净化" style="background: var(--bl-bg-button) !important; border: 1px solid var(--bl-border-color-base) !important; color: var(--bl-text-main) !important;">
                 </div>
                 <label class="bl-field-label" style="margin-bottom:6px; flex-shrink:0;">映射规则列表</label>
                 <div id="bl-edit-subrules-container"></div>
@@ -151,21 +290,54 @@ export function setupUI() {
     `);
 
     $('body').append(`
+        <div id="bl-rule-search-modal" class="bl-modal-shell">
+            <div class="bl-modal-card bl-rule-search-card">
+                <div class="bl-rule-search-header">
+                    <button id="bl-rule-search-back" type="button" class="bl-icon-btn bl-rule-search-back" title="返回搜索页上一级">
+                        <i class="fas fa-chevron-left"></i>
+                    </button>
+                    <div class="bl-rule-search-field">
+                        <i class="fas fa-magnifying-glass bl-rule-search-field-icon"></i>
+                        <input type="text" id="bl-rule-search-input" class="bl-input bl-rule-search-input" placeholder="搜索内容">
+                        <button id="bl-rule-search-clear" type="button" class="bl-icon-btn bl-rule-search-clear" title="清空关键词" hidden>
+                            <i class="fas fa-circle-xmark"></i>
+                        </button>
+                    </div>
+                    <button id="bl-rule-search-submit" type="button" class="bl-rule-search-submit">搜索</button>
+                </div>
+                <div id="bl-rule-search-body" class="bl-rule-search-body"></div>
+            </div>
+        </div>
+    `);
+
+    $('body').append(`
         <div id="bl-diff-modal" style="display:none;">
             <div class="bl-diff-modal-card">
                 <div class="bl-diff-modal-header">
-                    <h3 class="bl-diff-modal-title"><i class="fa-solid fa-eye"></i> 净化前文透视</h3>
+                    <h3 class="bl-diff-modal-title"><i class="fa-solid fa-eye"></i><span class="bl-diff-title-text">净化前文透视</span></h3>
                     <div class="bl-diff-header-actions">
-                        <button id="bl-diff-revert-toggle" class="bl-icon-btn bl-diff-header-btn" title="撤回净化并保护原文">
+                        <button id="bl-diff-revert-toggle" type="button" class="bl-icon-btn bl-diff-header-btn" title="撤回净化并保护原文">
                             <i id="bl-diff-revert-icon" class="fas fa-rotate-left"></i> <span id="bl-diff-revert-text">撤回</span>
                         </button>
-                        <button id="bl-diff-pos-toggle" class="bl-icon-btn bl-diff-header-btn" title="将顶部按钮收纳进三点菜单">
-                            <i id="bl-diff-pos-icon" class="fa-solid fa-ellipsis"></i> <span id="bl-diff-pos-text">收纳按钮</span>
-                        </button>
-                        <button id="bl-diff-mode-toggle" class="bl-icon-btn bl-diff-header-btn" title="切换视图模式">
+                        <button id="bl-diff-mode-toggle" type="button" class="bl-icon-btn bl-diff-header-btn" title="切换到全文模式" aria-label="切换到全文模式">
                             <i id="bl-diff-mode-icon" class="fa-solid fa-file-lines"></i> <span id="bl-diff-mode-text">全文模式</span>
                         </button>
-                        <button id="bl-diff-modal-close" class="bl-diff-modal-close" aria-label="关闭">&times;</button>
+                        <div class="bl-diff-menu-wrap">
+                            <button id="bl-diff-menu-toggle" type="button" class="bl-icon-btn bl-diff-header-btn bl-diff-menu-toggle" title="更多操作" aria-label="更多操作" aria-haspopup="true" aria-expanded="false">
+                                <i class="fa-solid fa-ellipsis"></i>
+                            </button>
+                            <div id="bl-diff-actions-menu" class="bl-diff-actions-menu" hidden>
+                                <button id="bl-diff-menu-pos-toggle" type="button" class="bl-diff-actions-item" title="将顶部按钮收纳进菜单">
+                                    <i id="bl-diff-menu-pos-icon" class="fa-solid fa-ellipsis"></i>
+                                    <span id="bl-diff-menu-pos-text">顶部按钮：收纳</span>
+                                </button>
+                                <button id="bl-diff-menu-bottom-toggle" type="button" class="bl-diff-actions-item" title="隐藏消息尾部按钮">
+                                    <i id="bl-diff-menu-bottom-icon" class="fa-solid fa-eye-slash"></i>
+                                    <span id="bl-diff-menu-bottom-text">尾部按钮：隐藏</span>
+                                </button>
+                            </div>
+                        </div>
+                        <button id="bl-diff-modal-close" type="button" class="bl-diff-modal-close" aria-label="关闭">&times;</button>
                     </div>
                 </div>
                 <div id="bl-diff-modal-content" class="bl-diff-modal-content"></div>
@@ -175,7 +347,7 @@ export function setupUI() {
 
     $('body').append(`
         <div id="bl-subrule-edit-modal" class="bl-modal-shell" style="z-index: 10000005;">
-            <div class="bl-modal-card bl-edit-modal-card" style="padding: 20px !important;">
+            <div class="bl-modal-card bl-edit-modal-card bl-subrule-modal-card" style="padding: 20px !important;">
                 <div class="bl-subrule-modal-header">
                     <div class="bl-subrule-mode-block">
                         <div class="bl-subrule-mode-select-wrap">
@@ -188,36 +360,162 @@ export function setupUI() {
                         </div>
                         <div id="bl-modal-sub-mode-hint" class="bl-subrule-mode-hint" aria-live="polite"></div>
                     </div>
-                    <button id="bl-modal-sub-save" class="bl-icon-btn bl-subrule-save-btn" title="完成保存"><i class="fas fa-check"></i></button>
+                    <button id="bl-modal-sub-cancel" type="button" class="bl-icon-btn bl-subrule-close-btn" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
                 
                 <div class="bl-subrule-field" style="margin-bottom: 12px;">
                     <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">备注说明 (可选)</label>
-                    <input type="text" id="bl-modal-sub-remark" class="bl-input" placeholder="例如：处理特定角色的口头禅" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;">
+                    <input type="text" id="bl-modal-sub-remark" class="bl-input" placeholder="例如：处理特定角色的口头禅" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;">
                 </div>
                 
                 <div class="bl-subrule-field" style="margin-bottom: 12px;">
                     <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">查找内容</label>
-                    <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
                     <div id="bl-modal-sub-target-error" class="bl-field-error" aria-live="polite"></div>
+                    <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
                 </div>
                 
                 <div class="bl-subrule-field" style="margin-bottom: 15px;">
-                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">替换为</label>
-                    <textarea id="bl-modal-sub-rep" class="bl-textarea" rows="4" style="background: var(--bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                    <div class="bl-subrule-replacement-head">
+                        <label class="bl-field-label" style="margin-bottom: 0; font-weight: 600;">替换为</label>
+                        <div id="bl-modal-sub-regex-actions" class="bl-regex-replacement-actions" hidden>
+                            <button id="bl-modal-sub-regex-recognize" type="button" class="bl-subrule-mini-btn">按行识别</button>
+                        </div>
+                    </div>
+                    <textarea id="bl-modal-sub-rep" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                    <div id="bl-modal-sub-regex-list" class="bl-regex-replacement-list" hidden></div>
                 </div>
                 
-                <button id="bl-modal-sub-cancel" class="bl-secondary-btn" style="margin-top: auto; border: none !important; background: var(--bg-button) !important;">取消修改</button>
+                <div class="bl-subrule-footer">
+                    <button id="bl-modal-sub-save" type="button" class="bl-primary-btn bl-subrule-footer-save">保存条目</button>
+                </div>
             </div>
         </div>
     `);
+
+    markRulesUiDirty(true);
+    markPresetsUiDirty(true);
 } 
+
+export function clearRuleSearchEditFlow() {
+    runtimeState.searchEditFlow.active = false;
+    runtimeState.searchEditFlow.returnMode = '';
+    runtimeState.searchEditFlow.ruleIndex = -1;
+    runtimeState.searchEditFlow.subRuleIndex = -1;
+}
+
+export function resetRuleSearchState() {
+    runtimeState.ruleSearchKeyword = '';
+    runtimeState.ruleSearchDraftKeyword = '';
+    runtimeState.ruleSearchHasSearched = false;
+    runtimeState.ruleSearchExpandedMenuKey = '';
+    clearRuleSearchEditFlow();
+}
+
+export function syncRuleSearchInputUi(options = {}) {
+    const { syncValue = false } = options;
+    const draftKeyword = String(runtimeState.ruleSearchDraftKeyword || '');
+    const $input = $('#bl-rule-search-input');
+    const $clear = $('#bl-rule-search-clear');
+    if (syncValue && $input.length) $input.val(draftKeyword);
+    const hasValue = draftKeyword.length > 0;
+    $clear.prop('hidden', !hasValue).toggleClass('is-visible', hasValue);
+}
+
+export function renderRuleSearchModal() {
+    const $body = $('#bl-rule-search-body');
+    if (!$body.length) return;
+
+    const keyword = String(runtimeState.ruleSearchKeyword || '').trim();
+    syncRuleSearchInputUi();
+
+    if (!runtimeState.ruleSearchHasSearched || !keyword) {
+        $body.html(`
+            <div class="bl-rule-search-empty">
+                <div class="bl-rule-search-empty-icon"><i class="fas fa-magnifying-glass"></i></div>
+                <div class="bl-rule-search-empty-title">请输入关键词</div>
+                <div class="bl-rule-search-empty-text">点击“搜索”查找对应规则</div>
+            </div>
+        `);
+        return;
+    }
+
+    const results = buildRuleSearchResults(keyword);
+    if (results.length === 0) {
+        $body.html(`
+            <div class="bl-rule-search-empty">
+                <div class="bl-rule-search-empty-icon"><i class="fas fa-circle-info"></i></div>
+                <div class="bl-rule-search-empty-title">未找到匹配规则</div>
+                <div class="bl-rule-search-empty-text">当前只搜索每条映射的查找词与替换词</div>
+            </div>
+        `);
+        return;
+    }
+
+    const html = results.map((item) => {
+        const menuHtml = runtimeState.ruleSearchExpandedMenuKey === item.key
+            ? `
+                <div class="bl-rule-search-menu">
+                    <button type="button" class="bl-rule-search-menu-item" data-action="group" data-rule-index="${item.ruleIndex}" data-subrule-index="${item.subRuleIndex}">
+                        分组详情
+                    </button>
+                    <button type="button" class="bl-rule-search-menu-item" data-action="subrule" data-rule-index="${item.ruleIndex}" data-subrule-index="${item.subRuleIndex}">
+                        编辑条目
+                    </button>
+                </div>
+            `
+            : '';
+
+        return `
+            <div class="bl-rule-search-result-card ${item.isEnabled ? '' : 'bl-is-disabled'}" data-rule-index="${item.ruleIndex}" data-subrule-index="${item.subRuleIndex}">
+                <div class="bl-rule-search-result-head">
+                    <div class="bl-rule-search-result-group">
+                        <i class="fas fa-folder-open"></i>
+                        所属分组：${item.groupName}
+                    </div>
+                    <div class="bl-rule-search-menu-wrap">
+                        <button type="button" class="bl-icon-btn bl-rule-search-menu-toggle" data-key="${item.key}" title="更多操作">
+                            <i class="fas fa-ellipsis"></i>
+                        </button>
+                        ${menuHtml}
+                    </div>
+                </div>
+                <div class="bl-rule-search-result-preview">
+                    <span class="bl-tag">${item.tagText}</span>
+                    <span class="bl-source">${item.sourcePreview}</span>
+                    <i class="fas fa-arrow-right bl-arrow"></i>
+                    <span class="bl-target">${item.replacementPreview}</span>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    $body.html(`<div class="bl-rule-search-results">${html}</div>`);
+}
+
+export function openRuleSearchModal() {
+    syncRuleSearchInputUi({ syncValue: true });
+    renderRuleSearchModal();
+    $('#bl-rule-search-modal').css('display', 'flex').hide().fadeIn(150);
+    window.setTimeout(() => {
+        $('#bl-rule-search-input').trigger('focus');
+    }, 20);
+}
+
+export function closeRuleSearchModal(options = {}) {
+    const { reset = false } = options;
+    if (reset) {
+        resetRuleSearchState();
+        syncRuleSearchInputUi({ syncValue: true });
+        renderRuleSearchModal();
+    }
+    $('#bl-rule-search-modal').fadeOut(150);
+}
 
 export function focusLatestRuleCard() {
     const container = document.getElementById('bl-tags-container');
     if (!container) return;
 
-    const cards = container.querySelectorAll('.card');
+    const cards = container.querySelectorAll('.bl-card');
     const latestCard = cards[cards.length - 1];
     if (!latestCard) return;
 
@@ -239,8 +537,9 @@ export function focusLatestRuleCard() {
 }
 
 export function showDeepCleanOverlay() {
+    const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     $('body').append(`
-        <div id="bl-loading-overlay" class="bl-loading-overlay">
+        <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}">
             <h2 class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> 正在执行全方位深度清理 (包含角色卡与世界书)...</h2>
             <p id="bl-loading-status">正在初始化清理任务，请稍候。</p>
             <div class="bl-progress-track"><div id="bl-progress-fill" class="bl-progress-fill"></div></div>
@@ -262,7 +561,7 @@ export function showConfirmModal(onConfirm = () => performDeepCleanse()) {
     const $cancelBtn = $('#bl-modal-cancel');
 
     $modal.css('display', 'flex');
-    $confirmBtn.prop('disabled', true).addClass('is-disabled');
+    $confirmBtn.prop('disabled', true).addClass('bl-is-disabled');
 
     let timeLeft = 3;
     $confirmBtn.text(`确认清理 (${timeLeft}s)`);
@@ -274,7 +573,7 @@ export function showConfirmModal(onConfirm = () => performDeepCleanse()) {
         } else {
             clearInterval(timer);
             $confirmBtn.prop('disabled', false)
-                .removeClass('is-disabled')
+                .removeClass('bl-is-disabled')
                 .text('我已切换，确认清理！');
         }
     }, 1000);
@@ -300,7 +599,7 @@ export function applyPresetByName(name, options = {}) {
     const presetExists = !!(presetName && settings.presets?.[presetName]);
     settings.activePreset = presetExists ? presetName : "";
     settings.rules = presetExists ? deepClone(settings.presets[presetName]) : [];
-    runtimeState.isRegexDirty = true;
+    markRulesDataDirty();
     saveSettingsDebounced();
     logger.info(`切换预设: ${presetName || '(临时规则)'}, 存在=${presetExists}`);
     if (!options.skipRender) {
@@ -373,19 +672,120 @@ export function updateToolbarUI() {
     const settings = extension_settings[extensionName];
     cleanupInvalidPresetBindings();
     const select = $('#bl-preset-select');
-    select.empty();
-    select.append('<option value="">-- 临时规则 (未绑定存档) --</option>');
+    if (!select.length) return;
 
-    if (settings.presets) {
-        for (let name in settings.presets) {
-            select.append($('<option>', { value: name, text: name }));
-        }
+    if (runtimeState.presetsUiDirty || select.children().length === 0) {
+        const presetNames = settings.presets ? Object.keys(settings.presets) : [];
+        const optionsHtml = ['<option value="">-- 临时规则 (未绑定存档) --</option>']
+            .concat(presetNames.map((name) => `<option value="${safeHtml(name)}">${safeHtml(name)}</option>`))
+            .join('');
+        select.html(optionsHtml);
+        markPresetsUiDirty(false);
     }
     select.val(settings.activePreset || "");
     refreshCharacterBindingUI();
 }
 
+export function addRegexReplacementInput(value = '') {
+    return appendRegexReplacementInputs([value]).eq(0);
+}
+
+export function removeRegexReplacementInput(index) {
+    const normalizedIndex = Number(index);
+    const $items = $('#bl-modal-sub-regex-list').children('.bl-regex-replacement-chip');
+    if (!Number.isInteger(normalizedIndex) || normalizedIndex < 0 || normalizedIndex >= $items.length) return;
+    const currentEditIndex = getRegexReplacementEditIndex();
+    $items.eq(normalizedIndex).remove();
+    if (currentEditIndex === normalizedIndex) {
+        $('#bl-modal-sub-rep').data('regex-edit-index', -1);
+    } else if (currentEditIndex > normalizedIndex) {
+        $('#bl-modal-sub-rep').data('regex-edit-index', currentEditIndex - 1);
+    }
+    syncRegexReplacementInputState();
+}
+
+export function startEditingRegexReplacementInput(index) {
+    const normalizedIndex = Number(index);
+    const values = getRegexReplacementChipValues();
+    if (!Number.isInteger(normalizedIndex) || normalizedIndex < 0 || normalizedIndex >= values.length) return false;
+    $('#bl-modal-sub-rep').val(values[normalizedIndex]).data('regex-edit-index', normalizedIndex);
+    syncRegexReplacementInputState();
+    return true;
+}
+
+export function recognizeRegexReplacementInput() {
+    const $textarea = $('#bl-modal-sub-rep');
+    const draft = String($textarea.val() ?? '');
+    if (draft.trim() === '') return { ok: false, reason: 'empty' };
+
+    const editIndex = getRegexReplacementEditIndex();
+    const $items = $('#bl-modal-sub-regex-list').children('.bl-regex-replacement-chip');
+    if (editIndex >= 0 && editIndex < $items.length) {
+        const $item = $items.eq(editIndex);
+        $item.data('value', draft);
+        $item.find('.bl-regex-replacement-chip-main')
+            .html(formatReplacementCandidatePreview(draft))
+            .attr('title', draft || '点击编辑替换项');
+        $textarea.val('').data('regex-edit-index', -1);
+        syncRegexReplacementInputState();
+        return { ok: true, mode: 'update' };
+    }
+
+    const lines = draft.replace(/\r/g, '').split('\n').filter((line) => line.trim() !== '');
+    if (lines.length === 0) return { ok: false, reason: 'empty' };
+    appendRegexReplacementInputs(lines, { sync: false });
+    $textarea.val('').data('regex-edit-index', -1);
+    syncRegexReplacementInputState();
+    return { ok: true, mode: 'append', count: lines.length };
+}
+
+export function hasPendingRegexReplacementInput() {
+    const draft = String($('#bl-modal-sub-rep').val() ?? '');
+    if (draft.trim() === '') return false;
+    const editIndex = getRegexReplacementEditIndex();
+    const values = getRegexReplacementChipValues();
+    return editIndex < 0 || editIndex >= values.length || draft !== values[editIndex];
+}
+
+export function setSingleRuleReplacementEditor(mode, replacements = []) {
+    const normalized = normalizeReplacementList(replacements);
+    const isRegexMode = mode === 'regex';
+    const $textarea = $('#bl-modal-sub-rep');
+    const $actions = $('#bl-modal-sub-regex-actions');
+    const $list = $('#bl-modal-sub-regex-list');
+    $textarea.data('regex-edit-index', -1);
+
+    if (isRegexMode) {
+        $textarea.val('');
+        $list.empty();
+        appendRegexReplacementInputs(normalized, { sync: false });
+        $actions.prop('hidden', false);
+        syncRegexReplacementInputState();
+        return;
+    }
+
+    $list.empty().prop('hidden', true);
+    $actions.prop('hidden', true);
+    $textarea
+        .val(normalized.join(mode === 'text' ? ', ' : '\n'))
+        .removeData('regex-default-placeholder')
+        .removeData('regex-edit-placeholder');
+}
+
+export function getSingleRuleReplacementValues(mode) {
+    if (mode === 'regex') {
+        return getRegexReplacementChipValues();
+    }
+
+    const rawValue = String($('#bl-modal-sub-rep').val() ?? '');
+    return parseInputToWords(rawValue, mode === 'text' ? 'text' : 'regex', { isTarget: false });
+}
+
 export function renderTags() {
+    const container = $('#bl-tags-container');
+    if (!container.length) return;
+    if (!runtimeState.rulesUiDirty && container.children().length > 0) return;
+
     const { extension_settings } = getAppContext();
     const rules = extension_settings[extensionName]?.rules || [];
     const html = rules.map((r, i) => {
@@ -395,46 +795,46 @@ export function renderTags() {
 
         const subRulesHtml = subRules.slice(0, maxPreview).map((sub) => {
             const mode = sub.mode || 'text';
-            const tagText = mode === 'regex' ? '正则' : mode === 'simple' ? '简易' : '普通';
-            const tPreview = safeHtml((sub.targets || []).join(mode === 'text' ? ', ' : ' | ')) || '（空）';
-            const rPreview = safeHtml((sub.replacements || []).join(', ')) || '【直接删除】';
+            const tagText = getRulePreviewTagText(mode);
+            const tPreview = getRuleSourcePreviewText(sub);
+            const rPreview = formatReplacementPreview(sub.replacements || [], mode);
             return `
-                <div class="rule-item">
-                    <span class="tag">${tagText}</span>
-                    <span class="source">${tPreview}</span>
-                    <i class="fas fa-arrow-right arrow"></i>
-                    <span class="target">${rPreview}</span>
+                <div class="bl-rule-item">
+                    <span class="bl-tag">${tagText}</span>
+                    <span class="bl-source">${tPreview}</span>
+                    <i class="fas fa-arrow-right bl-arrow"></i>
+                    <span class="bl-target">${rPreview}</span>
                 </div>`;
         }).join('');
 
         const moreHtml = subRules.length > maxPreview
-            ? `<div class="more-text">... 以及其他 ${subRules.length - maxPreview} 组映射</div>`
+            ? `<div class="bl-more-text">... 以及其他 ${subRules.length - maxPreview} 组映射</div>`
             : '';
         const bodyHtml = subRules.length > 0
-            ? `<div class="card-body">${subRulesHtml}${moreHtml}</div>`
+            ? `<div class="bl-card-body">${subRulesHtml}${moreHtml}</div>`
             : '';
 
         const isEnabled = r.enabled !== false;
         const checkedAttr = isEnabled ? 'checked' : '';
         const moveUpDisabled = i === 0 ? 'disabled' : '';
         const moveDownDisabled = i === rules.length - 1 ? 'disabled' : '';
-        const headerClass = subRules.length > 0 ? 'card-header has-border' : 'card-header';
+        const headerClass = subRules.length > 0 ? 'bl-card-header bl-has-border' : 'bl-card-header';
 
         return `
-            <div class="card ${!isEnabled ? 'is-disabled' : ''}" data-index="${i}">
+            <div class="bl-card ${!isEnabled ? 'bl-is-disabled' : ''}" data-index="${i}">
                 <div class="${headerClass}">
-                    <div class="header-left">
-                        <label class="batch-checkbox-label">
+                    <div class="bl-header-left">
+                        <label class="bl-batch-checkbox-label">
                             <input type="checkbox" class="batch-item-checkbox" data-index="${i}">
-                            <span class="custom-checkbox square-2px"></span>
+                            <span class="bl-custom-checkbox bl-square-2px"></span>
                         </label>
-                        <label class="checkbox-label">
+                        <label class="bl-checkbox-label">
                             <input type="checkbox" class="bl-rule-toggle" data-index="${i}" ${checkedAttr}>
-                            <span class="custom-checkbox"></span>
-                            <span class="group-title">${name}</span>
+                            <span class="bl-custom-checkbox"></span>
+                            <span class="bl-group-title">${name}</span>
                         </label>
                     </div>
-                    <div class="icon-group compact">
+                    <div class="bl-icon-group bl-compact">
                         <button class="bl-rule-move-up" data-index="${i}" title="上移合集" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
                         <button class="bl-rule-move-down" data-index="${i}" title="下移合集" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
                         <button class="bl-rule-transfer" data-index="${i}" title="复制/转移到其他存档"><i class="fas fa-copy"></i></button>
@@ -446,19 +846,19 @@ export function renderTags() {
             </div>`;
     }).join('');
 
-    $('#bl-tags-container').html(html || '<div class="bl-empty-state">当前无规则，请点击上方按钮新增</div>');
+    container.html(html || '<div class="bl-empty-state">当前无规则，请点击上方按钮新增</div>');
+    markRulesUiDirty(false);
 }
 
 export function renderSubrulesToModal() {
     const container = $('#bl-edit-subrules-container');
-    container.empty();
-
+    if (!container.length) return;
     if (runtimeState.currentEditingSubrules.length === 0) {
         container.html('<div style="text-align:center; color:var(--bl-text-secondary); font-size:12px; padding:20px;">当前合集没有映射规则，请点击下方按钮添加。</div>');
         return;
     }
 
-    runtimeState.currentEditingSubrules.forEach((sub, i) => {
+    const html = runtimeState.currentEditingSubrules.map((sub, i) => {
         const mode = sub.mode || 'text';
         const remark = sub.remark ? sub.remark.trim() : '';
         const moveUpDisabled = i === 0 ? 'disabled' : '';
@@ -470,20 +870,19 @@ export function renderSubrulesToModal() {
         else if (mode === 'simple') badgeHTML = `<span style="${badgeBaseStyle} background:color-mix(in srgb, var(--bl-accent-color) 72%, #3b82f6 28%);">简易</span>`;
         else badgeHTML = `<span style="${badgeBaseStyle} background:var(--bl-text-secondary); color:var(--bl-background-popup);">普通</span>`;
 
-        let tPreview = safeHtml(sub.targets.join(mode === 'text' ? ', ' : ' | '));
-        let rPreview = safeHtml(sub.replacements.join(', '));
-        if (!rPreview) rPreview = '【直接删除】';
+        const tPreview = getRuleSourcePreviewText(sub);
+        const rPreview = formatReplacementPreview(sub.replacements || [], mode);
 
         let remarkHTML = '';
         if (remark) {
             remarkHTML = `
-                <div style="margin-top: 8px; padding-top: 10px; border-top: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5)); font-size: 11px; color: var(--text-mute); font-style: italic;">
+                <div style="margin-top: 8px; padding-top: 10px; border-top: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5)); font-size: 11px; color: var(--bl-text-mute); font-style: italic;">
                     <i class="fas fa-info-circle" style="margin-right: 4px;"></i>${safeHtml(remark)}
                 </div>
             `;
         }
 
-        container.append(`
+        return `
             <div style="flex-shrink: 0 !important; background: var(--bl-background-secondary); border: 1px solid var(--bl-border-color); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; box-shadow: 0 4px 10px rgba(0,0,0,0.04);">
                 <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5));">
                     <div style="display: flex; align-items: center; margin: 0; padding: 0;">
@@ -499,36 +898,39 @@ export function renderSubrulesToModal() {
                 </div>
                 <div style="font-size: 13px !important; color: var(--bl-text-primary); line-height: 1.5; word-break: break-all;">
                     <b style="font-size: 13px !important;">${tPreview}</b> 
-                    <i class="fas fa-arrow-right" style="color: var(--text-mute); font-size: 11px; margin: 0 6px;"></i> 
+                    <i class="fas fa-arrow-right" style="color: var(--bl-text-mute); font-size: 11px; margin: 0 6px;"></i> 
                     <span style="font-size: 13px !important;">${rPreview}</span>
                 </div>
                 ${remarkHTML}
             </div>
-        `);
-    });
+        `;
+    }).join('');
+
+    container.html(html);
 }
 
-export function openSingleRuleModal(index) {
+export function openSingleRuleModal(index, options = {}) {
     runtimeState.currentSubruleEditIndex = index;
     let mode = 'simple';
     let tStr = '';
-    let rStr = '';
+    let replacements = [];
     let remark = '';
 
     if (index >= 0 && runtimeState.currentEditingSubrules[index]) {
         const sub = runtimeState.currentEditingSubrules[index];
         mode = sub.mode || 'simple';
         tStr = (sub.targets || []).join(mode === 'text' ? ', ' : '\n');
-        rStr = (sub.replacements || []).join(mode === 'regex' ? '\n' : ', ');
+        replacements = Array.isArray(sub.replacements) ? sub.replacements : [];
         remark = sub.remark || '';
     }
 
-    $('#bl-modal-sub-mode').val(mode);
+    $('#bl-modal-sub-mode').val(mode).data('current-mode', mode);
     $('#bl-modal-sub-target').val(tStr);
-    $('#bl-modal-sub-rep').val(rStr);
+    setSingleRuleReplacementEditor(mode, replacements);
     $('#bl-modal-sub-remark').val(remark);
-    
+
     $('#bl-modal-sub-mode').trigger('change');
+    if (options.hideEditModal === true) $('#bl-rule-edit-modal').hide();
     $('#bl-subrule-edit-modal').css('display', 'flex').hide().fadeIn(150);
 }
 
@@ -549,8 +951,7 @@ export function openTransferModal(ruleIndexOrIndexes) {
         .filter((v) => Number.isInteger(v) && v >= 0);
     runtimeState.currentTransferRuleIndex = runtimeState.currentTransferRuleIndexes[0] ?? -1;
     const $select = $('#bl-transfer-target');
-    $select.empty();
-    targetNames.forEach(name => $select.append($('<option>', { value: name, text: name })));
+    $select.html(targetNames.map((name) => `<option value="${safeHtml(name)}">${safeHtml(name)}</option>`).join(''));
     $('#bl-rule-transfer-modal').css('display', 'flex');
 }
 
@@ -596,18 +997,27 @@ export function runRuleTransfer(isMove) {
             sourceRules.splice(uniqueIndexes[i], 1);
         }
         runtimeState.batchSelectedRuleIds = [];
+        markRulesDataDirty();
     }
 
-    runtimeState.isRegexDirty = true;
     closeTransferModal();
     saveSettingsDebounced();
-    renderTags();
+    if (isMove) renderTags();
 }
 
-export function openEditModal(index = -1) {
+export function openEditModal(index = -1, options = {}) {
     const { extension_settings } = getAppContext();
     const settings = extension_settings[extensionName];
+    const { source = 'main', returnMode = 'group', subRuleIndex = -1 } = options;
     runtimeState.currentEditingIndex = index;
+    if (source === 'search') {
+        runtimeState.searchEditFlow.active = true;
+        runtimeState.searchEditFlow.returnMode = returnMode;
+        runtimeState.searchEditFlow.ruleIndex = index;
+        runtimeState.searchEditFlow.subRuleIndex = subRuleIndex;
+    } else {
+        clearRuleSearchEditFlow();
+    }
     const modal = $('#bl-rule-edit-modal');
 
     if (index === -1) {

@@ -42,7 +42,7 @@ export function buildProcessors() {
                             logger.warn(`忽略非法正则表达式: ${t} (${compiled.error.message})`);
                             continue;
                         }
-                        processors.push({ regex: compiled.value.regex, replacements, isRegexMode: true });
+                        processors.push({ regex: compiled.value.regex, replacements, kind: 'regex' });
                     }
                 }
             } else if (mode === 'simple') {
@@ -62,7 +62,7 @@ export function buildProcessors() {
                                 return;
                             }
 
-                            processors.push({ regex: testRegex, replacements, isRegexMode: true });
+                            processors.push({ regex: testRegex, replacements, kind: 'simple' });
                         } catch (e) {
                             logger.warn(`简易规则解析失败: ${t}`);
                         }
@@ -77,12 +77,14 @@ export function buildProcessors() {
         const sorted = uniqueTargets.sort((a, b) => b.length - a.length);
         const escaped = sorted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const textRegex = new RegExp(`(${escaped.join('|')})`, 'gmu');
-        processors.unshift({ regex: textRegex, replacerMap: wordToReplacements, isRegexMode: false });
+        processors.unshift({ regex: textRegex, replacerMap: wordToReplacements, kind: 'text' });
     }
 
     runtimeState.activeProcessors = processors;
     runtimeState.isRegexDirty = false;
-    logger.info(`规则处理器构建完成，共 ${processors.length} 个处理器（文本:${textTargets.length} | 正则:${processors.filter(p => p.isRegexMode).length}）`);
+    const regexProcessorCount = processors.filter((processor) => processor.kind === 'regex').length;
+    const simpleProcessorCount = processors.filter((processor) => processor.kind === 'simple').length;
+    logger.info(`规则处理器构建完成，共 ${processors.length} 个处理器（文本:${textTargets.length} | 正则:${regexProcessorCount} | 简易:${simpleProcessorCount}）`);
     return runtimeState.activeProcessors;
 }
 
@@ -108,6 +110,55 @@ export function pickReplacement(replacements, deterministicKey = "") {
     return replacements[idx];
 }
 
+function extractRegexCaptures(args) {
+    const hasNamedGroups = typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null;
+    const trailingMetaCount = hasNamedGroups ? 3 : 2;
+    const captureCount = Math.max(0, args.length - trailingMetaCount);
+    return args.slice(0, captureCount);
+}
+
+function renderRegexReplacementTemplate(template, captures) {
+    const source = String(template ?? '');
+    let output = '';
+
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+
+        if (char === '\\') {
+            const nextChar = source[index + 1];
+            if (nextChar === undefined) {
+                output += '\\';
+                continue;
+            }
+            if (nextChar === 'n') output += '\n';
+            else if (nextChar === 'r') output += '\r';
+            else if (nextChar === 't') output += '\t';
+            else if (nextChar === '\\') output += '\\';
+            else if (nextChar === '$') output += '$';
+            else output += `\\${nextChar}`;
+            index++;
+            continue;
+        }
+
+        if (char === '$') {
+            const firstDigit = source[index + 1];
+            if (/[1-9]/.test(firstDigit || '')) {
+                let captureDigits = firstDigit;
+                const secondDigit = source[index + 2];
+                if (/\d/.test(secondDigit || '')) captureDigits += secondDigit;
+                const captureIndex = Number(captureDigits) - 1;
+                output += captures[captureIndex] ?? '';
+                index += captureDigits.length;
+                continue;
+            }
+        }
+
+        output += char;
+    }
+
+    return output;
+}
+
 /**
  * 对文本应用规则替换。
  * @param {string} originalText 原始文本。
@@ -122,17 +173,19 @@ export function applyReplacements(originalText, options = {}) {
 
     processors.forEach((proc, procIndex) => {
         text = text.replace(proc.regex, (match, ...args) => {
-            if (proc.isRegexMode) {
+            if (proc.kind === 'regex') {
                 const reps = proc.replacements;
                 if (!reps || reps.length === 0) return '';
                 const repKey = deterministic ? `${procIndex}|${match}` : '';
-                let rep = pickReplacement(reps, repKey);
-                rep = String(rep ?? '');
-                rep = rep.replace(/\$(\d+)/g, (m, g) => {
-                    const idx = parseInt(g);
-                    return args[idx - 1] !== undefined ? args[idx - 1] : m;
-                });
-                return rep;
+                const rep = pickReplacement(reps, repKey);
+                return renderRegexReplacementTemplate(rep, extractRegexCaptures(args));
+            }
+
+            if (proc.kind === 'simple') {
+                const reps = proc.replacements;
+                if (!reps || reps.length === 0) return '';
+                const repKey = deterministic ? `${procIndex}|${match}` : '';
+                return String(pickReplacement(reps, repKey) ?? '');
             }
 
             const reps = proc.replacerMap[match];

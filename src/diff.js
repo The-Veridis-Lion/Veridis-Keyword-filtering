@@ -521,6 +521,7 @@ export function ensureMessageDiffButton(index, messageNode) {
     const { extension_settings } = getAppContext();
     const isEnabled = extension_settings[extensionName]?.enableVisualDiff !== false;
     const isTopInExtra = extension_settings[extensionName]?.diffButtonInExtraMenu === true;
+    const showBottomButton = extension_settings[extensionName]?.showBottomDiffButton !== false;
     const shouldShow = isEnabled && isTrackedDiffMessage(index);
 
     const buttonArea = messageNode.querySelector('.mes_buttons');
@@ -561,7 +562,7 @@ export function ensureMessageDiffButton(index, messageNode) {
         const parent = swipeBlock.parentNode;
         const existingBottom = parent?.querySelector('.bl-diff-btn-bottom');
 
-        if (!shouldShow) {
+        if (!shouldShow || !showBottomButton) {
             if (existingBottom) existingBottom.remove();
         } else if (!existingBottom && parent) {
             const btnBottom = document.createElement('div');
