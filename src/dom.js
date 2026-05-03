@@ -1,4 +1,4 @@
-import { getAppContext, runtimeState } from './state.js';
+import { extensionName, getAppContext, runtimeState } from './state.js';
 import { applyReplacements, applyVisualMask, buildProcessors } from './core.js';
 
 /**
@@ -85,6 +85,7 @@ let node;
     while (node = walker.nextNode()) {
         const parent = node.parentNode;
         if (parent && (isProtectedNode(parent) || isRevertedMessageDomNode(parent) || (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))))) continue;
+        if (parent && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(parent)) continue;
 
         const original = node.nodeValue || '';
         if (original.trim() === '') continue;
