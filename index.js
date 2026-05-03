@@ -30,6 +30,7 @@ function ensureSettingsShape() {
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
     if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false;
     if (settings.logLevel === undefined) settings.logLevel = 2;
+    if (settings.skipUserMessages === undefined) settings.skipUserMessages = false;
     cleanupInvalidPresetBindings();
 
     const timeoutSec = Number(settings.deepCleanTimeoutSec);
