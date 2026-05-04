@@ -3,6 +3,16 @@ import { logger } from './log.js';
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 const REGEX_LITERAL_ALLOWED_FLAGS = new Set(['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']);
+const SCOPE_TAG_START_PATTERN = /^<([A-Za-z][A-Za-z0-9:_-]*)>$/;
+const SCOPE_TAG_LABEL_SEPARATOR = '//';
+const DEFAULT_SCOPE_TAG_LABEL = '范围';
+const BUILTIN_SCOPE_TAG_DEFS = [
+    { key: '<UpdateVariable>', startTag: '<UpdateVariable>', label: 'MVU变量' },
+    { key: '<horae>', startTag: '<horae>', label: 'horae记忆表格' },
+    { key: '<horaeevent>', startTag: '<horaeevent>', label: 'horae记忆表格' },
+    { key: '<tableEdit>', startTag: '<tableEdit>', label: '木悠记忆表格' },
+];
+const BUILTIN_SCOPE_TAG_DEF_MAP = new Map(BUILTIN_SCOPE_TAG_DEFS.map((scopeTagDef) => [scopeTagDef.key, scopeTagDef]));
 
 export function deepClone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -173,6 +183,154 @@ export function parseInputToWords(text, mode = 'text', options = {}) {
         : noQuotes.split(/[,\n，、]/);
     const words = textWords.map(w => w.trim());
     return isTarget ? words.filter(w => w) : words;
+}
+
+export function createScopeTagId() {
+    return `scope-tag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+export function parseScopeTagInput(input) {
+    const source = String(input ?? '').trim();
+    if (!source) {
+        return { ok: false, error: { message: '请输入范围标签，例如 <horae> 或 <horae>//horae记忆表格。' } };
+    }
+
+    let label = '';
+    let tagSource = source;
+    const separatorIndex = source.indexOf(SCOPE_TAG_LABEL_SEPARATOR);
+    if (separatorIndex >= 0) {
+        tagSource = source.slice(0, separatorIndex).trim();
+        label = normalizeScopeTagLabel(source.slice(separatorIndex + SCOPE_TAG_LABEL_SEPARATOR.length));
+    }
+
+    const match = tagSource.match(SCOPE_TAG_START_PATTERN);
+    if (!match) {
+        return { ok: false, error: { message: '标签部分仅支持无属性的完整起始标签，例如 <horae>；也可写成 <horae>//备注。' } };
+    }
+
+    const tagName = match[1];
+    return {
+        ok: true,
+        value: {
+            label,
+            tagName,
+            startTag: `<${tagName}>`,
+            endTag: `</${tagName}>`,
+        },
+    };
+}
+
+function normalizeScopeTagLabel(label) {
+    return String(label ?? '').trim().replace(/\s+/g, ' ');
+}
+
+function normalizeScopeTagBuiltinKey(rawBuiltinKey = '', startTag = '') {
+    const builtinKey = String(rawBuiltinKey ?? '').trim();
+    if (BUILTIN_SCOPE_TAG_DEF_MAP.has(builtinKey)) return builtinKey;
+    if (BUILTIN_SCOPE_TAG_DEF_MAP.has(startTag)) return startTag;
+    return '';
+}
+
+export function normalizeScopeTagBuiltinDismissedList(entries) {
+    if (!Array.isArray(entries)) return [];
+    const seen = new Set();
+    const normalized = [];
+
+    entries.forEach((entry) => {
+        const builtinKey = normalizeScopeTagBuiltinKey(entry);
+        if (!builtinKey || seen.has(builtinKey)) return;
+        seen.add(builtinKey);
+        normalized.push(builtinKey);
+    });
+
+    return normalized;
+}
+
+export function formatScopeTagInput(scopeTag) {
+    if (!scopeTag || typeof scopeTag !== 'object') return '';
+    const startTag = String(scopeTag.startTag ?? '').trim();
+    if (!startTag) return '';
+    const label = normalizeScopeTagLabel(scopeTag.label);
+    return label ? `${startTag}${SCOPE_TAG_LABEL_SEPARATOR}${label}` : startTag;
+}
+
+export function getBuiltinScopeTagKeyForStartTag(startTag = '') {
+    return normalizeScopeTagBuiltinKey('', String(startTag ?? '').trim());
+}
+
+export function normalizeScopeTagEntry(entry, fallbackId = '') {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const rawId = String(entry.id || fallbackId || '');
+    const sourceStartTag = String(entry.startTag ?? '').trim();
+    const migratedStartTag = sourceStartTag === '<horea>'
+        ? '<horaeevent>'
+        : sourceStartTag;
+    const sourceBuiltinKey = String(entry.builtinKey ?? '').trim();
+    const migratedBuiltinKey = sourceBuiltinKey === '<horea>'
+        ? '<horaeevent>'
+        : sourceBuiltinKey;
+    const parsed = parseScopeTagInput(migratedStartTag);
+    if (!parsed.ok) return null;
+    const builtinKey = normalizeScopeTagBuiltinKey(
+        migratedBuiltinKey || (entry.builtin === true && rawId === 'builtin-scope-tag-3' ? '<horaeevent>' : migratedBuiltinKey),
+        parsed.value.startTag
+    );
+    return {
+        id: String(entry.id || fallbackId || createScopeTagId()),
+        startTag: parsed.value.startTag,
+        endTag: parsed.value.endTag,
+        label: normalizeScopeTagLabel(entry.label),
+        enabled: entry.enabled !== false,
+        builtinKey,
+        builtin: builtinKey !== '',
+    };
+}
+
+export function normalizeScopeTagList(entries) {
+    if (!Array.isArray(entries)) return [];
+    const seen = new Set();
+    const seenBuiltinKeys = new Set();
+    const normalized = [];
+
+    entries.forEach((entry, index) => {
+        const scopeTag = normalizeScopeTagEntry(entry, `scope-tag-${index + 1}`);
+        if (!scopeTag || seen.has(scopeTag.startTag)) return;
+        if (scopeTag.builtinKey && seenBuiltinKeys.has(scopeTag.builtinKey)) return;
+        seen.add(scopeTag.startTag);
+        if (scopeTag.builtinKey) seenBuiltinKeys.add(scopeTag.builtinKey);
+        normalized.push(scopeTag);
+    });
+
+    return normalized;
+}
+
+export function getBuiltinScopeTags() {
+    return BUILTIN_SCOPE_TAG_DEFS.map((scopeTagDef, index) => {
+        const parsed = parseScopeTagInput(scopeTagDef.startTag);
+        return {
+            id: `builtin-scope-tag-${index + 1}`,
+            startTag: parsed.value.startTag,
+            endTag: parsed.value.endTag,
+            label: scopeTagDef.label,
+            enabled: false,
+            builtinKey: scopeTagDef.key,
+            builtin: true,
+        };
+    });
+}
+
+export function mergeScopeTagsWithBuiltins(entries, dismissedBuiltinKeys = []) {
+    const normalizedDismissed = new Set(normalizeScopeTagBuiltinDismissedList(dismissedBuiltinKeys));
+    const merged = normalizeScopeTagList(entries);
+    const seenBuiltinKeys = new Set(merged.map((scopeTag) => scopeTag.builtinKey).filter(Boolean));
+
+    getBuiltinScopeTags().forEach((scopeTag) => {
+        if (normalizedDismissed.has(scopeTag.builtinKey)) return;
+        if (seenBuiltinKeys.has(scopeTag.builtinKey)) return;
+        merged.push(scopeTag);
+    });
+
+    return merged;
 }
 
 function isRuleLikeObject(value) {

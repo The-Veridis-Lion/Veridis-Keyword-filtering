@@ -1,5 +1,5 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
-import { applyReplacements, applyVisualMask, buildProcessors } from './core.js';
+import { applyScopedReplacements, applyVisualMask, buildProcessors } from './core.js';
 
 /**
  * 判断节点是否位于宿主应用的脚本编辑弹窗中。
@@ -29,6 +29,14 @@ function isKnownPluginContainerNode(node) {
     return Boolean(node.closest('#tavern_helper, #regex_editor_template, #qr--settings, #completion_prompt_manager_popup, #xiaobai_template_editor, #task_editor')); //酒馆助手，正则弹窗，qr，预设，小白角色模板
 } 
 
+function shouldProtectSkipUserNode(node) {
+    if (!node || !node.closest) return false;
+    const skipUserMessages = getAppContext().extension_settings?.[extensionName]?.skipUserMessages === true;
+    if (!skipUserMessages) return false;
+    if (node.closest('#send_textarea')) return true;
+    return isUserMessageDomNode(node);
+}
+
 /**
  * 判断节点是否属于受保护区域。
  * @param {Element} node 待检查节点。
@@ -37,7 +45,8 @@ function isKnownPluginContainerNode(node) {
 export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
     if (node.closest('.name_text')) return true;
-    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
+    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
+    if (shouldProtectSkipUserNode(node)) return true;
     if (isKnownPluginContainerNode(node)) return true;
     if (isScriptEditorDialogNode(node)) return true;
     if (node.closest('#advanced_formatting, #api_settings')) return true;
@@ -90,7 +99,7 @@ let node;
         const original = node.nodeValue || '';
         if (original.trim() === '') continue;
 
-        const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyReplacements(original, { deterministic: true });
+        const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
         if (original !== nextValue) node.nodeValue = nextValue;
     }
 }
