@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markRulesUiDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
-import { deepClone, getCurrentCharacterContext, getPresetForCharacter, parseInputToWords } from './utils.js';
+import { deepClone, getCurrentCharacterContext, getPresetForCharacter, mergeScopeTagsWithBuiltins, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
@@ -161,7 +161,7 @@ export function showToast(message) {
 
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
-    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay, .bl-toast').remove();
+    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay, .bl-toast').remove();
 
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
@@ -200,6 +200,7 @@ export function setupUI() {
 
             <div class="bl-action-buttons">
                 <button id="bl-open-new-rule-btn" class="bl-btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
+                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签</button>
                 <button class="bl-btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
             </div>
 
@@ -306,6 +307,28 @@ export function setupUI() {
                     <button id="bl-rule-search-submit" type="button" class="bl-rule-search-submit">搜索</button>
                 </div>
                 <div id="bl-rule-search-body" class="bl-rule-search-body"></div>
+            </div>
+        </div>
+    `);
+
+    $('body').append(`
+        <div id="bl-scope-tags-modal" class="bl-modal-shell">
+            <div class="bl-modal-card bl-scope-tags-card">
+                <div class="bl-scope-tags-header">
+                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签</h3>
+                    <button id="bl-scope-tags-close" type="button" class="bl-icon-btn bl-scope-tags-close" title="关闭"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="bl-scope-tags-editor">
+                    <label class="bl-field-label" for="bl-scope-tag-input">可直接填写标签，也可用“标签//备注”设置前面的徽章说明</label>
+                    <div class="bl-scope-tags-input-row">
+                        <input type="text" id="bl-scope-tag-input" class="bl-input bl-scope-tag-input" placeholder="例如：&lt;horae&gt;//horae记忆表格 或直接输入 &lt;horae&gt;">
+                        <button id="bl-scope-tag-reset" type="button" class="bl-icon-btn bl-scope-tag-reset" title="取消编辑" hidden><i class="fas fa-rotate-left"></i></button>
+                        <button id="bl-scope-tag-save" type="button" class="bl-rule-search-submit bl-scope-tag-save">新增标签</button>
+                    </div>
+                    <div id="bl-scope-tag-error" class="bl-field-error" aria-live="polite"></div>
+                    <div class="bl-scope-tags-hint">格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。启用后，<strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 包住的内容会跳过净化；如果不写备注，前面的徽章默认显示“范围”。</div>
+                </div>
+                <div id="bl-scope-tags-list" class="bl-scope-tags-list"></div>
             </div>
         </div>
     `);
@@ -509,6 +532,73 @@ export function closeRuleSearchModal(options = {}) {
         renderRuleSearchModal();
     }
     $('#bl-rule-search-modal').fadeOut(150);
+}
+
+export function renderScopeTagsModal() {
+    const $list = $('#bl-scope-tags-list');
+    if (!$list.length) return;
+
+    const { extension_settings } = getAppContext();
+    const scopeTags = mergeScopeTagsWithBuiltins(
+        extension_settings?.[extensionName]?.scopeTags,
+        extension_settings?.[extensionName]?.scopeTagBuiltinDismissed
+    );
+    const editId = String($('#bl-scope-tag-input').data('scope-edit-id') || '');
+    const isEditing = editId !== '';
+
+    $('#bl-scope-tag-save').text(isEditing ? '更新标签' : '新增标签');
+    $('#bl-scope-tag-reset').prop('hidden', !isEditing);
+
+    if (scopeTags.length === 0) {
+        $list.html('<div class="bl-empty-state">当前没有范围标签，新增后即可按标签跳过净化。</div>');
+        return;
+    }
+
+    const html = scopeTags.map((scopeTag) => {
+        const isEnabled = scopeTag.enabled !== false;
+        const checkedAttr = isEnabled ? 'checked' : '';
+        const activeClass = scopeTag.id === editId ? 'is-active' : '';
+        const disabledClass = isEnabled ? '' : 'bl-is-disabled';
+        const badgeText = scopeTag.label || '范围';
+        const actionButtons = `
+            <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签"><i class="fas fa-pen"></i></button>
+            <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签"><i class="fas fa-trash"></i></button>
+        `;
+        return `
+            <div class="bl-scope-tag-chip ${activeClass} ${disabledClass}" data-id="${safeHtml(scopeTag.id)}">
+                <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="点击编辑该范围标签">
+                    <span class="bl-tag">${safeHtml(badgeText)}</span>
+                    <span class="bl-scope-tag-chip-text">${safeHtml(scopeTag.startTag)} ... ${safeHtml(scopeTag.endTag)}</span>
+                </button>
+                <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该范围标签">
+                    <input type="checkbox" class="bl-scope-tag-toggle" data-id="${safeHtml(scopeTag.id)}" ${checkedAttr}>
+                    <span class="bl-custom-checkbox bl-square"></span>
+                </label>
+                ${actionButtons}
+            </div>
+        `;
+    }).join('');
+
+    $list.html(html);
+}
+
+export function openScopeTagsModal() {
+    renderScopeTagsModal();
+    $('#bl-scope-tags-modal').css('display', 'flex').hide().fadeIn(150);
+    window.setTimeout(() => {
+        $('#bl-scope-tag-input').trigger('focus');
+    }, 20);
+}
+
+export function closeScopeTagsModal(options = {}) {
+    const { reset = false } = options;
+    if (reset) {
+        $('#bl-scope-tag-input').val('').data('scope-edit-id', '');
+        $('#bl-scope-tag-error').removeClass('is-visible').text('');
+        $('#bl-scope-tag-input').removeClass('bl-invalid').removeAttr('aria-invalid');
+        renderScopeTagsModal();
+    }
+    $('#bl-scope-tags-modal').fadeOut(150);
 }
 
 export function focusLatestRuleCard() {

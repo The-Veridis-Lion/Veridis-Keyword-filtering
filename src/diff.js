@@ -1,6 +1,6 @@
 import { diffMetadataKey, extensionName, getAppContext, maxTrackedDiffMessages, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { applyReplacements, queueIncrementalChatSave } from './core.js';
+import { applyScopedReplacements, queueIncrementalChatSave } from './core.js';
 import { getMessageDomNode, resolveMessageIndexFromDomNode, isTrackableMessageDomNode } from './dom.js';
 
 /**
@@ -435,14 +435,14 @@ export function getInlineDiff(oldStr, newStr) {
  */
 export function buildDiffSnippetsFromText(rawText) {
     if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
+    const cleanedText = applyScopedReplacements(rawText);
     const parts = rawText.split('\n');
-    const cleanedParts = new Array(parts.length);
+    const cleanedParts = cleanedText.split('\n');
     const snippets = [];
 
-    for (let i = 0; i < parts.length; i++) {
-        const originalPart = parts[i];
-        const cleanedPart = applyReplacements(originalPart);
-        cleanedParts[i] = cleanedPart;
+    for (let i = 0; i < Math.max(parts.length, cleanedParts.length); i++) {
+        const originalPart = parts[i] ?? '';
+        const cleanedPart = cleanedParts[i] ?? '';
 
         if (cleanedPart !== originalPart) {
             const inlineDiffHTML = getInlineDiff(originalPart, cleanedPart);
@@ -450,20 +450,19 @@ export function buildDiffSnippetsFromText(rawText) {
         }
     }
 
-    const cleanedText = cleanedParts.join('\n');
-
     let targetText = rawText;
     const contentMatch = rawText.match(/<content>([\s\S]*?)<\/content>/i);
     if (contentMatch) targetText = contentMatch[1].trim();
 
     const fullParts = targetText.split('\n');
+    const cleanedTargetParts = applyScopedReplacements(targetText).split('\n');
     const fullDiffBlocks = [];
 
-    for (let i = 0; i < fullParts.length; i++) {
-        const originalPart = fullParts[i].trim();
-        if (!originalPart) continue;
+    for (let i = 0; i < Math.max(fullParts.length, cleanedTargetParts.length); i++) {
+        const originalPart = String(fullParts[i] ?? '').trim();
+        const cleanedPart = String(cleanedTargetParts[i] ?? '').trim();
+        if (!originalPart && !cleanedPart) continue;
 
-        const cleanedPart = applyReplacements(originalPart);
         if (cleanedPart !== originalPart) {
             const inlineDiffHTML = getInlineDiff(originalPart, cleanedPart);
             fullDiffBlocks.push(`<div class="bl-diff-full-modified">${inlineDiffHTML}</div>`);

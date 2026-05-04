@@ -7,6 +7,7 @@ import { bindEvents, initRealtimeInterceptor } from './src/events.js';
 import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPresetBindings } from './src/ui.js';
 import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.js';
 import { performGlobalCleanse } from './src/core.js';
+import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList } from './src/utils.js';
 
 initAppContext({
     extension_settings,
@@ -26,6 +27,8 @@ function ensureSettingsShape() {
     if (settings.activePreset === undefined) settings.activePreset = "";
     if (settings.defaultPreset === undefined) settings.defaultPreset = "";
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    settings.scopeTagBuiltinDismissed = normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed);
+    settings.scopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
     if (settings.enableVisualDiff === undefined) settings.enableVisualDiff = true;
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
     if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false;

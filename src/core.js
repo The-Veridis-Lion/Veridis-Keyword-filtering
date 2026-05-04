@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { buildSimpleWildcardPattern, compileRegexTarget } from './utils.js';
+import { buildSimpleWildcardPattern, compileRegexTarget, mergeScopeTagsWithBuiltins } from './utils.js';
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
@@ -197,6 +197,70 @@ export function applyReplacements(originalText, options = {}) {
     return text;
 }
 
+function getEnabledScopeTags() {
+    const { extension_settings } = getAppContext();
+    const scopeTags = mergeScopeTagsWithBuiltins(
+        extension_settings?.[extensionName]?.scopeTags,
+        extension_settings?.[extensionName]?.scopeTagBuiltinDismissed
+    );
+    return scopeTags.filter((tag) => tag.enabled !== false);
+}
+
+function findNextScopeTagMatch(text, fromIndex, scopeTags) {
+    let nextMatch = null;
+    for (const scopeTag of scopeTags) {
+        const startIndex = text.indexOf(scopeTag.startTag, fromIndex);
+        if (startIndex < 0) continue;
+        if (!nextMatch || startIndex < nextMatch.index || (startIndex === nextMatch.index && scopeTag.startTag.length > nextMatch.scopeTag.startTag.length)) {
+            nextMatch = { index: startIndex, scopeTag };
+        }
+    }
+    return nextMatch;
+}
+
+/**
+ * 对消息文本应用“范围标签跳过 + 规则替换”。
+ * 标签包裹区间原样保留，仅对标签外内容执行原始替换。
+ * @param {string} originalText 原始文本。
+ * @param {{deterministic?: boolean}} [options={}] 替换选项。
+ * @returns {string} 替换后的文本。
+ */
+export function applyScopedReplacements(originalText, options = {}) {
+    if (typeof originalText !== 'string' || !originalText) return originalText;
+
+    const scopeTags = getEnabledScopeTags();
+    if (scopeTags.length === 0) return applyReplacements(originalText, options);
+
+    let output = '';
+    let cursor = 0;
+
+    while (cursor < originalText.length) {
+        const nextMatch = findNextScopeTagMatch(originalText, cursor, scopeTags);
+        if (!nextMatch) {
+            output += applyReplacements(originalText.slice(cursor), options);
+            break;
+        }
+
+        const { index, scopeTag } = nextMatch;
+        if (index > cursor) {
+            output += applyReplacements(originalText.slice(cursor, index), options);
+        }
+
+        const tagBodyStart = index + scopeTag.startTag.length;
+        const endIndex = originalText.indexOf(scopeTag.endTag, tagBodyStart);
+        if (endIndex < 0) {
+            output += applyReplacements(originalText.slice(index, tagBodyStart), options);
+            cursor = tagBodyStart;
+            continue;
+        }
+
+        output += originalText.slice(index, endIndex + scopeTag.endTag.length);
+        cursor = endIndex + scopeTag.endTag.length;
+    }
+
+    return output;
+}
+
 /**
  * 在流式展示场景下执行确定性视觉替换。
  * @param {string} originalText 原始文本。
@@ -204,7 +268,7 @@ export function applyReplacements(originalText, options = {}) {
  */
 export function applyVisualMask(originalText) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
-    return applyReplacements(originalText, { deterministic: true });
+    return applyScopedReplacements(originalText, { deterministic: true });
 }
 
 /**
