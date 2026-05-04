@@ -315,7 +315,7 @@ export function setupUI() {
         <div id="bl-scope-tags-modal" class="bl-modal-shell">
             <div class="bl-modal-card bl-scope-tags-card">
                 <div class="bl-scope-tags-header">
-                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签</h3>
+                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签保护</h3>
                     <button id="bl-scope-tags-close" type="button" class="bl-icon-btn bl-scope-tags-close" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="bl-scope-tags-editor">
