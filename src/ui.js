@@ -200,7 +200,7 @@ export function setupUI() {
 
             <div class="bl-action-buttons">
                 <button id="bl-open-new-rule-btn" class="bl-btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
-                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签</button>
+                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签保护</button>
                 <button class="bl-btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
             </div>
 
