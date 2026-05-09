@@ -45,7 +45,7 @@ import {
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode } from './dom.js';
-import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
+import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
@@ -867,8 +867,6 @@ export function bindEvents() {
         const settings = extension_settings[extensionName];
         const mode = settings.diffViewMode || 'snippet';
         const msg = getDiffMessageByIndex(index);
-        const state = getDiffStateForMessage(index);
-        const cached = getDiffSnippetsForMessage(index);
         const contentEl = $('#bl-diff-modal-content');
         syncDiffPreferenceMenuState();
         syncDiffModeToggleState(mode);
@@ -878,6 +876,10 @@ export function bindEvents() {
             contentEl.html('<div class="bl-diff-empty"><i class="fas fa-shield-halved" style="margin-right:6px;"></i>此消息已撤回并处于免净化保护状态，当前显示为原始文本。点击 <i class="fas fa-wand-magic-sparkles bl-diff-inline-icon"></i> 重新净化文本。</div>');
             return;
         }
+
+        refreshDiffCacheIfStale(index);
+        const state = getDiffStateForMessage(index);
+        const cached = getDiffSnippetsForMessage(index);
 
         if (state.status !== 'ready') {
             contentEl.html(`<div class="bl-diff-loading"><i class="fas fa-spinner fa-spin"></i><span>Loading...</span></div>`);
