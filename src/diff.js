@@ -26,6 +26,12 @@ function hashString(value = '') {
     return `h${(hash >>> 0).toString(16)}`;
 }
 
+const inlineDiffCellLimit = 1600000;
+const lineDiffCellLimit = 200000;
+const snippetContextChars = 48;
+const snippetJoinEqualChars = 96;
+const maxDiffSnippetCount = 16;
+
 function getDiffRulesSignature() {
     const { extension_settings } = getAppContext();
     const settings = extension_settings?.[extensionName] || {};
@@ -376,41 +382,35 @@ export function getDiffStateForMessage(index) {
 
 /**
  * 生成两段文本的行内差异 HTML。
- * 先裁剪公共前后缀，再对中间片段做 LCS 回溯。
+ * 先整体对齐文本，再对中间片段做 LCS 回溯，避免换行变化导致逐行错位。
  * @param {string} oldStr 原始文本。
  * @param {string} newStr 净化后文本。
  * @returns {string} 包含 <ins>/<del> 标记的差异 HTML。
  */
 export function getInlineDiff(oldStr, newStr) {
-    if (oldStr === newStr) return escapeHtml(oldStr);
-    if (!oldStr && !newStr) return "";
+    return renderDiffOperations(getTextDiffOperations(oldStr, newStr));
+}
 
-    let start = 0;
-    while (start < oldStr.length && start < newStr.length && oldStr[start] === newStr[start]) {
-        start++;
-    }
+function isDiffMatrixSafe(leftLength, rightLength, limit) {
+    if (leftLength === 0 || rightLength === 0) return true;
+    return leftLength <= Math.floor(limit / rightLength);
+}
 
-    let endOld = oldStr.length - 1;
-    let endNew = newStr.length - 1;
-    while (endOld >= start && endNew >= start && oldStr[endOld] === newStr[endNew]) {
-        endOld--;
-        endNew--;
-    }
+function pushDiffOperation(operations, type, text = '') {
+    if (!text) return;
+    const last = operations[operations.length - 1];
+    if (last && last.type === type) last.text += text;
+    else operations.push({ type, text });
+}
 
-    const prefix = escapeHtml(oldStr.substring(0, start));
-    const suffix = escapeHtml(oldStr.substring(endOld + 1));
-    const midOld = Array.from(oldStr.substring(start, endOld + 1));
-    const midNew = Array.from(newStr.substring(start, endNew + 1));
-
-    const m = midOld.length;
-    const n = midNew.length;
-
-    if (m === 0 && n === 0) return prefix + suffix;
-
+function buildCharDiffOperations(oldChars, newChars) {
+    const m = oldChars.length;
+    const n = newChars.length;
     const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+
     for (let i = 1; i <= m; i++) {
         for (let j = 1; j <= n; j++) {
-            if (midOld[i - 1] === midNew[j - 1]) {
+            if (oldChars[i - 1] === newChars[j - 1]) {
                 dp[i][j] = dp[i - 1][j - 1] + 1;
             } else {
                 dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
@@ -420,23 +420,254 @@ export function getInlineDiff(oldStr, newStr) {
 
     let i = m;
     let j = n;
-    const diff = [];
+    const reversed = [];
     while (i > 0 || j > 0) {
-        if (i > 0 && j > 0 && midOld[i - 1] === midNew[j - 1]) {
-            diff.push(escapeHtml(midOld[i - 1]));
+        if (i > 0 && j > 0 && oldChars[i - 1] === newChars[j - 1]) {
+            reversed.push({ type: 'equal', text: oldChars[i - 1] });
             i--; j--;
         } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
-            diff.push(`<ins>${escapeHtml(midNew[j - 1])}</ins>`);
+            reversed.push({ type: 'insert', text: newChars[j - 1] });
             j--;
         } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
-            diff.push(`<del>${escapeHtml(midOld[i - 1])}</del>`);
+            reversed.push({ type: 'delete', text: oldChars[i - 1] });
             i--;
         }
     }
 
-    return prefix + diff.reverse().join('')
-        .replace(/<\/ins><ins>/g, '')
-        .replace(/<\/del><del>/g, '') + suffix;
+    const operations = [];
+    for (const operation of reversed.reverse()) {
+        pushDiffOperation(operations, operation.type, operation.text);
+    }
+    return operations;
+}
+
+function splitLineTokens(value = '') {
+    return String(value).match(/[^\n]*\n|[^\n]+/g) || [];
+}
+
+function buildTokenDiffOperations(oldTokens, newTokens) {
+    const m = oldTokens.length;
+    const n = newTokens.length;
+    const dp = Array.from({ length: m + 1 }, () => new Int32Array(n + 1));
+
+    for (let i = 1; i <= m; i++) {
+        for (let j = 1; j <= n; j++) {
+            if (oldTokens[i - 1] === newTokens[j - 1]) {
+                dp[i][j] = dp[i - 1][j - 1] + 1;
+            } else {
+                dp[i][j] = Math.max(dp[i - 1][j], dp[i][j - 1]);
+            }
+        }
+    }
+
+    let i = m;
+    let j = n;
+    const reversed = [];
+    while (i > 0 || j > 0) {
+        if (i > 0 && j > 0 && oldTokens[i - 1] === newTokens[j - 1]) {
+            reversed.push({ type: 'equal', text: oldTokens[i - 1] });
+            i--; j--;
+        } else if (j > 0 && (i === 0 || dp[i][j - 1] >= dp[i - 1][j])) {
+            reversed.push({ type: 'insert', text: newTokens[j - 1] });
+            j--;
+        } else if (i > 0 && (j === 0 || dp[i][j - 1] < dp[i - 1][j])) {
+            reversed.push({ type: 'delete', text: oldTokens[i - 1] });
+            i--;
+        }
+    }
+
+    const operations = [];
+    for (const operation of reversed.reverse()) {
+        pushDiffOperation(operations, operation.type, operation.text);
+    }
+    return operations;
+}
+
+function appendReplacementOperations(operations, deletedText, insertedText) {
+    if (!deletedText && !insertedText) return;
+    const deletedLength = Array.from(deletedText).length;
+    const insertedLength = Array.from(insertedText).length;
+
+    if (deletedText && insertedText && isDiffMatrixSafe(deletedLength, insertedLength, inlineDiffCellLimit)) {
+        getTextDiffOperations(deletedText, insertedText, { allowLineFallback: false })
+            .forEach(operation => pushDiffOperation(operations, operation.type, operation.text));
+        return;
+    }
+
+    pushDiffOperation(operations, 'delete', deletedText);
+    pushDiffOperation(operations, 'insert', insertedText);
+}
+
+function buildLineBlockDiffOperations(oldStr, newStr) {
+    const oldTokens = splitLineTokens(oldStr);
+    const newTokens = splitLineTokens(newStr);
+
+    if (oldTokens.length === 0) return newStr ? [{ type: 'insert', text: newStr }] : [];
+    if (newTokens.length === 0) return oldStr ? [{ type: 'delete', text: oldStr }] : [];
+    if (!isDiffMatrixSafe(oldTokens.length, newTokens.length, lineDiffCellLimit)) {
+        return [
+            { type: 'delete', text: oldStr },
+            { type: 'insert', text: newStr },
+        ];
+    }
+
+    const lineOperations = buildTokenDiffOperations(oldTokens, newTokens);
+    const operations = [];
+    let deletedText = '';
+    let insertedText = '';
+
+    const flushReplacement = () => {
+        appendReplacementOperations(operations, deletedText, insertedText);
+        deletedText = '';
+        insertedText = '';
+    };
+
+    for (const operation of lineOperations) {
+        if (operation.type === 'equal') {
+            flushReplacement();
+            pushDiffOperation(operations, 'equal', operation.text);
+        } else if (operation.type === 'delete') {
+            deletedText += operation.text;
+        } else {
+            insertedText += operation.text;
+        }
+    }
+
+    flushReplacement();
+    return operations;
+}
+
+function getTextDiffOperations(oldStr, newStr, options = {}) {
+    const oldText = String(oldStr ?? '');
+    const newText = String(newStr ?? '');
+    if (oldText === newText) return oldText ? [{ type: 'equal', text: oldText }] : [];
+    if (!oldText) return newText ? [{ type: 'insert', text: newText }] : [];
+    if (!newText) return oldText ? [{ type: 'delete', text: oldText }] : [];
+
+    const oldChars = Array.from(oldText);
+    const newChars = Array.from(newText);
+    let start = 0;
+    while (start < oldChars.length && start < newChars.length && oldChars[start] === newChars[start]) {
+        start++;
+    }
+
+    let endOld = oldChars.length - 1;
+    let endNew = newChars.length - 1;
+    while (endOld >= start && endNew >= start && oldChars[endOld] === newChars[endNew]) {
+        endOld--;
+        endNew--;
+    }
+
+    const operations = [];
+    pushDiffOperation(operations, 'equal', oldChars.slice(0, start).join(''));
+
+    const midOld = oldChars.slice(start, endOld + 1);
+    const midNew = newChars.slice(start, endNew + 1);
+    const allowLineFallback = options.allowLineFallback !== false;
+    const middleOperations = isDiffMatrixSafe(midOld.length, midNew.length, inlineDiffCellLimit)
+        ? buildCharDiffOperations(midOld, midNew)
+        : allowLineFallback
+            ? buildLineBlockDiffOperations(midOld.join(''), midNew.join(''))
+            : [
+                { type: 'delete', text: midOld.join('') },
+                { type: 'insert', text: midNew.join('') },
+            ];
+
+    middleOperations.forEach(operation => pushDiffOperation(operations, operation.type, operation.text));
+    pushDiffOperation(operations, 'equal', oldChars.slice(endOld + 1).join(''));
+    return operations;
+}
+
+function renderDiffOperation(operation) {
+    if (!operation || !operation.text) return '';
+    if (operation.type === 'delete') return `<del>${escapeHtml(operation.text)}</del>`;
+    if (operation.type === 'insert') return `<ins>${escapeHtml(operation.text)}</ins>`;
+    return escapeHtml(operation.text);
+}
+
+function renderDiffOperations(operations = []) {
+    return operations.map(renderDiffOperation).join('');
+}
+
+function getCharLength(value = '') {
+    return Array.from(String(value)).length;
+}
+
+function takeLeadingContext(value = '', limit = snippetContextChars) {
+    const chars = Array.from(String(value));
+    if (chars.length <= limit) return String(value);
+    return `${chars.slice(0, limit).join('')}...`;
+}
+
+function takeTrailingContext(value = '', limit = snippetContextChars) {
+    const chars = Array.from(String(value));
+    if (chars.length <= limit) return String(value);
+    return `...${chars.slice(-limit).join('')}`;
+}
+
+function buildDiffSnippetsFromOperations(operations = []) {
+    const snippets = [];
+    let currentParts = null;
+    let pendingEqualText = '';
+
+    const wrapSnippet = () => {
+        if (!currentParts) return;
+        snippets.push(`<div class="bl-diff-snippet">${currentParts.join('')}</div>`);
+        currentParts = null;
+        pendingEqualText = '';
+    };
+
+    for (let index = 0; index < operations.length; index++) {
+        const operation = operations[index];
+        if (!operation?.text) continue;
+
+        if (operation.type === 'equal') {
+            if (currentParts) pendingEqualText += operation.text;
+            continue;
+        }
+
+        if (!currentParts) {
+            currentParts = [];
+            const previous = operations[index - 1];
+            if (previous?.type === 'equal') {
+                currentParts.push(escapeHtml(takeTrailingContext(previous.text)));
+            }
+        } else if (pendingEqualText) {
+            if (getCharLength(pendingEqualText) <= snippetJoinEqualChars) {
+                currentParts.push(escapeHtml(pendingEqualText));
+            } else {
+                currentParts.push(escapeHtml(takeLeadingContext(pendingEqualText)));
+                wrapSnippet();
+                if (snippets.length >= maxDiffSnippetCount) return snippets;
+                currentParts = [escapeHtml(takeTrailingContext(pendingEqualText))];
+            }
+            pendingEqualText = '';
+        }
+
+        currentParts.push(renderDiffOperation(operation));
+    }
+
+    if (currentParts) {
+        if (pendingEqualText) currentParts.push(escapeHtml(takeLeadingContext(pendingEqualText)));
+        wrapSnippet();
+    }
+
+    return snippets;
+}
+
+function buildNormalFullDiffBlocks(value = '') {
+    return String(value)
+        .split('\n')
+        .map(part => part.trim())
+        .filter(Boolean)
+        .map(part => `<div class="bl-diff-full-normal">${escapeHtml(part)}</div>`)
+        .join('');
+}
+
+function buildFullDiffHtml(originalText, cleanedText) {
+    if (originalText === cleanedText) return buildNormalFullDiffBlocks(originalText);
+    const operations = getTextDiffOperations(originalText, cleanedText);
+    return `<div class="bl-diff-full-modified">${renderDiffOperations(operations)}</div>`;
 }
 /**
  * 从原始消息文本构建净化结果与差异缓存。
@@ -446,48 +677,55 @@ export function getInlineDiff(oldStr, newStr) {
 export function buildDiffSnippetsFromText(rawText) {
     if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
     const cleanedText = applyScopedReplacements(rawText);
-    const parts = rawText.split('\n');
-    const cleanedParts = cleanedText.split('\n');
-    const snippets = [];
-
-    for (let i = 0; i < Math.max(parts.length, cleanedParts.length); i++) {
-        const originalPart = parts[i] ?? '';
-        const cleanedPart = cleanedParts[i] ?? '';
-
-        if (cleanedPart !== originalPart) {
-            const inlineDiffHTML = getInlineDiff(originalPart, cleanedPart);
-            snippets.push(`<div class="bl-diff-snippet">${inlineDiffHTML}</div>`);
-        }
-    }
+    const snippets = buildDiffSnippetsFromOperations(getTextDiffOperations(rawText, cleanedText));
 
     let targetText = rawText;
     const contentMatch = rawText.match(/<content>([\s\S]*?)<\/content>/i);
     if (contentMatch) targetText = contentMatch[1].trim();
 
-    const fullParts = targetText.split('\n');
-    const cleanedTargetParts = applyScopedReplacements(targetText).split('\n');
-    const fullDiffBlocks = [];
-
-    for (let i = 0; i < Math.max(fullParts.length, cleanedTargetParts.length); i++) {
-        const originalPart = String(fullParts[i] ?? '').trim();
-        const cleanedPart = String(cleanedTargetParts[i] ?? '').trim();
-        if (!originalPart && !cleanedPart) continue;
-
-        if (cleanedPart !== originalPart) {
-            const inlineDiffHTML = getInlineDiff(originalPart, cleanedPart);
-            fullDiffBlocks.push(`<div class="bl-diff-full-modified">${inlineDiffHTML}</div>`);
-        } else {
-            fullDiffBlocks.push(`<div class="bl-diff-full-normal">${escapeHtml(originalPart)}</div>`);
-        }
-    }
-
-    const fullDiff = fullDiffBlocks.join('');
+    const cleanedTargetText = applyScopedReplacements(targetText);
+    const fullDiff = buildFullDiffHtml(targetText, cleanedTargetText);
 
     return {
         cleanedText,
         snippets,
         fullDiff,
     };
+}
+
+function resolveDiffCacheSource(msg) {
+    const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
+    const lastCleanedMes = typeof msg?.__bl_diff_last_cleaned_mes === 'string'
+        ? msg.__bl_diff_last_cleaned_mes
+        : '';
+    if (lastCleanedMes && currentMes === lastCleanedMes && typeof msg?.__bl_original_mes === 'string') {
+        return msg.__bl_original_mes;
+    }
+    return currentMes;
+}
+
+export function refreshDiffCacheIfStale(index) {
+    const { chat } = getAppContext();
+    if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat)) return false;
+
+    const msg = chat[index];
+    if (!isAssistantMessage(msg) || msg.__bl_is_reverted === true) return false;
+
+    const signature = computeMessageSignature(msg);
+    const state = runtimeState.diffMessageStates.get(index);
+    const cache = sanitizeCacheEntry(runtimeState.diffSnippetsCache.get(index));
+    if (state?.status === 'ready' && state.signature === signature && cache?.signature === signature) {
+        return false;
+    }
+
+    const sourceMes = resolveDiffCacheSource(msg);
+    const diffResult = buildDiffSnippetsFromText(sourceMes);
+    writeReadyDiffCache(index, signature, {
+        snippets: Array.from(new Set(diffResult.snippets || [])),
+        fullDiff: diffResult.fullDiff || '',
+        signature,
+    });
+    return true;
 }
 
 /**
