@@ -585,6 +585,10 @@ function renderDiffOperation(operation) {
     return escapeHtml(operation.text);
 }
 
+function operationTouchesParagraphBoundary(operation) {
+    return operation?.type !== 'equal' && /\n{2,}/.test(operation.text || '');
+}
+
 function renderDiffOperations(operations = []) {
     return operations.map(renderDiffOperation).join('');
 }
@@ -603,6 +607,18 @@ function takeTrailingContext(value = '', limit = snippetContextChars) {
     const chars = Array.from(String(value));
     if (chars.length <= limit) return String(value);
     return `...${chars.slice(-limit).join('')}`;
+}
+
+function splitAtParagraphBoundary(value = '') {
+    const match = String(value).match(/\n{2,}/);
+    if (!match || match.index === undefined) return { before: String(value), hasBoundary: false };
+    return { before: String(value).slice(0, match.index), hasBoundary: true };
+}
+
+function takeContextAfterChange(value = '') {
+    const { before, hasBoundary } = splitAtParagraphBoundary(value);
+    if (hasBoundary) return before;
+    return takeLeadingContext(value);
 }
 
 function buildDiffSnippetsFromOperations(operations = []) {
@@ -633,10 +649,11 @@ function buildDiffSnippetsFromOperations(operations = []) {
                 currentParts.push(escapeHtml(takeTrailingContext(previous.text)));
             }
         } else if (pendingEqualText) {
-            if (getCharLength(pendingEqualText) <= snippetJoinEqualChars) {
+            const hasParagraphBoundary = /\n{2,}/.test(pendingEqualText);
+            if (!hasParagraphBoundary && getCharLength(pendingEqualText) <= snippetJoinEqualChars) {
                 currentParts.push(escapeHtml(pendingEqualText));
             } else {
-                currentParts.push(escapeHtml(takeLeadingContext(pendingEqualText)));
+                currentParts.push(escapeHtml(takeContextAfterChange(pendingEqualText)));
                 wrapSnippet();
                 if (snippets.length >= maxDiffSnippetCount) return snippets;
                 currentParts = [escapeHtml(takeTrailingContext(pendingEqualText))];
@@ -645,10 +662,14 @@ function buildDiffSnippetsFromOperations(operations = []) {
         }
 
         currentParts.push(renderDiffOperation(operation));
+        if (operationTouchesParagraphBoundary(operation)) {
+            wrapSnippet();
+            if (snippets.length >= maxDiffSnippetCount) return snippets;
+        }
     }
 
     if (currentParts) {
-        if (pendingEqualText) currentParts.push(escapeHtml(takeLeadingContext(pendingEqualText)));
+        if (pendingEqualText) currentParts.push(escapeHtml(takeContextAfterChange(pendingEqualText)));
         wrapSnippet();
     }
 
@@ -664,10 +685,51 @@ function buildNormalFullDiffBlocks(value = '') {
         .join('');
 }
 
+function buildFullDiffBlocksFromOperations(operations = []) {
+    const blocks = [];
+    let currentParts = [];
+    let currentHasChange = false;
+
+    const flushBlock = () => {
+        const html = currentParts.join('').trim();
+        if (!html) {
+            currentParts = [];
+            currentHasChange = false;
+            return;
+        }
+
+        const className = currentHasChange ? 'bl-diff-full-modified' : 'bl-diff-full-normal';
+        blocks.push(`<div class="${className}">${html}</div>`);
+        currentParts = [];
+        currentHasChange = false;
+    };
+
+    for (const operation of operations) {
+        if (!operation?.text) continue;
+        const pieces = String(operation.text).split(/(\n{2,})/);
+        for (const piece of pieces) {
+            if (!piece) continue;
+            if (/^\n{2,}$/.test(piece)) {
+                if (operation.type !== 'equal' && currentParts.length > 0) {
+                    currentParts.push(renderDiffOperation({ ...operation, text: piece }));
+                    currentHasChange = true;
+                }
+                flushBlock();
+                continue;
+            }
+            currentParts.push(renderDiffOperation({ ...operation, text: piece }));
+            if (operation.type !== 'equal') currentHasChange = true;
+        }
+    }
+
+    flushBlock();
+    return blocks.join('');
+}
+
 function buildFullDiffHtml(originalText, cleanedText) {
     if (originalText === cleanedText) return buildNormalFullDiffBlocks(originalText);
     const operations = getTextDiffOperations(originalText, cleanedText);
-    return `<div class="bl-diff-full-modified">${renderDiffOperations(operations)}</div>`;
+    return buildFullDiffBlocksFromOperations(operations);
 }
 /**
  * 从原始消息文本构建净化结果与差异缓存。
