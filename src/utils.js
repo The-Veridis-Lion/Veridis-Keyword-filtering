@@ -11,8 +11,12 @@ const BUILTIN_SCOPE_TAG_DEFS = [
     { key: '<horae>', startTag: '<horae>', label: 'horae记忆表格' },
     { key: '<horaeevent>', startTag: '<horaeevent>', label: 'horae记忆表格' },
     { key: '<tableEdit>', startTag: '<tableEdit>', label: '木悠记忆表格' },
+    { key: '<think>', startTag: '<think>', label: 'COT思维链' },
+    { key: '<thinking>', startTag: '<thinking>', label: 'COT思维链' },
 ];
 const BUILTIN_SCOPE_TAG_DEF_MAP = new Map(BUILTIN_SCOPE_TAG_DEFS.map((scopeTagDef) => [scopeTagDef.key, scopeTagDef]));
+const COT_SCOPE_TAG_KEYS = new Set(['<think>', '<thinking>']);
+export const COT_SCOPE_TAG_DISPLAY_TEXT = '<thinking>...</thinking> OR <think>...</think>';
 
 export function deepClone(value) {
     return JSON.parse(JSON.stringify(value));
@@ -258,6 +262,19 @@ export function getBuiltinScopeTagKeyForStartTag(startTag = '') {
     return normalizeScopeTagBuiltinKey('', String(startTag ?? '').trim());
 }
 
+export function isCotScopeTagKey(builtinKey = '') {
+    return COT_SCOPE_TAG_KEYS.has(String(builtinKey ?? '').trim());
+}
+
+export function isCotScopeTagEntry(scopeTag) {
+    if (!scopeTag || typeof scopeTag !== 'object') return false;
+    return isCotScopeTagKey(scopeTag.builtinKey) || COT_SCOPE_TAG_KEYS.has(String(scopeTag.startTag ?? '').trim());
+}
+
+export function getCotScopeTagBuiltinKeys() {
+    return [...COT_SCOPE_TAG_KEYS];
+}
+
 export function normalizeScopeTagEntry(entry, fallbackId = '') {
     if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
     const rawId = String(entry.id || fallbackId || '');
@@ -331,6 +348,15 @@ export function mergeScopeTagsWithBuiltins(entries, dismissedBuiltinKeys = []) {
     });
 
     return merged;
+}
+
+export function isCotScopeSkippingEnabled(settings = null) {
+    const resolvedSettings = settings || getAppContext().extension_settings?.[extensionName] || {};
+    const scopeTags = mergeScopeTagsWithBuiltins(
+        resolvedSettings.scopeTags,
+        resolvedSettings.scopeTagBuiltinDismissed
+    );
+    return scopeTags.some((tag) => tag.enabled !== false && isCotScopeTagEntry(tag));
 }
 
 function isRuleLikeObject(value) {

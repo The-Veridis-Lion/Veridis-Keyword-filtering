@@ -1,5 +1,6 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { applyScopedReplacements, applyVisualMask, buildProcessors } from './core.js';
+import { isCotScopeSkippingEnabled } from './utils.js';
 
 /**
  * 判断节点是否位于宿主应用的脚本编辑弹窗中。
@@ -37,6 +38,12 @@ function shouldProtectSkipUserNode(node) {
     return isUserMessageDomNode(node);
 }
 
+function shouldProtectReasoningNode(node) {
+    if (!node || !node.closest) return false;
+    if (!isCotScopeSkippingEnabled()) return false;
+    return Boolean(node.closest('.mes_reasoning_details, .mes_reasoning'));
+}
+
 /**
  * 判断节点是否属于受保护区域。
  * @param {Element} node 待检查节点。
@@ -45,6 +52,7 @@ function shouldProtectSkipUserNode(node) {
 export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
     if (node.closest('.name_text')) return true;
+    if (shouldProtectReasoningNode(node)) return true;
     if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
     if (shouldProtectSkipUserNode(node)) return true;
     if (isKnownPluginContainerNode(node)) return true;
@@ -67,7 +75,7 @@ export function isProtectedNode(node) {
     return false;
 }
 
-function isRevertedMessageDomNode(node) {
+export function isRevertedMessageDomNode(node) {
     if (!node || node.nodeType !== 1) return false;
     const mesNode = node.matches?.('.mes') ? node : node.closest?.('.mes');
     if (!mesNode) return false;

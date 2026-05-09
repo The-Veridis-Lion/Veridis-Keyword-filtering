@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markRulesUiDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
-import { deepClone, getCurrentCharacterContext, getPresetForCharacter, mergeScopeTagsWithBuiltins, parseInputToWords } from './utils.js';
+import { COT_SCOPE_TAG_DISPLAY_TEXT, deepClone, getCurrentCharacterContext, getPresetForCharacter, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
@@ -18,8 +18,7 @@ function formatReplacementPreview(replacements, mode = 'text') {
     if (mode === 'regex') {
         return replacements.map((value) => `〔${formatReplacementCandidatePreview(value)}〕`).join(' / ');
     }
-    const joined = replacements.join(', ');
-    return safeHtml(joined) || '【直接删除】';
+    return replacements.map(formatReplacementCandidatePreview).join(', ');
 }
 
 function normalizeReplacementList(replacements) {
@@ -124,6 +123,7 @@ function appendRegexReplacementInputs(values = [], options = {}) {
 function syncRegexReplacementInputState() {
     const $container = $('#bl-modal-sub-regex-list');
     const $textarea = $('#bl-modal-sub-rep');
+    $container.children('.bl-regex-replacement-empty').remove();
     const $items = $container.children('.bl-regex-replacement-chip');
     let editIndex = getRegexReplacementEditIndex();
     if (editIndex >= $items.length) {
@@ -140,7 +140,16 @@ function syncRegexReplacementInputState() {
     const isEditing = editIndex >= 0;
     const defaultPlaceholder = String($textarea.data('regex-default-placeholder') || '');
     const editPlaceholder = String($textarea.data('regex-edit-placeholder') || defaultPlaceholder);
-    $('#bl-modal-sub-regex-list').prop('hidden', $items.length === 0);
+    const isRegexEditorVisible = !$('#bl-modal-sub-regex-actions').prop('hidden');
+    if ($items.length === 0 && isRegexEditorVisible) {
+        $container.append(`
+            <div class="bl-regex-replacement-empty" aria-live="polite">
+                <i class="fas fa-eraser"></i>
+                <span>未添加替换项，命中后将直接删除。</span>
+            </div>
+        `);
+    }
+    $container.prop('hidden', $items.length === 0 && !isRegexEditorVisible);
     $('#bl-modal-sub-regex-recognize').text(isEditing ? '更新替换项' : '按行识别');
     $textarea.attr('placeholder', isEditing ? editPlaceholder : defaultPlaceholder);
 }
@@ -200,7 +209,7 @@ export function setupUI() {
 
             <div class="bl-action-buttons">
                 <button id="bl-open-new-rule-btn" class="bl-btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
-                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签保护</button>
+                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签</button>
                 <button class="bl-btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
             </div>
 
@@ -315,7 +324,7 @@ export function setupUI() {
         <div id="bl-scope-tags-modal" class="bl-modal-shell">
             <div class="bl-modal-card bl-scope-tags-card">
                 <div class="bl-scope-tags-header">
-                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签保护</h3>
+                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签</h3>
                     <button id="bl-scope-tags-close" type="button" class="bl-icon-btn bl-scope-tags-close" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
                 <div class="bl-scope-tags-editor">
@@ -545,21 +554,43 @@ export function renderScopeTagsModal() {
     );
     const editId = String($('#bl-scope-tag-input').data('scope-edit-id') || '');
     const isEditing = editId !== '';
+    const displayScopeTags = [];
+    let cotDisplayTag = null;
+
+    scopeTags.forEach((scopeTag) => {
+        if (!isCotScopeTagEntry(scopeTag)) {
+            displayScopeTags.push(scopeTag);
+            return;
+        }
+        if (!cotDisplayTag) {
+            cotDisplayTag = {
+                ...scopeTag,
+                label: scopeTag.label || 'COT思维链',
+                enabled: false,
+            };
+            displayScopeTags.push(cotDisplayTag);
+        }
+        if (scopeTag.enabled !== false) cotDisplayTag.enabled = true;
+        if (scopeTag.id === editId) cotDisplayTag.id = scopeTag.id;
+    });
 
     $('#bl-scope-tag-save').text(isEditing ? '更新标签' : '新增标签');
     $('#bl-scope-tag-reset').prop('hidden', !isEditing);
 
-    if (scopeTags.length === 0) {
+    if (displayScopeTags.length === 0) {
         $list.html('<div class="bl-empty-state">当前没有范围标签，新增后即可按标签跳过净化。</div>');
         return;
     }
 
-    const html = scopeTags.map((scopeTag) => {
+    const html = displayScopeTags.map((scopeTag) => {
         const isEnabled = scopeTag.enabled !== false;
         const checkedAttr = isEnabled ? 'checked' : '';
         const activeClass = scopeTag.id === editId ? 'is-active' : '';
         const disabledClass = isEnabled ? '' : 'bl-is-disabled';
         const badgeText = scopeTag.label || '范围';
+        const rangeText = isCotScopeTagEntry(scopeTag)
+            ? COT_SCOPE_TAG_DISPLAY_TEXT
+            : `${scopeTag.startTag} ... ${scopeTag.endTag}`;
         const actionButtons = `
             <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签"><i class="fas fa-pen"></i></button>
             <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签"><i class="fas fa-trash"></i></button>
@@ -568,7 +599,7 @@ export function renderScopeTagsModal() {
             <div class="bl-scope-tag-chip ${activeClass} ${disabledClass}" data-id="${safeHtml(scopeTag.id)}">
                 <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="点击编辑该范围标签">
                     <span class="bl-tag">${safeHtml(badgeText)}</span>
-                    <span class="bl-scope-tag-chip-text">${safeHtml(scopeTag.startTag)} ... ${safeHtml(scopeTag.endTag)}</span>
+                    <span class="bl-scope-tag-chip-text">${safeHtml(rangeText)}</span>
                 </button>
                 <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该范围标签">
                     <input type="checkbox" class="bl-scope-tag-toggle" data-id="${safeHtml(scopeTag.id)}" ${checkedAttr}>
@@ -821,7 +852,7 @@ export function recognizeRegexReplacementInput() {
         return { ok: true, mode: 'update' };
     }
 
-    const lines = draft.replace(/\r/g, '').split('\n').filter((line) => line.trim() !== '');
+    const lines = draft.replace(/\r/g, '').split('\n').map((line) => (line.trim() === '' ? '' : line));
     if (lines.length === 0) return { ok: false, reason: 'empty' };
     appendRegexReplacementInputs(lines, { sync: false });
     $textarea.val('').data('regex-edit-index', -1);

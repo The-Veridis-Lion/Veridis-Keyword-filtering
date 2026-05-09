@@ -1,4 +1,4 @@
-import { extension_settings } from "../../../extensions.js";
+import * as extensionsModule from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
 
 import { defaultSettings, extensionName, initAppContext, runtimeState, markRulesDataDirty } from './src/state.js';
@@ -9,6 +9,8 @@ import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.
 import { performGlobalCleanse } from './src/core.js';
 import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList } from './src/utils.js';
 
+const { extension_settings, getContext: getSillyTavernContext } = extensionsModule;
+
 initAppContext({
     extension_settings,
     saveSettingsDebounced,
@@ -17,6 +19,7 @@ initAppContext({
     saveChat,
     chat_metadata,
     chat,
+    getSillyTavernContext,
 });
 
 function ensureSettingsShape() {

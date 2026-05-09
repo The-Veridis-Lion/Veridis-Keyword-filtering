@@ -26,6 +26,21 @@ function hashString(value = '') {
     return `h${(hash >>> 0).toString(16)}`;
 }
 
+function getDiffRulesSignature() {
+    const { extension_settings } = getAppContext();
+    const settings = extension_settings?.[extensionName] || {};
+    try {
+        return hashString(JSON.stringify({
+            rules: settings.rules || [],
+            scopeTags: settings.scopeTags || [],
+            scopeTagBuiltinDismissed: settings.scopeTagBuiltinDismissed || [],
+        }));
+    } catch (err) {
+        logger.warn('规则签名计算失败，使用固定兜底', err);
+        return 'rules-unavailable';
+    }
+}
+
 export function isTrackableDiffMessage(msg) {
     return !!(msg && typeof msg === 'object' && msg.is_user !== true);
 }
@@ -39,22 +54,17 @@ export function computeMessageSignature(msg) {
     const base = typeof msg.mes === 'string' ? msg.mes : '';
     const name = typeof msg.name === 'string' ? msg.name : '';
     const swipeInfo = msg.swipe_id ?? msg.swipeId ?? msg.swipes?.length ?? '';
-
-    const storedSourceSignature = typeof msg.__bl_diff_source_signature === 'string'
-        ? msg.__bl_diff_source_signature
-        : '';
     const lastCleanedMes = typeof msg.__bl_diff_last_cleaned_mes === 'string'
         ? msg.__bl_diff_last_cleaned_mes
         : '';
-
-    // 已净化消息再次收到结束事件时，继续沿用原始源文本签名，避免空差异覆盖缓存。
-    if (storedSourceSignature && lastCleanedMes && base === lastCleanedMes) {
-        return storedSourceSignature;
-    }
+    const sourceMes = (lastCleanedMes && base === lastCleanedMes && typeof msg.__bl_original_mes === 'string')
+        ? msg.__bl_original_mes
+        : base;
 
     return hashString(`${name}
 ${swipeInfo}
-${base}`);
+${sourceMes}
+${getDiffRulesSignature()}`);
 }
 
 export function getLatestAssistantMessageIndices(chat, limit = maxTrackedDiffMessages) {
@@ -278,7 +288,7 @@ export function writeReadyDiffCache(index, signature, cacheData = {}, options = 
     const existing = runtimeState.diffSnippetsCache.get(index);
     const existingHasRealDiff = hasRealDiffCache(index);
 
-    if (options.preserveExistingRealDiff === true && existingHasRealDiff && !nextHasRealDiff) {
+    if (options.preserveExistingRealDiff === true && existingHasRealDiff && !nextHasRealDiff && existing?.signature === signature) {
         runtimeState.diffMessageStates.set(index, {
             status: 'ready',
             signature: signature || existing?.signature || '',
