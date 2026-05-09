@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
-import { createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
+import { createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
 import {
     applyPresetByName,
     closeScopeTagsModal,
@@ -41,9 +41,10 @@ import {
     getLatestMessageIndex,
     cleanseMessageDataAtIndex,
     queueIncrementalChatSave,
+    refreshMessageDisplay,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode } from './dom.js';
+import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
 let streamingDiffInjectTimer = null;
@@ -122,6 +123,19 @@ function handleDeleteRule(index, rules) {
         return deleteSelectedRules(rules, getSelectedIndexesFromState(rules));
     }
     return deleteSingleRule(rules, index);
+}
+
+function normalizeRulesForPresetComparison(rules) {
+    return (Array.isArray(rules) ? rules : []).map((rule) => {
+        const normalized = deepClone(rule || {});
+        delete normalized.enabled;
+        return normalized;
+    });
+}
+
+function hasPresetContentChanges(currentRules, savedRules) {
+    return JSON.stringify(normalizeRulesForPresetComparison(currentRules))
+        !== JSON.stringify(normalizeRulesForPresetComparison(savedRules));
 }
 
 function renderTagsPreserveBatchSelection() {
@@ -224,6 +238,7 @@ export function initRealtimeInterceptor() {
                     const node = m.addedNodes[ni];
                     if (node.nodeType === 3 || node.nodeType === 8) {
                         if (node.parentNode && isProtectedNode(node.parentNode)) continue;
+                        if (node.parentNode && isRevertedMessageDomNode(node.parentNode)) continue;
                         if (node.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
@@ -240,6 +255,7 @@ export function initRealtimeInterceptor() {
                 }
                 if (m.type === 'characterData') {
                     if (m.target.parentNode && isProtectedNode(m.target.parentNode)) continue;
+                    if (m.target.parentNode && isRevertedMessageDomNode(m.target.parentNode)) continue;
                     if (m.target.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
@@ -298,9 +314,7 @@ export function bindEvents() {
         const settings = extension_settings[extensionName];
         const active = settings.activePreset;
         if (!active) return false;
-        const currentRules = JSON.stringify(settings.rules || []);
-        const savedRules = JSON.stringify(settings.presets[active] || []);
-        return currentRules !== savedRules;
+        return hasPresetContentChanges(settings.rules || [], settings.presets[active] || []);
     }
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
     const formatRegexTargetError = (error) => `第 ${error.line} 行：${error.message}`;
@@ -677,9 +691,13 @@ export function bindEvents() {
     $(document).off('change', '.bl-scope-tag-toggle').on('change', '.bl-scope-tag-toggle', function() {
         const tagId = String($(this).attr('data-id') || '');
         const checked = $(this).prop('checked');
-        const scopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed).map((tag) => (
-            tag.id === tagId ? { ...tag, enabled: checked } : tag
-        ));
+        const currentScopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+        const targetTag = currentScopeTags.find((tag) => tag.id === tagId);
+        const togglesCotGroup = isCotScopeTagEntry(targetTag);
+        const scopeTags = currentScopeTags.map((tag) => {
+            if (togglesCotGroup && isCotScopeTagEntry(tag)) return { ...tag, enabled: checked };
+            return tag.id === tagId ? { ...tag, enabled: checked } : tag;
+        });
         persistScopeTags(scopeTags);
     });
 
@@ -689,10 +707,16 @@ export function bindEvents() {
         const scopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
         const scopeTag = scopeTags.find((tag) => tag.id === tagId);
         if (!scopeTag) return;
-        if (!confirm(`确定删除范围标签 ${scopeTag.startTag} 吗？`)) return;
+        const deletesCotGroup = isCotScopeTagEntry(scopeTag);
+        const displayName = deletesCotGroup ? '<thinking> OR <think>' : scopeTag.startTag;
+        if (!confirm(`确定删除范围标签 ${displayName} 吗？`)) return;
         const dismissedBuiltinKeys = [...normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed)];
-        if (scopeTag.builtinKey) dismissedBuiltinKeys.push(scopeTag.builtinKey);
-        persistScopeTags(scopeTags.filter((tag) => tag.id !== tagId), { dismissedBuiltinKeys });
+        if (deletesCotGroup) dismissedBuiltinKeys.push(...getCotScopeTagBuiltinKeys());
+        else if (scopeTag.builtinKey) dismissedBuiltinKeys.push(scopeTag.builtinKey);
+        const nextScopeTags = deletesCotGroup
+            ? scopeTags.filter((tag) => !isCotScopeTagEntry(tag))
+            : scopeTags.filter((tag) => tag.id !== tagId);
+        persistScopeTags(nextScopeTags, { dismissedBuiltinKeys });
         if (getScopeTagEditId() === tagId) resetScopeTagEditor();
         showToast('范围标签已删除');
     });
@@ -794,16 +818,25 @@ export function bindEvents() {
     const refreshMessageAfterRevertToggle = (index, msg) => {
         const { chat } = getAppContext();
         if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat) || !msg) return;
-        try {
-            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
-        } catch (e) {
-            logger.warn(`updateMessageBlock 调用失败 index=${index}`, e);
-        }
-        const messageNode = getMessageDomNode(index);
-        if (messageNode && msg.__bl_is_reverted !== true) purifyDOM(messageNode);
-        injectDiffButtons([index]);
+        const finishRefresh = () => {
+            const messageNode = getMessageDomNode(index);
+            if (messageNode && msg.__bl_is_reverted !== true) purifyDOM(messageNode);
+            injectDiffButtons([index]);
+            renderDiffModalContent(index);
+        };
+        const refreshAndFinish = () => {
+            refreshMessageDisplay(index, { allowReloadFallback: true });
+            finishRefresh();
+        };
+        refreshAndFinish();
+        window.requestAnimationFrame?.(() => finishRefresh());
+        window.setTimeout(refreshAndFinish, 50);
+        window.setTimeout(() => {
+            refreshMessageDisplay(index, { emitRenderedEvent: 'auto' });
+            finishRefresh();
+        }, 100);
+        window.setTimeout(finishRefresh, 150);
         queueIncrementalChatSave();
-        renderDiffModalContent(index);
     };
 
     const toggleCurrentDiffRevert = () => {
@@ -812,8 +845,9 @@ export function bindEvents() {
         if (!Number.isInteger(index) || index < 0 || !msg || typeof msg !== 'object') return;
 
         if (msg.__bl_is_reverted === true) {
+            const sourceMes = typeof msg.mes === 'string' ? msg.mes : '';
             delete msg.__bl_is_reverted;
-            cleanseMessageDataAtIndex(index);
+            cleanseMessageDataAtIndex(index, { diffSourceMes: sourceMes });
         } else {
             msg.mes = typeof msg.__bl_original_mes === 'string' ? msg.__bl_original_mes : msg.mes;
             msg.__bl_is_reverted = true;
@@ -1030,7 +1064,7 @@ export function bindEvents() {
     $(document).off('click', '#bl-modal-sub-regex-recognize').on('click', '#bl-modal-sub-regex-recognize', () => {
         const result = recognizeRegexReplacementInput();
         if (!result.ok) {
-            showToast('请先在替换框中输入内容，再点右侧按钮。');
+            showToast('留空会直接删除，直接保存条目即可。');
             $('#bl-modal-sub-rep').trigger('focus');
             return;
         }

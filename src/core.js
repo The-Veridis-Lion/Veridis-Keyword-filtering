@@ -304,6 +304,128 @@ export function queueIncrementalChatSave() {
     }, 600);
 }
 
+let messageRefreshMissingWarned = false;
+let messageRefreshReloadInFlight = false;
+
+function getSillyTavernContextSnapshot() {
+    const { getSillyTavernContext } = getAppContext();
+    if (typeof getSillyTavernContext === 'function') {
+        try {
+            const context = getSillyTavernContext();
+            if (context && typeof context === 'object') return context;
+        } catch (e) {
+            logger.warn('获取 SillyTavern 上下文失败', e);
+        }
+    }
+
+    try {
+        const context = globalThis.SillyTavern?.getContext?.();
+        if (context && typeof context === 'object') return context;
+    } catch (e) {
+        logger.warn('从 globalThis.SillyTavern 获取上下文失败', e);
+    }
+
+    return {};
+}
+
+function warnMissingMessageRefresh(index) {
+    if (messageRefreshMissingWarned) return;
+    messageRefreshMissingWarned = true;
+    logger.warn(`宿主 updateMessageBlock 不可用，无法即时刷新消息显示 index=${index}`);
+}
+
+function reloadChatAsDisplayFallback(context, index) {
+    if (messageRefreshReloadInFlight || typeof context.reloadCurrentChat !== 'function') return false;
+    messageRefreshReloadInFlight = true;
+    Promise.resolve(context.reloadCurrentChat())
+        .catch((e) => logger.warn(`reloadCurrentChat 兜底刷新失败 index=${index}`, e))
+        .finally(() => {
+            messageRefreshReloadInFlight = false;
+        });
+    return true;
+}
+
+function looksLikeTemplateRenderedContent(index, message) {
+    const text = String(message?.extra?.display_text ?? message?.mes ?? '');
+    const templateLikePattern = /```(?:html|xml|svg)?[\s\S]*?<\/(?:html|body|script|div)>|<\/(?:html|body|script)>|<html[\s>]|<body[\s>]|<script[\s>]|<novel_header[\s>]|<\/novel_header>|<content[\s>]|<\/content>|novel-tags-container/i;
+    if (templateLikePattern.test(text)) return true;
+
+    const messageNode = getMessageDomNode(index);
+    const codeText = messageNode?.querySelector?.('.mes_text pre code')?.textContent || '';
+    return templateLikePattern.test(codeText);
+}
+
+function scheduleRenderedEvent(index, message, context) {
+    const appContext = getAppContext();
+    const eventSource = context.eventSource || appContext.eventSource;
+    const eventTypes = context.eventTypes || context.event_types || appContext.event_types;
+    if (!eventSource || typeof eventSource.emit !== 'function' || !eventTypes) return;
+
+    const eventType = message?.is_user === true
+        ? eventTypes.USER_MESSAGE_RENDERED
+        : eventTypes.CHARACTER_MESSAGE_RENDERED;
+    if (!eventType) return;
+
+    const emitEvent = () => {
+        Promise.resolve(eventSource.emit(eventType, index))
+            .catch((e) => logger.warn(`补发消息渲染事件失败 index=${index}`, e));
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+        globalThis.requestAnimationFrame(emitEvent);
+    } else if (typeof globalThis.setTimeout === 'function') {
+        globalThis.setTimeout(emitEvent, 0);
+    } else {
+        emitEvent();
+    }
+}
+
+/**
+ * 使用 SillyTavern 宿主渲染器刷新消息块，避免直接写 raw text 破坏排版。
+ * @param {number} index 消息索引。
+ * @param {{delay?: number, allowReloadFallback?: boolean, emitRenderedEvent?: boolean|'auto'}} [options={}] 刷新选项。
+ * @returns {boolean} 已触发刷新则返回 true。
+ */
+export function refreshMessageDisplay(index, options = {}) {
+    const delay = Number(options.delay) || 0;
+    if (delay > 0 && typeof globalThis.setTimeout === 'function') {
+        globalThis.setTimeout(() => refreshMessageDisplay(index, { ...options, delay: 0 }), delay);
+        return true;
+    }
+
+    if (!Number.isInteger(index) || index < 0) return false;
+
+    const appContext = getAppContext();
+    const stContext = getSillyTavernContextSnapshot();
+    const stMessage = Array.isArray(stContext.chat) ? stContext.chat[index] : null;
+    const appMessage = Array.isArray(appContext.chat) ? appContext.chat[index] : null;
+    const message = stMessage || appMessage;
+    if (!message || typeof message !== 'object') return false;
+
+    const hostUpdateMessageBlock = stContext.updateMessageBlock || appContext.updateMessageBlock;
+    if (typeof hostUpdateMessageBlock === 'function') {
+        try {
+            hostUpdateMessageBlock(index, message);
+            const shouldEmitRenderedEvent = options.emitRenderedEvent === true
+                || (options.emitRenderedEvent === 'auto' && looksLikeTemplateRenderedContent(index, message));
+            if (shouldEmitRenderedEvent) scheduleRenderedEvent(index, message, stContext);
+            return true;
+        } catch (e) {
+            logger.warn(`updateMessageBlock 调用失败 index=${index}`, e);
+            if (options.allowReloadFallback === true) {
+                return reloadChatAsDisplayFallback(stContext, index);
+            }
+            return false;
+        }
+    }
+
+    warnMissingMessageRefresh(index);
+    if (options.allowReloadFallback === true) {
+        return reloadChatAsDisplayFallback(stContext, index);
+    }
+    return false;
+}
+
 /**
  * 从事件负载中解析消息索引。
  * @param {number|object} payload 事件载荷或直接索引。
@@ -355,6 +477,37 @@ export function resolveLatestTrackableMessageIndex(payload) {
     return -1;
 }
 
+function resolveMessageDiffSource(msg, explicitSource) {
+    const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
+    if (typeof explicitSource === 'string') return explicitSource;
+
+    const lastCleanedMes = typeof msg?.__bl_diff_last_cleaned_mes === 'string'
+        ? msg.__bl_diff_last_cleaned_mes
+        : '';
+    if (lastCleanedMes && currentMes === lastCleanedMes && typeof msg?.__bl_original_mes === 'string') {
+        return msg.__bl_original_mes;
+    }
+
+    return currentMes;
+}
+
+function computeDiffSourceSignature(msg, sourceMes) {
+    return computeMessageSignature({
+        ...msg,
+        mes: sourceMes,
+        __bl_diff_source_signature: '',
+        __bl_diff_last_cleaned_mes: '',
+    });
+}
+
+function syncMessageDiffMetadata(msg, sourceMes, cleanedMes) {
+    const signature = computeDiffSourceSignature(msg, sourceMes);
+    msg.__bl_original_mes = sourceMes;
+    msg.__bl_diff_source_signature = signature;
+    msg.__bl_diff_last_cleaned_mes = typeof cleanedMes === 'string' ? cleanedMes : '';
+    return signature;
+}
+
 /**
  * 清理指定索引消息的数据并更新差异缓存。
  * @param {number} index 消息索引。
@@ -373,28 +526,19 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
         return false;
     }
 
-    const diffSourceMes = typeof options.diffSourceMes === 'string' ? options.diffSourceMes : null;
     const currentMes = typeof msg.mes === 'string' ? msg.mes : '';
-    const sourceMes = diffSourceMes || currentMes;
+    const sourceMes = resolveMessageDiffSource(msg, options.diffSourceMes);
 
-    const sourceSignature = computeMessageSignature({
-        ...msg,
-        mes: sourceMes,
-        __bl_diff_source_signature: '',
-        __bl_diff_last_cleaned_mes: '',
-    });
     let changed = false;
 
     const diffResult = buildDiffSnippetsFromText(sourceMes);
-    const dataResult = buildDiffSnippetsFromText(currentMes);
     const mainCache = {
         snippets: Array.from(new Set(diffResult.snippets || [])),
         fullDiff: diffResult.fullDiff || '',
     };
 
-    if (typeof msg.mes === 'string' && dataResult.cleanedText !== msg.mes) {
-        if (typeof msg.__bl_original_mes !== 'string') msg.__bl_original_mes = sourceMes;
-        msg.mes = dataResult.cleanedText;
+    if (typeof msg.mes === 'string' && diffResult.cleanedText !== currentMes) {
+        msg.mes = diffResult.cleanedText;
         changed = true;
     }
 
@@ -416,8 +560,7 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
         }
     }
 
-    msg.__bl_diff_source_signature = sourceSignature;
-    msg.__bl_diff_last_cleaned_mes = typeof msg.mes === 'string' ? msg.mes : '';
+    const sourceSignature = syncMessageDiffMetadata(msg, sourceMes, typeof msg.mes === 'string' ? msg.mes : '');
     writeReadyDiffCache(index, sourceSignature, {
         snippets: mainCache.snippets,
         fullDiff: mainCache.fullDiff,
@@ -481,11 +624,7 @@ export function performNonStreamingFinalCleanse(payload) {
     }
 
     if (dataChanged) {
-        try {
-            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
-        } catch (e) {
-            logger?.warn?.(`updateMessageBlock 调用失败 index=${index}`, e);
-        }
+        refreshMessageDisplay(index, { emitRenderedEvent: 'auto' });
         queueIncrementalChatSave();
     }
 }
@@ -553,9 +692,7 @@ export function performIncrementalCleanse(payload, options = {}) {
     }
 
     if (dataChanged) {
-        try {
-            if (typeof updateMessageBlock === 'function') updateMessageBlock(index, chat[index]);
-        } catch (e) { logger.warn(`updateMessageBlock 调用失败 index=${index}`, e); }
+        refreshMessageDisplay(index, { emitRenderedEvent: 'auto' });
         queueIncrementalChatSave();
     }
 }
@@ -584,20 +721,21 @@ export function performGlobalCleanse() {
             let mainCache = { snippets: [], fullDiff: '' };
             const assistant = isAssistantMessage(msg);
             if (skipUser && !assistant) return;
-            const signature = assistant ? computeMessageSignature(msg) : '';
+            let signature = assistant ? computeMessageSignature(msg) : '';
             const isReverted = msg?.__bl_is_reverted === true;
 
             if (!isReverted && typeof msg?.mes === 'string') {
-                const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(msg.mes);
+                const sourceMes = assistant ? resolveMessageDiffSource(msg) : msg.mes;
+                const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(sourceMes);
                 mainCache = {
                     snippets: Array.from(new Set(mesSnippets)),
                     fullDiff,
                 };
                 if (msg.mes !== cleanedText) {
-                    if (typeof msg.__bl_original_mes !== 'string') msg.__bl_original_mes = msg.mes;
                     msg.mes = cleanedText;
                     msgChanged = true;
                 }
+                if (assistant) signature = syncMessageDiffMetadata(msg, sourceMes, msg.mes);
             }
 
             if (!isReverted && msg?.swipes && Array.isArray(msg.swipes)) {
@@ -628,9 +766,7 @@ export function performGlobalCleanse() {
 
             if (msgChanged) {
                 chatChanged = true;
-                try {
-                    if (typeof updateMessageBlock === 'function') setTimeout(() => updateMessageBlock(index, chat[index]), 50);
-                } catch (e) { logger.warn(`updateMessageBlock 调用失败 index=${index}`, e); }
+                refreshMessageDisplay(index, { delay: 50, emitRenderedEvent: 'auto' });
             }
         });
 

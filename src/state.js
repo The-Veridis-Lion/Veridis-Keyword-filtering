@@ -64,6 +64,7 @@ const appContext = {
     saveChat: null,
     chat_metadata: null,
     chat: null,
+    getSillyTavernContext: null,
 };
 
 export function initAppContext(context) {
