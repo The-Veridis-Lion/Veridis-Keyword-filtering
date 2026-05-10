@@ -44,7 +44,7 @@ import {
     refreshMessageDisplay,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode } from './dom.js';
+import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
 
 let streamingDiffInjectTimer = null;
@@ -196,6 +196,9 @@ export function injectDiffButtonsStreamingSafe(indices = []) {
 
 export function initRealtimeInterceptor() {
     let isPurifying = false;
+    syncPersonaDescriptionProtectionControl();
+    const personaProtectionIntervalId = setInterval(syncPersonaDescriptionProtectionControl, 1000);
+    window.addEventListener('beforeunload', () => clearInterval(personaProtectionIntervalId), { once: true });
     const resolveNodeMessageIndex = (node) => {
         if (!node || node.nodeType !== 1) return -1;
         const attrs = [node.getAttribute('mesid'), node.getAttribute('data-mesid'), node.getAttribute('messageid'), node.getAttribute('data-message-id')];
@@ -578,6 +581,14 @@ export function bindEvents() {
         performGlobalCleanse();
     });
 
+    $(document).off('click', '.bl-persona-description-protect-toggle').on('click', '.bl-persona-description-protect-toggle', function(e) {
+        e.preventDefault();
+        settings.protectPersonaDescription = settings.protectPersonaDescription !== true;
+        saveSettingsDebounced();
+        syncPersonaDescriptionProtectionControl();
+        showToast(settings.protectPersonaDescription ? '用户设定描述已保护' : '用户设定描述已取消保护');
+    });
+
     $(document).off('click', '#bl-preset-search').on('click', '#bl-preset-search', () => {
         openRuleSearchModal();
     });
@@ -615,6 +626,14 @@ export function bindEvents() {
 
     $(document).off('click', '#bl-scope-tags-btn').on('click', '#bl-scope-tags-btn', () => {
         openScopeTagsModal();
+    });
+
+    $(document).off('click', '#bl-scope-tag-mode-toggle').on('click', '#bl-scope-tag-mode-toggle', () => {
+        settings.scopeTagMode = settings.scopeTagMode === 'cleanse-inside' ? 'protect' : 'cleanse-inside';
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+        performGlobalCleanse();
+        showToast(settings.scopeTagMode === 'cleanse-inside' ? '已切换为仅净化标签内' : '已切换为标签内保护');
     });
 
     $(document).off('click', '#bl-scope-tags-close').on('click', '#bl-scope-tags-close', () => {

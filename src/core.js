@@ -206,6 +206,13 @@ function getEnabledScopeTags() {
     return scopeTags.filter((tag) => tag.enabled !== false);
 }
 
+function getScopeTagMode() {
+    const { extension_settings } = getAppContext();
+    return extension_settings?.[extensionName]?.scopeTagMode === 'cleanse-inside'
+        ? 'cleanse-inside'
+        : 'protect';
+}
+
 function findNextScopeTagMatch(text, fromIndex, scopeTags) {
     let nextMatch = null;
     for (const scopeTag of scopeTags) {
@@ -219,8 +226,8 @@ function findNextScopeTagMatch(text, fromIndex, scopeTags) {
 }
 
 /**
- * 对消息文本应用“范围标签跳过 + 规则替换”。
- * 标签包裹区间原样保留，仅对标签外内容执行原始替换。
+ * 对消息文本应用“范围标签模式 + 规则替换”。
+ * protect 模式保留标签内文本，cleanse-inside 模式仅净化标签内文本。
  * @param {string} originalText 原始文本。
  * @param {{deterministic?: boolean}} [options={}] 替换选项。
  * @returns {string} 替换后的文本。
@@ -229,7 +236,9 @@ export function applyScopedReplacements(originalText, options = {}) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
 
     const scopeTags = getEnabledScopeTags();
-    if (scopeTags.length === 0) return applyReplacements(originalText, options);
+    const scopeTagMode = getScopeTagMode();
+    const shouldCleanseInside = scopeTagMode === 'cleanse-inside';
+    if (scopeTags.length === 0) return shouldCleanseInside ? originalText : applyReplacements(originalText, options);
 
     let output = '';
     let cursor = 0;
@@ -237,24 +246,35 @@ export function applyScopedReplacements(originalText, options = {}) {
     while (cursor < originalText.length) {
         const nextMatch = findNextScopeTagMatch(originalText, cursor, scopeTags);
         if (!nextMatch) {
-            output += applyReplacements(originalText.slice(cursor), options);
+            const tail = originalText.slice(cursor);
+            output += shouldCleanseInside ? tail : applyReplacements(tail, options);
             break;
         }
 
         const { index, scopeTag } = nextMatch;
         if (index > cursor) {
-            output += applyReplacements(originalText.slice(cursor, index), options);
+            const outsideText = originalText.slice(cursor, index);
+            output += shouldCleanseInside ? outsideText : applyReplacements(outsideText, options);
         }
 
         const tagBodyStart = index + scopeTag.startTag.length;
         const endIndex = originalText.indexOf(scopeTag.endTag, tagBodyStart);
         if (endIndex < 0) {
-            output += applyReplacements(originalText.slice(index, tagBodyStart), options);
+            if (shouldCleanseInside) {
+                output += originalText.slice(index);
+                break;
+            }
+            output += originalText.slice(index, tagBodyStart);
             cursor = tagBodyStart;
             continue;
         }
 
-        output += originalText.slice(index, endIndex + scopeTag.endTag.length);
+        const startTagText = originalText.slice(index, tagBodyStart);
+        const bodyText = originalText.slice(tagBodyStart, endIndex);
+        const endTagText = originalText.slice(endIndex, endIndex + scopeTag.endTag.length);
+        output += startTagText;
+        output += shouldCleanseInside ? applyReplacements(bodyText, options) : bodyText;
+        output += endTagText;
         cursor = endIndex + scopeTag.endTag.length;
     }
 
@@ -672,7 +692,7 @@ export function performIncrementalCleanse(payload, options = {}) {
                 && typeof msg?.__bl_diff_last_cleaned_mes === 'string'
                 && msg.mes === msg.__bl_diff_last_cleaned_mes;
 
-            if (alreadyFinalizedSameSource) {
+            if (alreadyFinalizedSameSource && hasRealDiffCache(index)) {
                 const messageNode = getMessageDomNode(index);
                 if (messageNode) ensureMessageDiffButton(index, messageNode);
                 return;

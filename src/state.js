@@ -10,6 +10,7 @@ export const defaultSettings = {
     characterBindings: {},
     scopeTags: [],
     scopeTagBuiltinDismissed: [],
+    scopeTagMode: "protect",
     enableVisualDiff: true,
     diffViewMode: "snippet",
     diffButtonInExtraMenu: false,
@@ -18,6 +19,7 @@ export const defaultSettings = {
     themeMode: "auto",
     logLevel: 2,  // 0=off, 1=error, 2=warn(default), 3=info, 4=debug
     skipUserMessages: false,
+    protectPersonaDescription: false,
 };
 
 export const runtimeState = {

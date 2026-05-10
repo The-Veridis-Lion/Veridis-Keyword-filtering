@@ -32,12 +32,14 @@ function ensureSettingsShape() {
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
     settings.scopeTagBuiltinDismissed = normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed);
     settings.scopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+    if (!['protect', 'cleanse-inside'].includes(settings.scopeTagMode)) settings.scopeTagMode = 'protect';
     if (settings.enableVisualDiff === undefined) settings.enableVisualDiff = true;
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
     if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false;
     if (settings.showBottomDiffButton === undefined) settings.showBottomDiffButton = true;
     if (settings.logLevel === undefined) settings.logLevel = 2;
     if (settings.skipUserMessages === undefined) settings.skipUserMessages = false;
+    if (settings.protectPersonaDescription === undefined) settings.protectPersonaDescription = false;
     cleanupInvalidPresetBindings();
 
     const timeoutSec = Number(settings.deepCleanTimeoutSec);

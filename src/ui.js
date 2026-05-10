@@ -335,7 +335,11 @@ export function setupUI() {
                         <button id="bl-scope-tag-save" type="button" class="bl-rule-search-submit bl-scope-tag-save">新增标签</button>
                     </div>
                     <div id="bl-scope-tag-error" class="bl-field-error" aria-live="polite"></div>
-                    <div class="bl-scope-tags-hint">格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。启用后，<strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 包住的内容会跳过净化；如果不写备注，前面的徽章默认显示“范围”。</div>
+                    <button id="bl-scope-tag-mode-toggle" type="button" class="bl-scope-tag-mode-toggle" title="切换范围标签模式">
+                        <i id="bl-scope-tag-mode-icon" class="fas fa-shield-halved"></i>
+                        <span id="bl-scope-tag-mode-text">标签内保护</span>
+                    </button>
+                    <div id="bl-scope-tags-hint" class="bl-scope-tags-hint">格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。启用后，<strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 包住的内容会跳过净化；如果不写备注，前面的徽章默认显示“范围”。</div>
                 </div>
                 <div id="bl-scope-tags-list" class="bl-scope-tags-list"></div>
             </div>
@@ -554,6 +558,8 @@ export function renderScopeTagsModal() {
     );
     const editId = String($('#bl-scope-tag-input').data('scope-edit-id') || '');
     const isEditing = editId !== '';
+    const scopeTagMode = extension_settings?.[extensionName]?.scopeTagMode === 'cleanse-inside' ? 'cleanse-inside' : 'protect';
+    const isCleanseInsideMode = scopeTagMode === 'cleanse-inside';
     const displayScopeTags = [];
     let cotDisplayTag = null;
 
@@ -576,9 +582,17 @@ export function renderScopeTagsModal() {
 
     $('#bl-scope-tag-save').text(isEditing ? '更新标签' : '新增标签');
     $('#bl-scope-tag-reset').prop('hidden', !isEditing);
+    $('#bl-scope-tag-mode-toggle')
+        .toggleClass('is-active', isCleanseInsideMode)
+        .attr('title', isCleanseInsideMode ? '当前仅净化启用标签内的内容，点击切回标签内保护' : '当前启用标签内保护，点击切到仅净化标签内');
+    $('#bl-scope-tag-mode-icon').attr('class', isCleanseInsideMode ? 'fas fa-filter' : 'fas fa-shield-halved');
+    $('#bl-scope-tag-mode-text').text(isCleanseInsideMode ? '仅净化标签内' : '标签内保护');
+    $('#bl-scope-tags-hint').html(isCleanseInsideMode
+        ? '格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。当前只净化已启用的 <strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 标签内内容，标签外全部保留。'
+        : '格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。当前会保护已启用的 <strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 标签内内容，标签外照常净化。');
 
     if (displayScopeTags.length === 0) {
-        $list.html('<div class="bl-empty-state">当前没有范围标签，新增后即可按标签跳过净化。</div>');
+        $list.html(`<div class="bl-empty-state">${isCleanseInsideMode ? '当前没有范围标签，新增并启用后才会净化标签内内容。' : '当前没有范围标签，新增后即可按标签跳过净化。'}</div>`);
         return;
     }
 
@@ -615,7 +629,13 @@ export function renderScopeTagsModal() {
 
 export function openScopeTagsModal() {
     renderScopeTagsModal();
-    $('#bl-scope-tags-modal').css('display', 'flex').hide().fadeIn(150);
+    $('#bl-scope-tags-modal')
+        .stop(true, true)
+        .css('display', 'flex')
+        .hide()
+        .fadeIn(150, function() {
+            $(this).css('display', 'flex');
+        });
     window.setTimeout(() => {
         $('#bl-scope-tag-input').trigger('focus');
     }, 20);

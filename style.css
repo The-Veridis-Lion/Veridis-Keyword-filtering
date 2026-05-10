@@ -951,6 +951,28 @@
     flex: 0 0 auto !important;
     min-width: 78px !important;
 }
+.bl-scope-tag-mode-toggle {
+    width: 100% !important;
+    min-height: 38px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 8px !important;
+    border: 1px solid var(--bl-border-color) !important;
+    border-radius: 10px !important;
+    background: var(--bl-background-secondary) !important;
+    color: var(--bl-text-primary) !important;
+    font-size: 14px !important;
+    font-weight: 650 !important;
+    cursor: pointer !important;
+}
+.bl-scope-tag-mode-toggle.is-active {
+    border-color: var(--bl-accent-color) !important;
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--bl-accent-color) 35%, transparent) !important;
+}
+.bl-scope-tag-mode-toggle:hover {
+    background: var(--bl-background-tertiary) !important;
+}
 .bl-scope-tags-hint {
     font-size: 12px !important;
     line-height: 1.6 !important;
@@ -1048,6 +1070,31 @@
 /* 尾部溯源按钮 */
 .bl-diff-btn-bottom { position: absolute !important; bottom: 6px !important; right: 48px !important; z-index: 10 !important; display: inline-flex !important; align-items: center !important; justify-content: center !important; opacity: 0.45 !important; cursor: pointer !important; transition: opacity 0.2s, color 0.2s !important; color: var(--bl-text-primary) !important; }
 .bl-diff-btn-bottom:hover { opacity: 1 !important; color: var(--bl-accent-color) !important; }
+
+.bl-persona-description-protect-toggle {
+    display: inline-flex !important;
+    align-items: center !important;
+    gap: 4px !important;
+    margin-left: 8px !important;
+    padding: 2px 7px !important;
+    min-height: 24px !important;
+    border: 1px solid var(--SmartThemeBorderColor, rgba(128, 128, 128, 0.35)) !important;
+    border-radius: 6px !important;
+    background: color-mix(in srgb, var(--SmartThemeBodyColor, #333333) 7%, transparent) !important;
+    color: var(--SmartThemeBodyColor, #333333) !important;
+    font: inherit !important;
+    font-size: 12px !important;
+    line-height: 1 !important;
+    cursor: pointer !important;
+}
+.bl-persona-description-protect-toggle.is-active {
+    border-color: var(--SmartThemeQuoteColor, #8b5cf6) !important;
+    color: var(--SmartThemeQuoteColor, #8b5cf6) !important;
+    background: color-mix(in srgb, var(--SmartThemeQuoteColor, #8b5cf6) 14%, transparent) !important;
+}
+.bl-persona-description-protect-toggle:hover {
+    transform: translateY(-1px);
+}
 
 
 /* --- 6. 移动端适配 --- */
@@ -1197,6 +1244,7 @@
 
     #bl-rule-edit-modal,
     #bl-rule-search-modal,
+    #bl-scope-tags-modal,
     #bl-diff-modal,
     #bl-subrule-edit-modal {
         position: fixed !important;
@@ -1213,6 +1261,7 @@
     }
     #bl-rule-edit-modal > .bl-edit-modal-card,
     #bl-rule-search-modal > .bl-rule-search-card,
+    #bl-scope-tags-modal > .bl-scope-tags-card,
     #bl-subrule-edit-modal > .bl-edit-modal-card,
     .bl-diff-modal-card {
         position: relative !important;

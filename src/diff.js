@@ -28,9 +28,10 @@ function hashString(value = '') {
 
 const inlineDiffCellLimit = 1600000;
 const lineDiffCellLimit = 200000;
-const snippetContextChars = 48;
+const snippetWindowCharLimit = 900;
 const snippetJoinEqualChars = 96;
 const maxDiffSnippetCount = 16;
+const diffRenderVersion = 4;
 
 function getDiffRulesSignature() {
     const { extension_settings } = getAppContext();
@@ -40,6 +41,8 @@ function getDiffRulesSignature() {
             rules: settings.rules || [],
             scopeTags: settings.scopeTags || [],
             scopeTagBuiltinDismissed: settings.scopeTagBuiltinDismissed || [],
+            scopeTagMode: settings.scopeTagMode || 'protect',
+            diffRenderVersion,
         }));
     } catch (err) {
         logger.warn('规则签名计算失败，使用固定兜底', err);
@@ -241,7 +244,7 @@ export function hasRealDiffCache(index) {
     const cached = runtimeState.diffSnippetsCache.get(index);
     if (!cached || typeof cached !== 'object') return false;
 
-    const hasSnippets = Array.isArray(cached.snippets) && cached.snippets.length > 0;
+    const hasSnippets = hasRenderedSnippetDiff(cached.snippets);
     const hasFullModified = typeof cached.fullDiff === 'string'
         && cached.fullDiff.includes('bl-diff-full-modified');
 
@@ -585,95 +588,253 @@ function renderDiffOperation(operation) {
     return escapeHtml(operation.text);
 }
 
-function operationTouchesParagraphBoundary(operation) {
-    return operation?.type !== 'equal' && /\n{2,}/.test(operation.text || '');
-}
-
 function renderDiffOperations(operations = []) {
     return operations.map(renderDiffOperation).join('');
 }
 
-function getCharLength(value = '') {
-    return Array.from(String(value)).length;
+function findPreviousBoundaryEnd(text = '', position = 0, pattern = /\r?\n/g) {
+    const source = String(text);
+    const cursor = Math.max(0, Math.min(source.length, Number(position) || 0));
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    let boundaryEnd = -1;
+    let match;
+    while ((match = regex.exec(source)) !== null) {
+        if (match.index >= cursor) break;
+        boundaryEnd = match.index + match[0].length;
+        if (match[0].length === 0) regex.lastIndex++;
+    }
+    return boundaryEnd;
 }
 
-function takeLeadingContext(value = '', limit = snippetContextChars) {
-    const chars = Array.from(String(value));
-    if (chars.length <= limit) return String(value);
-    return `${chars.slice(0, limit).join('')}...`;
+function findNextBoundaryStart(text = '', position = 0, pattern = /\r?\n/g) {
+    const source = String(text);
+    const cursor = Math.max(0, Math.min(source.length, Number(position) || 0));
+    const regex = new RegExp(pattern.source, pattern.flags.includes('g') ? pattern.flags : `${pattern.flags}g`);
+    regex.lastIndex = cursor;
+    const match = regex.exec(source);
+    return match ? match.index : -1;
 }
 
-function takeTrailingContext(value = '', limit = snippetContextChars) {
-    const chars = Array.from(String(value));
-    if (chars.length <= limit) return String(value);
-    return `...${chars.slice(-limit).join('')}`;
+function hasParagraphBoundary(value = '') {
+    return /\r?\n[ \t]*\r?\n/.test(String(value));
 }
 
-function splitAtParagraphBoundary(value = '') {
-    const match = String(value).match(/\n{2,}/);
-    if (!match || match.index === undefined) return { before: String(value), hasBoundary: false };
-    return { before: String(value).slice(0, match.index), hasBoundary: true };
+function hasLineBoundary(value = '') {
+    return /\r?\n/.test(String(value));
 }
 
-function takeContextAfterChange(value = '') {
-    const { before, hasBoundary } = splitAtParagraphBoundary(value);
-    if (hasBoundary) return before;
-    return takeLeadingContext(value);
-}
+function getLogicalWindowForChange(originalText = '', start = 0, end = start) {
+    const text = String(originalText);
+    const safeStart = Math.max(0, Math.min(text.length, Number(start) || 0));
+    const safeEnd = Math.max(safeStart, Math.min(text.length, Number(end) || safeStart));
+    const paragraphPattern = /\r?\n[ \t]*\r?\n/g;
 
-function buildDiffSnippetsFromOperations(operations = []) {
-    const snippets = [];
-    let currentParts = null;
-    let pendingEqualText = '';
+    const previousParagraphEnd = findPreviousBoundaryEnd(text, safeStart, paragraphPattern);
+    const nextParagraphStart = findNextBoundaryStart(text, safeEnd, paragraphPattern);
+    if (previousParagraphEnd >= 0 || nextParagraphStart >= 0) {
+        return {
+            start: previousParagraphEnd >= 0 ? previousParagraphEnd : 0,
+            end: nextParagraphStart >= 0 ? nextParagraphStart : text.length,
+        };
+    }
 
-    const wrapSnippet = () => {
-        if (!currentParts) return;
-        snippets.push(`<div class="bl-diff-snippet">${currentParts.join('')}</div>`);
-        currentParts = null;
-        pendingEqualText = '';
+    const previousLineEnd = findPreviousBoundaryEnd(text, safeStart, /\r?\n/g);
+    const nextLineStart = findNextBoundaryStart(text, safeEnd, /\r?\n/g);
+    return {
+        start: previousLineEnd >= 0 ? previousLineEnd : 0,
+        end: nextLineStart >= 0 ? nextLineStart : text.length,
     };
+}
 
-    for (let index = 0; index < operations.length; index++) {
-        const operation = operations[index];
-        if (!operation?.text) continue;
+function clampWindowToLimit(window, textLength) {
+    const start = Math.max(0, Math.min(textLength, Number(window?.start) || 0));
+    const end = Math.max(start, Math.min(textLength, Number(window?.end) || start));
+    const anchorStart = Math.max(start, Math.min(end, Number(window?.anchorStart) || start));
+    const anchorEnd = Math.max(anchorStart, Math.min(end, Number(window?.anchorEnd) || anchorStart));
 
-        if (operation.type === 'equal') {
-            if (currentParts) pendingEqualText += operation.text;
+    if (end - start <= snippetWindowCharLimit) {
+        return { start, end, hasPrefixEllipsis: false, hasSuffixEllipsis: false };
+    }
+
+    const anchorLength = Math.max(1, anchorEnd - anchorStart);
+    if (anchorLength >= snippetWindowCharLimit) {
+        const nextEnd = Math.min(end, anchorStart + snippetWindowCharLimit);
+        return {
+            start: anchorStart,
+            end: nextEnd,
+            hasPrefixEllipsis: anchorStart > start,
+            hasSuffixEllipsis: nextEnd < end,
+        };
+    }
+
+    const beforeBudget = Math.floor((snippetWindowCharLimit - anchorLength) / 2);
+    let nextStart = Math.max(start, anchorStart - beforeBudget);
+    let nextEnd = nextStart + snippetWindowCharLimit;
+    if (nextEnd > end) {
+        nextEnd = end;
+        nextStart = Math.max(start, nextEnd - snippetWindowCharLimit);
+    }
+
+    return {
+        start: nextStart,
+        end: nextEnd,
+        hasPrefixEllipsis: nextStart > start,
+        hasSuffixEllipsis: nextEnd < end,
+    };
+}
+
+function annotateDiffOperations(operations = []) {
+    let oldOffset = 0;
+    let newOffset = 0;
+    return operations.map((operation) => {
+        const text = String(operation?.text || '');
+        const annotated = {
+            ...operation,
+            text,
+            oldStart: oldOffset,
+            oldEnd: oldOffset,
+            newStart: newOffset,
+            newEnd: newOffset,
+        };
+        if (operation?.type !== 'insert') oldOffset += text.length;
+        if (operation?.type !== 'delete') newOffset += text.length;
+        annotated.oldEnd = oldOffset;
+        annotated.newEnd = newOffset;
+        return annotated;
+    });
+}
+
+function getChangeWindows(annotatedOperations = [], originalText = '') {
+    const text = String(originalText);
+    const windows = [];
+    for (const operation of annotatedOperations) {
+        if (!operation || operation.type === 'equal' || !operation.text) continue;
+        const anchorStart = operation.type === 'insert' ? operation.oldStart : operation.oldStart;
+        const anchorEnd = operation.type === 'insert' ? operation.oldStart : operation.oldEnd;
+        const logicalWindow = getLogicalWindowForChange(text, anchorStart, anchorEnd);
+        windows.push({
+            ...logicalWindow,
+            anchorStart,
+            anchorEnd,
+        });
+    }
+
+    windows.sort((a, b) => a.start - b.start || a.anchorStart - b.anchorStart);
+    const merged = [];
+    for (const window of windows) {
+        const previous = merged[merged.length - 1];
+        if (!previous) {
+            merged.push({ ...window });
             continue;
         }
 
-        if (!currentParts) {
-            currentParts = [];
-            const previous = operations[index - 1];
-            if (previous?.type === 'equal') {
-                currentParts.push(escapeHtml(takeTrailingContext(previous.text)));
-            }
-        } else if (pendingEqualText) {
-            const hasParagraphBoundary = /\n{2,}/.test(pendingEqualText);
-            if (!hasParagraphBoundary && getCharLength(pendingEqualText) <= snippetJoinEqualChars) {
-                currentParts.push(escapeHtml(pendingEqualText));
-            } else {
-                currentParts.push(escapeHtml(takeContextAfterChange(pendingEqualText)));
-                wrapSnippet();
-                if (snippets.length >= maxDiffSnippetCount) return snippets;
-                currentParts = [escapeHtml(takeTrailingContext(pendingEqualText))];
-            }
-            pendingEqualText = '';
-        }
+        const gap = Math.max(0, window.start - previous.end);
+        const gapText = gap > 0 ? text.slice(previous.end, window.start) : '';
+        const mergedAnchorSpan = Math.max(previous.anchorEnd, window.anchorEnd) - Math.min(previous.anchorStart, window.anchorStart);
+        const shouldMerge = (window.start <= previous.end && mergedAnchorSpan <= snippetWindowCharLimit)
+            || (gap <= snippetJoinEqualChars && !hasLineBoundary(gapText) && !hasParagraphBoundary(gapText) && mergedAnchorSpan <= snippetWindowCharLimit);
 
-        currentParts.push(renderDiffOperation(operation));
-        if (operationTouchesParagraphBoundary(operation)) {
-            wrapSnippet();
-            if (snippets.length >= maxDiffSnippetCount) return snippets;
+        if (shouldMerge) {
+            previous.start = Math.min(previous.start, window.start);
+            previous.end = Math.max(previous.end, window.end);
+            previous.anchorStart = Math.min(previous.anchorStart, window.anchorStart);
+            previous.anchorEnd = Math.max(previous.anchorEnd, window.anchorEnd);
+        } else {
+            merged.push({ ...window });
         }
     }
 
-    if (currentParts) {
-        if (pendingEqualText) currentParts.push(escapeHtml(takeContextAfterChange(pendingEqualText)));
-        wrapSnippet();
+    return merged
+        .slice(0, maxDiffSnippetCount)
+        .map(window => clampWindowToLimit(window, text.length));
+}
+
+function renderOperationSlice(operation, start, end) {
+    if (!operation || !operation.text || end <= start) return '';
+    const slicedText = operation.text.slice(start - operation.oldStart, end - operation.oldStart);
+    if (!slicedText) return '';
+    return renderDiffOperation({ ...operation, text: slicedText });
+}
+
+function renderDiffWindow(annotatedOperations = [], window) {
+    if (!window || window.end < window.start) return '';
+    const parts = [];
+    if (window.hasPrefixEllipsis) parts.push('...');
+
+    for (const operation of annotatedOperations) {
+        if (!operation?.text) continue;
+
+        if (operation.type === 'insert') {
+            if (operation.oldStart >= window.start && operation.oldStart <= window.end) {
+                parts.push(renderDiffOperation(operation));
+            }
+            continue;
+        }
+
+        const overlapStart = Math.max(window.start, operation.oldStart);
+        const overlapEnd = Math.min(window.end, operation.oldEnd);
+        if (overlapEnd > overlapStart) {
+            parts.push(renderOperationSlice(operation, overlapStart, overlapEnd));
+        }
     }
 
-    return snippets;
+    if (window.hasSuffixEllipsis) parts.push('...');
+    const html = parts.join('');
+    if (!html.trim() || !/<(?:del|ins)>/.test(html)) return '';
+    return `<div class="bl-diff-snippet">${html}</div>`;
+}
+
+function buildDiffSnippetsFromOperations(operations = [], originalText = '') {
+    const annotatedOperations = annotateDiffOperations(operations);
+    return getChangeWindows(annotatedOperations, originalText)
+        .map(window => renderDiffWindow(annotatedOperations, window))
+        .filter(Boolean)
+        .slice(0, maxDiffSnippetCount);
+}
+
+function extractDiffDisplayText(rawText = '') {
+    const source = String(rawText ?? '');
+    const contentMatch = source.match(/<content>([\s\S]*?)<\/content>/i);
+    return contentMatch ? contentMatch[1].trim() : source;
+}
+
+function hasRenderedFullDiff(value = '') {
+    return typeof value === 'string' && value.includes('bl-diff-full-modified');
+}
+
+function hasRenderedSnippetDiff(snippets = []) {
+    return Array.isArray(snippets) && snippets.some(snippet => /<(?:del|ins)>/.test(snippet));
+}
+
+function hasCompleteRenderedDiff(cache = {}) {
+    return hasRenderedSnippetDiff(cache?.snippets) && hasRenderedFullDiff(cache?.fullDiff);
+}
+
+function buildDiffResultFromPair(rawText, cleanedText) {
+    if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
+    const normalizedCleanedText = typeof cleanedText === 'string' ? cleanedText : applyScopedReplacements(rawText);
+    const displayText = extractDiffDisplayText(rawText);
+    const cleanedDisplayText = extractDiffDisplayText(normalizedCleanedText);
+    const displayOperations = getTextDiffOperations(displayText, cleanedDisplayText);
+    const snippets = buildDiffSnippetsFromOperations(displayOperations, displayText);
+    const fullDiff = buildFullDiffHtml(displayText, cleanedDisplayText);
+
+    return {
+        cleanedText: normalizedCleanedText,
+        snippets,
+        fullDiff,
+    };
+}
+
+function buildDiffResultFromSource(rawText) {
+    if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
+    return buildDiffResultFromPair(rawText, applyScopedReplacements(rawText));
+}
+
+function sourceHasCurrentDiff(sourceText = '') {
+    if (typeof sourceText !== 'string') return false;
+    const displayText = extractDiffDisplayText(sourceText);
+    return applyScopedReplacements(displayText) !== displayText;
 }
 
 function buildNormalFullDiffBlocks(value = '') {
@@ -737,22 +898,7 @@ function buildFullDiffHtml(originalText, cleanedText) {
  * @returns {{cleanedText: string, snippets: string[], fullDiff: string}} 净化文本、片段差异和全文差异。
  */
 export function buildDiffSnippetsFromText(rawText) {
-    if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
-    const cleanedText = applyScopedReplacements(rawText);
-    const snippets = buildDiffSnippetsFromOperations(getTextDiffOperations(rawText, cleanedText));
-
-    let targetText = rawText;
-    const contentMatch = rawText.match(/<content>([\s\S]*?)<\/content>/i);
-    if (contentMatch) targetText = contentMatch[1].trim();
-
-    const cleanedTargetText = applyScopedReplacements(targetText);
-    const fullDiff = buildFullDiffHtml(targetText, cleanedTargetText);
-
-    return {
-        cleanedText,
-        snippets,
-        fullDiff,
-    };
+    return buildDiffResultFromSource(rawText);
 }
 
 function resolveDiffCacheSource(msg) {
@@ -766,6 +912,29 @@ function resolveDiffCacheSource(msg) {
     return currentMes;
 }
 
+function resolveDiffCachePair(msg) {
+    const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
+    const originalMes = typeof msg?.__bl_original_mes === 'string' ? msg.__bl_original_mes : '';
+    const lastCleanedMes = typeof msg?.__bl_diff_last_cleaned_mes === 'string'
+        ? msg.__bl_diff_last_cleaned_mes
+        : '';
+
+    if (originalMes && lastCleanedMes && originalMes !== lastCleanedMes) {
+        return {
+            sourceMes: originalMes,
+            cleanedMes: lastCleanedMes,
+            hasStoredPair: true,
+        };
+    }
+
+    const sourceMes = resolveDiffCacheSource(msg);
+    return {
+        sourceMes,
+        cleanedMes: currentMes && currentMes !== sourceMes ? currentMes : applyScopedReplacements(sourceMes),
+        hasStoredPair: false,
+    };
+}
+
 export function refreshDiffCacheIfStale(index) {
     const { chat } = getAppContext();
     if (!Number.isInteger(index) || index < 0 || !Array.isArray(chat)) return false;
@@ -776,12 +945,18 @@ export function refreshDiffCacheIfStale(index) {
     const signature = computeMessageSignature(msg);
     const state = runtimeState.diffMessageStates.get(index);
     const cache = sanitizeCacheEntry(runtimeState.diffSnippetsCache.get(index));
-    if (state?.status === 'ready' && state.signature === signature && cache?.signature === signature) {
+    const { sourceMes, cleanedMes, hasStoredPair } = resolveDiffCachePair(msg);
+    const shouldHaveCurrentDiff = hasStoredPair
+        ? extractDiffDisplayText(sourceMes) !== extractDiffDisplayText(cleanedMes)
+        : sourceHasCurrentDiff(sourceMes);
+    if (state?.status === 'ready'
+        && state.signature === signature
+        && cache?.signature === signature
+        && (!shouldHaveCurrentDiff || hasCompleteRenderedDiff(cache))) {
         return false;
     }
 
-    const sourceMes = resolveDiffCacheSource(msg);
-    const diffResult = buildDiffSnippetsFromText(sourceMes);
+    const diffResult = buildDiffResultFromPair(sourceMes, cleanedMes);
     writeReadyDiffCache(index, signature, {
         snippets: Array.from(new Set(diffResult.snippets || [])),
         fullDiff: diffResult.fullDiff || '',
