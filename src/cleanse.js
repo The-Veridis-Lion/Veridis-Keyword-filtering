@@ -1,6 +1,6 @@
 import { defaultSettings, extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { applyReplacements, buildProcessors } from './core.js';
+import { applyScopedReplacements, buildProcessors } from './core.js';
 import { showDeepCleanOverlay, updateDeepCleanOverlay } from './ui.js';
 
 /**
@@ -51,7 +51,7 @@ export function deepCleanObjectSync(rootObj) {
             if (key === '__bl_original_mes') continue;
             const val = current[key];
             if (typeof val === 'string') {
-                const cleaned = applyReplacements(val);
+                const cleaned = applyScopedReplacements(val);
                 if (cleaned !== val) {
                     current[key] = cleaned;
                     changes++;
@@ -108,7 +108,7 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
                     if (shouldSkipDbExtensionFieldByMeta(nextDepth, nextRootNamespace, key, isGlobalSettings)) continue;
                     const val = current[key];
                     if (typeof val === 'string') {
-                        const cleaned = applyReplacements(val);
+                        const cleaned = applyScopedReplacements(val);
                         if (val !== cleaned) {
                             current[key] = cleaned;
                             changes++;
@@ -164,7 +164,9 @@ export async function performDeepCleanse() {
         if (typeof extension_settings === 'object' && extension_settings !== null) phases.push({ label: '插件设置', root: extension_settings, isGlobalSettings: true });
         if (typeof window.characters !== 'undefined' && Array.isArray(window.characters)) phases.push({ label: '角色卡', root: window.characters, isGlobalSettings: false });
         if (typeof window.world_info !== 'undefined' && window.world_info !== null) phases.push({ label: '世界书', root: window.world_info, isGlobalSettings: false });
-        if (typeof window.power_user !== 'undefined' && window.power_user !== null && window.power_user.personas) phases.push({ label: '人设', root: window.power_user.personas, isGlobalSettings: false });
+        if (extension_settings?.[extensionName]?.protectPersonaDescription !== true && typeof window.power_user !== 'undefined' && window.power_user !== null && window.power_user.personas) {
+            phases.push({ label: '人设', root: window.power_user.personas, isGlobalSettings: false });
+        }
 
         for (let i = 0; i < phases.length; i++) {
             const phase = phases[i];

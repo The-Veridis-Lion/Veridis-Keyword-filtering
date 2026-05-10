@@ -2,6 +2,10 @@ import { extensionName, getAppContext, runtimeState } from './state.js';
 import { applyScopedReplacements, applyVisualMask, buildProcessors } from './core.js';
 import { isCotScopeSkippingEnabled } from './utils.js';
 
+function isPersonaDescriptionProtectionEnabled() {
+    return getAppContext().extension_settings?.[extensionName]?.protectPersonaDescription === true;
+}
+
 /**
  * 判断节点是否位于宿主应用的脚本编辑弹窗中。
  * 该弹窗可能同时存在多个实例，但内部结构一致，因此使用稳定的结构特征做匹配。
@@ -30,6 +34,45 @@ function isKnownPluginContainerNode(node) {
     return Boolean(node.closest('#tavern_helper, #regex_editor_template, #qr--settings, #completion_prompt_manager_popup, #xiaobai_template_editor, #task_editor')); //酒馆助手，正则弹窗，qr，预设，小白角色模板
 } 
 
+function isPersonaDescriptionNode(node) {
+    if (!node || !node.closest) return false;
+    if (!isPersonaDescriptionProtectionEnabled()) return false;
+    const personaSelector = '#persona_description, [name="persona_description"], [data-for="persona_description"]';
+    if (node.closest(personaSelector)) return true;
+    const editorDialog = node.closest('[role="dialog"], .popup, .vfm__content');
+    return Boolean(editorDialog?.querySelector?.(personaSelector));
+}
+
+export function syncPersonaDescriptionProtectionControl() {
+    const settings = getAppContext().extension_settings?.[extensionName];
+    if (!settings || typeof document === 'undefined') return;
+
+    const anchor = document.querySelector('[data-for="persona_description"]');
+    const textarea = document.querySelector('#persona_description, [name="persona_description"]');
+    const heading = anchor?.closest?.('h4') || textarea?.previousElementSibling;
+    if (!heading || heading.querySelector?.('.bl-persona-description-protect-toggle')) {
+        const existing = heading?.querySelector?.('.bl-persona-description-protect-toggle');
+        if (existing) {
+            const enabled = settings.protectPersonaDescription === true;
+            existing.classList.toggle('is-active', enabled);
+            existing.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+            existing.setAttribute('title', enabled ? '已保护用户设定描述，点击取消保护' : '点击保护用户设定描述');
+            existing.querySelector('.bl-persona-protect-text').textContent = enabled ? '已保护' : '保护';
+            existing.querySelector('i').className = enabled ? 'fa-solid fa-shield-halved' : 'fa-solid fa-shield';
+        }
+        return;
+    }
+
+    const enabled = settings.protectPersonaDescription === true;
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = `bl-persona-description-protect-toggle${enabled ? ' is-active' : ''}`;
+    button.setAttribute('aria-pressed', enabled ? 'true' : 'false');
+    button.setAttribute('title', enabled ? '已保护用户设定描述，点击取消保护' : '点击保护用户设定描述');
+    button.innerHTML = `<i class="${enabled ? 'fa-solid fa-shield-halved' : 'fa-solid fa-shield'}"></i><span class="bl-persona-protect-text">${enabled ? '已保护' : '保护'}</span>`;
+    heading.appendChild(button);
+}
+
 function shouldProtectSkipUserNode(node) {
     if (!node || !node.closest) return false;
     const skipUserMessages = getAppContext().extension_settings?.[extensionName]?.skipUserMessages === true;
@@ -52,6 +95,7 @@ function shouldProtectReasoningNode(node) {
 export function isProtectedNode(node) {
     if (!node || !node.closest) return false;
     if (node.closest('.name_text')) return true;
+    if (isPersonaDescriptionNode(node)) return true;
     if (shouldProtectReasoningNode(node)) return true;
     if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
     if (shouldProtectSkipUserNode(node)) return true;
