@@ -382,6 +382,7 @@
 .bl-subrule-modal-card {
     display: flex !important;
     flex-direction: column !important;
+    overflow: hidden !important;
 }
 .bl-subrule-modal-header {
     display: flex !important;
@@ -458,6 +459,18 @@
 #bl-modal-sub-target-error {
     margin-top: 0 !important;
     margin-bottom: 8px !important;
+}
+.bl-subrule-modal-body {
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow-y: auto !important;
+    overscroll-behavior: contain !important;
+    -webkit-overflow-scrolling: touch !important;
+    padding-right: 4px !important;
+    margin-right: -4px !important;
+}
+.bl-subrule-modal-body > .bl-subrule-field:last-child {
+    margin-bottom: 0 !important;
 }
 .bl-subrule-replacement-head {
     display: flex !important;
@@ -573,7 +586,10 @@
 }
 .bl-subrule-footer {
     margin-top: auto !important;
-    padding-top: 6px !important;
+    padding-top: 10px !important;
+    flex: 0 0 auto !important;
+    background: var(--bl-background-popup) !important;
+    border-top: 1px solid color-mix(in srgb, var(--bl-border-color) 70%, transparent) !important;
 }
 .bl-subrule-footer-save {
     width: 100% !important;
@@ -1279,6 +1295,13 @@
     }
     #bl-subrule-edit-modal > .bl-edit-modal-card {
         padding: 18px 16px !important;
+    }
+    #bl-subrule-edit-modal > .bl-subrule-modal-card {
+        max-height: calc(100dvh - 32px) !important;
+    }
+    .bl-subrule-modal-body {
+        padding-right: 2px !important;
+        margin-right: -2px !important;
     }
     .bl-edit-modal-title,
     .bl-edit-field,
