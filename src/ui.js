@@ -399,26 +399,28 @@ export function setupUI() {
                     <button id="bl-modal-sub-cancel" type="button" class="bl-icon-btn bl-subrule-close-btn" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
                 
-                <div class="bl-subrule-field" style="margin-bottom: 12px;">
-                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">备注说明 (可选)</label>
-                    <input type="text" id="bl-modal-sub-remark" class="bl-input" placeholder="例如：处理特定角色的口头禅" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;">
-                </div>
-                
-                <div class="bl-subrule-field" style="margin-bottom: 12px;">
-                    <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">查找内容</label>
-                    <div id="bl-modal-sub-target-error" class="bl-field-error" aria-live="polite"></div>
-                    <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
-                </div>
-                
-                <div class="bl-subrule-field" style="margin-bottom: 15px;">
-                    <div class="bl-subrule-replacement-head">
-                        <label class="bl-field-label" style="margin-bottom: 0; font-weight: 600;">替换为</label>
-                        <div id="bl-modal-sub-regex-actions" class="bl-regex-replacement-actions" hidden>
-                            <button id="bl-modal-sub-regex-recognize" type="button" class="bl-subrule-mini-btn">按行识别</button>
-                        </div>
+                <div class="bl-subrule-modal-body">
+                    <div class="bl-subrule-field" style="margin-bottom: 12px;">
+                        <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">备注说明 (可选)</label>
+                        <input type="text" id="bl-modal-sub-remark" class="bl-input" placeholder="例如：处理特定角色的口头禅" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;">
                     </div>
-                    <textarea id="bl-modal-sub-rep" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
-                    <div id="bl-modal-sub-regex-list" class="bl-regex-replacement-list" hidden></div>
+                    
+                    <div class="bl-subrule-field" style="margin-bottom: 12px;">
+                        <label class="bl-field-label" style="margin-bottom: 6px; font-weight: 600;">查找内容</label>
+                        <div id="bl-modal-sub-target-error" class="bl-field-error" aria-live="polite"></div>
+                        <textarea id="bl-modal-sub-target" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                    </div>
+                    
+                    <div class="bl-subrule-field" style="margin-bottom: 15px;">
+                        <div class="bl-subrule-replacement-head">
+                            <label class="bl-field-label" style="margin-bottom: 0; font-weight: 600;">替换为</label>
+                            <div id="bl-modal-sub-regex-actions" class="bl-regex-replacement-actions" hidden>
+                                <button id="bl-modal-sub-regex-recognize" type="button" class="bl-subrule-mini-btn">按行识别</button>
+                            </div>
+                        </div>
+                        <textarea id="bl-modal-sub-rep" class="bl-textarea" rows="4" style="background: var(--bl-bg-button) !important; border: none !important; border-radius: 8px !important; font-size: 14px !important; padding: 10px 14px !important;"></textarea>
+                        <div id="bl-modal-sub-regex-list" class="bl-regex-replacement-list" hidden></div>
+                    </div>
                 </div>
                 
                 <div class="bl-subrule-footer">
