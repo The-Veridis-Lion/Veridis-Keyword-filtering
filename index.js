@@ -1,7 +1,7 @@
 import * as extensionsModule from "../../../extensions.js";
 import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
 
-import { defaultSettings, extensionName, initAppContext, runtimeState, markRulesDataDirty } from './src/state.js';
+import { defaultSettings, extensionName, initAppContext, runtimeState, markRulesDataDirty, normalizeDiffTrackedMessageLimit } from './src/state.js';
 import { logger } from './src/log.js';
 import { bindEvents, initRealtimeInterceptor } from './src/events.js';
 import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPresetBindings } from './src/ui.js';
@@ -37,15 +37,40 @@ function ensureSettingsShape() {
     if (!settings.diffViewMode) settings.diffViewMode = 'snippet';
     if (settings.diffButtonInExtraMenu === undefined) settings.diffButtonInExtraMenu = false;
     if (settings.showBottomDiffButton === undefined) settings.showBottomDiffButton = true;
+    settings.diffTrackedMessageLimit = normalizeDiffTrackedMessageLimit(settings.diffTrackedMessageLimit);
     if (settings.logLevel === undefined) settings.logLevel = 2;
     if (settings.skipUserMessages === undefined) settings.skipUserMessages = false;
     if (settings.protectPersonaDescription === undefined) settings.protectPersonaDescription = false;
     cleanupInvalidPresetBindings();
+}
 
-    const timeoutSec = Number(settings.deepCleanTimeoutSec);
-    settings.deepCleanTimeoutSec = Number.isFinite(timeoutSec)
-        ? Math.min(Math.max(timeoutSec, 10), 1800)
-        : defaultSettings.deepCleanTimeoutSec;
+function normalizeRuleShape(rule, index = 0) {
+    if (!rule || typeof rule !== 'object') return;
+    if (!rule.name) rule.name = `合集 ${index + 1}`;
+    if (rule.enabled === undefined) rule.enabled = true;
+
+    if (rule.targets) {
+        rule.subRules = [{
+            targets: rule.targets,
+            replacements: rule.replacements || [],
+            mode: 'text',
+            enabled: true,
+        }];
+        delete rule.targets;
+        delete rule.replacements;
+    }
+
+    if (!Array.isArray(rule.subRules)) rule.subRules = [];
+    rule.subRules.forEach((sub) => {
+        if (!sub || typeof sub !== 'object') return;
+        if (!sub.mode) sub.mode = 'text';
+        if (sub.enabled === undefined) sub.enabled = true;
+    });
+}
+
+function normalizeRulesListShape(rules) {
+    if (!Array.isArray(rules)) return;
+    rules.forEach((rule, index) => normalizeRuleShape(rule, index));
 }
 
 function migrateOldData() {
@@ -65,24 +90,10 @@ function migrateOldData() {
 
     if (settings) {
         ensureSettingsShape();
+        Object.values(settings.presets || {}).forEach((presetRules) => normalizeRulesListShape(presetRules));
 
         if (settings.rules && settings.rules.length > 0) {
-            settings.rules.forEach((r, i) => {
-                if (!r.name) r.name = `合集 ${i + 1}`;
-                if (r.enabled === undefined) r.enabled = true;
-
-                if (r.targets) {
-                    r.subRules = [{
-                        targets: r.targets,
-                        replacements: r.replacements || [],
-                        mode: 'text'
-                    }];
-                    delete r.targets;
-                    delete r.replacements;
-                }
-                if (!r.subRules) r.subRules = [];
-                r.subRules.forEach(sub => { if (!sub.mode) sub.mode = 'text'; });
-            });
+            normalizeRulesListShape(settings.rules);
 
             if (Object.keys(settings.presets).length === 0) {
                 settings.presets["默认存档"] = JSON.parse(JSON.stringify(settings.rules));

@@ -1,6 +1,9 @@
 export const extensionName = "ultimate_purifier";
 export const diffMetadataKey = `${extensionName}_diff_state_v3`;
-export const maxTrackedDiffMessages = 3;
+export const minTrackedDiffMessages = 1;
+export const defaultTrackedDiffMessages = 3;
+export const maxTrackedDiffMessages = 20;
+export const defaultDeepCleanTimeoutSec = 120;
 
 export const defaultSettings = {
     rules: [],
@@ -15,7 +18,7 @@ export const defaultSettings = {
     diffViewMode: "snippet",
     diffButtonInExtraMenu: false,
     showBottomDiffButton: true,
-    deepCleanTimeoutSec: 120,
+    diffTrackedMessageLimit: defaultTrackedDiffMessages,
     themeMode: "auto",
     logLevel: 2,  // 0=off, 1=error, 2=warn(default), 3=info, 4=debug
     skipUserMessages: false,
@@ -54,8 +57,10 @@ export const runtimeState = {
     trackedDiffMessageOrder: [],
     currentDiffIndex: undefined,
     diffModalRefresh: null,
+    diffRelatedRuleMode: false,
     batchSelectedRuleIds: [],
     currentTransferRuleIndexes: [],
+    importPresetDraft: null,
 };
 
 const appContext = {
@@ -75,6 +80,21 @@ export function initAppContext(context) {
 
 export function getAppContext() {
     return appContext;
+}
+
+function normalizeIntegerSetting(value, min, max, fallback) {
+    const parsed = Number(value);
+    if (!Number.isFinite(parsed)) return fallback;
+    return Math.min(Math.max(Math.round(parsed), min), max);
+}
+
+export function normalizeDiffTrackedMessageLimit(value) {
+    return normalizeIntegerSetting(value, minTrackedDiffMessages, maxTrackedDiffMessages, defaultTrackedDiffMessages);
+}
+
+export function getDiffTrackedMessageLimit() {
+    const settings = appContext.extension_settings?.[extensionName];
+    return normalizeDiffTrackedMessageLimit(settings?.diffTrackedMessageLimit);
 }
 
 export function markRegexDirty(dirty = true) {
