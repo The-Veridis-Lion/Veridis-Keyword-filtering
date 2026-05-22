@@ -151,7 +151,9 @@ let node;
         const original = node.nodeValue || '';
         if (original.trim() === '') continue;
 
-        const nextValue = runtimeState.isStreamingGeneration ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
+        const nextValue = runtimeState.isStreamingGeneration
+            ? applyVisualMask(original, { domSafeOnly: true })
+            : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
         if (original !== nextValue) node.nodeValue = nextValue;
     }
 }

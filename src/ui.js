@@ -67,7 +67,7 @@ function buildRuleSearchResults(keyword) {
                 tagText: getRulePreviewTagText(mode),
                 sourcePreview: getRuleSourcePreviewText(sub),
                 replacementPreview: formatReplacementPreview(sub.replacements || [], mode),
-                isEnabled: rule.enabled !== false,
+                isEnabled: rule.enabled !== false && sub.enabled !== false,
             });
         });
     });
@@ -300,6 +300,36 @@ export function setupUI() {
     `);
 
     $('body').append(`
+        <div id="bl-preset-import-choice-modal" class="bl-modal-shell">
+            <div class="bl-modal-card bl-import-choice-card">
+                <div class="bl-import-choice-header">
+                    <h3 class="bl-edit-modal-title"><i class="fas fa-file-import"></i> 导入预设</h3>
+                    <button id="bl-import-choice-close" type="button" class="bl-icon-btn" title="关闭"><i class="fas fa-times"></i></button>
+                </div>
+                <div class="bl-edit-field">
+                    <label class="bl-field-label" for="bl-import-preset-name">预设名称</label>
+                    <input type="text" id="bl-import-preset-name" class="bl-input" placeholder="导入预设名称">
+                </div>
+                <div id="bl-import-choice-summary" class="bl-import-choice-summary"></div>
+                <div class="bl-import-choice-actions">
+                    <button id="bl-import-only" type="button" class="bl-secondary-btn bl-import-choice-btn">
+                        <i class="fas fa-box-archive"></i>
+                        <span>只导入为新预设</span>
+                    </button>
+                    <button id="bl-import-switch" type="button" class="bl-primary-btn bl-import-choice-btn">
+                        <i class="fas fa-right-left"></i>
+                        <span>导入并切换使用</span>
+                    </button>
+                    <button id="bl-import-preview" type="button" class="bl-secondary-btn bl-import-choice-btn">
+                        <i class="fas fa-eye"></i>
+                        <span>仅临时预览</span>
+                    </button>
+                </div>
+            </div>
+        </div>
+    `);
+
+    $('body').append(`
         <div id="bl-rule-search-modal" class="bl-modal-shell">
             <div class="bl-modal-card bl-rule-search-card">
                 <div class="bl-rule-search-header">
@@ -352,6 +382,16 @@ export function setupUI() {
                 <div class="bl-diff-modal-header">
                     <h3 class="bl-diff-modal-title"><i class="fa-solid fa-eye"></i><span class="bl-diff-title-text">净化前文透视</span></h3>
                     <div class="bl-diff-header-actions">
+                        <div id="bl-diff-limit-control" class="bl-diff-limit-control">
+                            <button id="bl-diff-limit-edit" type="button" class="bl-icon-btn bl-diff-header-btn bl-diff-limit-display" title="设置透视楼层数量">
+                                <i class="fa-solid fa-layer-group"></i> <span id="bl-diff-limit-text">最近 3 层</span>
+                            </button>
+                            <div id="bl-diff-limit-editor" class="bl-diff-limit-editor" hidden>
+                                <input type="number" id="bl-diff-limit-input" class="bl-diff-limit-input" inputmode="numeric" min="1" max="20" step="1" aria-label="透视楼层数量">
+                                <button id="bl-diff-limit-confirm" type="button" class="bl-icon-btn bl-diff-limit-action" title="确认楼层数量"><i class="fas fa-check"></i></button>
+                                <button id="bl-diff-limit-cancel" type="button" class="bl-icon-btn bl-diff-limit-action" title="取消修改"><i class="fas fa-times"></i></button>
+                            </div>
+                        </div>
                         <button id="bl-diff-revert-toggle" type="button" class="bl-icon-btn bl-diff-header-btn" title="撤回净化并保护原文">
                             <i id="bl-diff-revert-icon" class="fas fa-rotate-left"></i> <span id="bl-diff-revert-text">撤回</span>
                         </button>
@@ -363,6 +403,10 @@ export function setupUI() {
                                 <i class="fa-solid fa-ellipsis"></i>
                             </button>
                             <div id="bl-diff-actions-menu" class="bl-diff-actions-menu" hidden>
+                                <button id="bl-diff-related-mode-toggle" type="button" class="bl-diff-actions-item" title="点击差异文本后推测相关规则">
+                                    <i id="bl-diff-related-mode-icon" class="fa-solid fa-crosshairs"></i>
+                                    <span id="bl-diff-related-mode-text">相关规则：关闭</span>
+                                </button>
                                 <button id="bl-diff-menu-pos-toggle" type="button" class="bl-diff-actions-item" title="将顶部按钮收纳进菜单">
                                     <i id="bl-diff-menu-pos-icon" class="fa-solid fa-ellipsis"></i>
                                     <span id="bl-diff-menu-pos-text">顶部按钮：收纳</span>
@@ -377,6 +421,18 @@ export function setupUI() {
                     </div>
                 </div>
                 <div id="bl-diff-modal-content" class="bl-diff-modal-content"></div>
+            </div>
+        </div>
+    `);
+
+    $('body').append(`
+        <div id="bl-diff-related-modal" class="bl-modal-shell">
+            <div class="bl-modal-card bl-diff-related-card">
+                <div class="bl-diff-related-modal-header">
+                    <h3 class="bl-edit-modal-title bl-diff-related-title"><i class="fa-solid fa-crosshairs"></i> 可能相关规则</h3>
+                    <button id="bl-diff-related-close" type="button" class="bl-icon-btn" title="关闭"><i class="fas fa-times"></i></button>
+                </div>
+                <div id="bl-diff-related-body" class="bl-diff-related-body"></div>
             </div>
         </div>
     `);
@@ -941,8 +997,9 @@ export function renderTags() {
             const tagText = getRulePreviewTagText(mode);
             const tPreview = getRuleSourcePreviewText(sub);
             const rPreview = formatReplacementPreview(sub.replacements || [], mode);
+            const subEnabled = sub.enabled !== false;
             return `
-                <div class="bl-rule-item">
+                <div class="bl-rule-item ${subEnabled ? '' : 'bl-is-disabled'}">
                     <span class="bl-tag">${tagText}</span>
                     <span class="bl-source">${tPreview}</span>
                     <i class="fas fa-arrow-right bl-arrow"></i>
@@ -1004,6 +1061,8 @@ export function renderSubrulesToModal() {
     const html = runtimeState.currentEditingSubrules.map((sub, i) => {
         const mode = sub.mode || 'text';
         const remark = sub.remark ? sub.remark.trim() : '';
+        const subEnabled = sub.enabled !== false;
+        const checkedAttr = subEnabled ? 'checked' : '';
         const moveUpDisabled = i === 0 ? 'disabled' : '';
         const moveDownDisabled = i === runtimeState.currentEditingSubrules.length - 1 ? 'disabled' : '';
 
@@ -1026,9 +1085,13 @@ export function renderSubrulesToModal() {
         }
 
         return `
-            <div style="flex-shrink: 0 !important; background: var(--bl-background-secondary); border: 1px solid var(--bl-border-color); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; box-shadow: 0 4px 10px rgba(0,0,0,0.04);">
+            <div class="bl-subrule-card ${subEnabled ? '' : 'bl-is-disabled'}" style="flex-shrink: 0 !important; background: var(--bl-background-secondary); border: 1px solid var(--bl-border-color); border-radius: 10px; padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; box-shadow: 0 4px 10px rgba(0,0,0,0.04);">
                 <div style="display: flex; justify-content: space-between; align-items: center; padding-bottom: 10px; margin-bottom: 10px; border-bottom: 1px dotted color-mix(in srgb, var(--bl-text-primary) 35%, rgba(128,128,128,0.5));">
-                    <div style="display: flex; align-items: center; margin: 0; padding: 0;">
+                    <div style="display: flex; align-items: center; gap: 8px; margin: 0; padding: 0; min-width: 0;">
+                        <label class="bl-checkbox-label bl-subrule-enable-label" title="${subEnabled ? '停用此条规则' : '启用此条规则'}">
+                            <input type="checkbox" class="bl-subrule-toggle" data-index="${i}" ${checkedAttr}>
+                            <span class="bl-custom-checkbox"></span>
+                        </label>
                         ${badgeHTML}
                     </div>
                     <div class="bl-subrule-btn-group" style="display: flex; justify-content: space-between; align-items: center; flex: 0 0 35%; margin: 0; padding: 0;">
@@ -1166,13 +1229,16 @@ export function openEditModal(index = -1, options = {}) {
     if (index === -1) {
         $('#bl-edit-modal-title').html('<i class="fas fa-folder-plus"></i> 新增规则合集');
         $('#bl-edit-name').val('');
-        runtimeState.currentEditingSubrules = [{ targets: [], replacements: [], mode: 'simple', isEditing: false }];
+        runtimeState.currentEditingSubrules = [{ targets: [], replacements: [], mode: 'simple', enabled: true, isEditing: false }];
     } else {
         const rule = settings.rules[index];
         $('#bl-edit-modal-title').html('<i class="fas fa-pen"></i> 编辑规则合集');
         $('#bl-edit-name').val(rule.name || '');
         runtimeState.currentEditingSubrules = JSON.parse(JSON.stringify(rule.subRules || []));
-        runtimeState.currentEditingSubrules.forEach(sub => sub.isEditing = false);
+        runtimeState.currentEditingSubrules.forEach(sub => {
+            if (sub.enabled === undefined) sub.enabled = true;
+            sub.isEditing = false;
+        });
     }
 
     renderSubrulesToModal();

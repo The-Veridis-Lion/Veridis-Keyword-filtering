@@ -4,11 +4,16 @@ import { buildSimpleWildcardPattern, compileRegexTarget, mergeScopeTagsWithBuilt
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
+import { clearMessageDiffMeta, getMessageDiffBranchKey, getMessageDiffMeta, isMessageFinalizedForCurrentBranch, setCurrentSwipeText, writeMessageDiffMeta } from './messageMeta.js';
 
 /**
  * 按当前规则构建净化处理器。
  * @returns {Array} 处理器数组。
  */
+function isRegexDomSafe(pattern = '') {
+    return !/\(\?<?[=!]/.test(String(pattern || ''));
+}
+
 export function buildProcessors() {
     if (!runtimeState.isRegexDirty) return runtimeState.activeProcessors;
     const { extension_settings } = getAppContext();
@@ -23,6 +28,7 @@ export function buildProcessors() {
         const subRulesToProcess = Array.isArray(rule.subRules) ? rule.subRules : [];
 
         for (const sub of subRulesToProcess) {
+            if (!sub || typeof sub !== 'object' || sub.enabled === false) continue;
             const mode = sub.mode || 'text';
             const targets = Array.isArray(sub.targets) ? sub.targets : [];
             const replacements = Array.isArray(sub.replacements) ? sub.replacements : [];
@@ -42,7 +48,12 @@ export function buildProcessors() {
                             logger.warn(`忽略非法正则表达式: ${t} (${compiled.error.message})`);
                             continue;
                         }
-                        processors.push({ regex: compiled.value.regex, replacements, kind: 'regex' });
+                        processors.push({
+                            regex: compiled.value.regex,
+                            replacements,
+                            kind: 'regex',
+                            domSafe: isRegexDomSafe(compiled.value.pattern),
+                        });
                     }
                 }
             } else if (mode === 'simple') {
@@ -62,7 +73,7 @@ export function buildProcessors() {
                                 return;
                             }
 
-                            processors.push({ regex: testRegex, replacements, kind: 'simple' });
+                            processors.push({ regex: testRegex, replacements, kind: 'simple', domSafe: true });
                         } catch (e) {
                             logger.warn(`简易规则解析失败: ${t}`);
                         }
@@ -77,7 +88,7 @@ export function buildProcessors() {
         const sorted = uniqueTargets.sort((a, b) => b.length - a.length);
         const escaped = sorted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
         const textRegex = new RegExp(`(${escaped.join('|')})`, 'gmu');
-        processors.unshift({ regex: textRegex, replacerMap: wordToReplacements, kind: 'text' });
+        processors.unshift({ regex: textRegex, replacerMap: wordToReplacements, kind: 'text', domSafe: true });
     }
 
     runtimeState.activeProcessors = processors;
@@ -172,6 +183,7 @@ export function applyReplacements(originalText, options = {}) {
     const processors = buildProcessors();
 
     processors.forEach((proc, procIndex) => {
+        if (options.domSafeOnly === true && proc.domSafe === false) return;
         text = text.replace(proc.regex, (match, ...args) => {
             if (proc.kind === 'regex') {
                 const reps = proc.replacements;
@@ -286,15 +298,30 @@ export function applyScopedReplacements(originalText, options = {}) {
  * @param {string} originalText 原始文本。
  * @returns {string} 视觉掩码后的文本。
  */
-export function applyVisualMask(originalText) {
+export function applyVisualMask(originalText, options = {}) {
     if (typeof originalText !== 'string' || !originalText) return originalText;
-    return applyScopedReplacements(originalText, { deterministic: true });
+    return applyScopedReplacements(originalText, { deterministic: true, ...options });
 }
 
 /**
  * 排队执行增量聊天保存。
  * @returns {void}
  */
+let chatSaveFailureNotified = false;
+
+function notifyChatSaveFailure(error) {
+    if (chatSaveFailureNotified) return;
+    chatSaveFailureNotified = true;
+    logger.error(`增量存盘失败`, error);
+    try {
+        setTimeout(() => {
+            alert('屏蔽词净化助手：聊天保存失败。请先不要继续大量编辑，建议检查 SillyTavern 控制台与聊天文件权限后再重试。');
+        }, 0);
+    } catch (notifyError) {
+        logger.warn('聊天保存失败提示弹出失败', notifyError);
+    }
+}
+
 export function queueIncrementalChatSave() {
     const { saveChat } = getAppContext();
     runtimeState.pendingChatSave = true;
@@ -315,8 +342,9 @@ export function queueIncrementalChatSave() {
                 const result = saveChat();
                 if (result instanceof Promise) await result;
             }
+            chatSaveFailureNotified = false;
         } catch (e) {
-            logger.error(`增量存盘失败`, e);
+            notifyChatSaveFailure(e);
         } finally {
             runtimeState.chatSaveInFlight = false;
             if (runtimeState.pendingChatSave) queueIncrementalChatSave();
@@ -501,11 +529,9 @@ function resolveMessageDiffSource(msg, explicitSource) {
     const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
     if (typeof explicitSource === 'string') return explicitSource;
 
-    const lastCleanedMes = typeof msg?.__bl_diff_last_cleaned_mes === 'string'
-        ? msg.__bl_diff_last_cleaned_mes
-        : '';
-    if (lastCleanedMes && currentMes === lastCleanedMes && typeof msg?.__bl_original_mes === 'string') {
-        return msg.__bl_original_mes;
+    const diffMeta = getMessageDiffMeta(msg);
+    if (diffMeta?.lastCleanedMes && currentMes === diffMeta.lastCleanedMes) {
+        return diffMeta.originalMes;
     }
 
     return currentMes;
@@ -515,17 +541,23 @@ function computeDiffSourceSignature(msg, sourceMes) {
     return computeMessageSignature({
         ...msg,
         mes: sourceMes,
+        __bl_original_mes: '',
         __bl_diff_source_signature: '',
         __bl_diff_last_cleaned_mes: '',
+        __bl_diff_branch_meta: null,
+        __bl_diff_swipe_key: '',
     });
 }
 
 function syncMessageDiffMetadata(msg, sourceMes, cleanedMes) {
     const signature = computeDiffSourceSignature(msg, sourceMes);
-    msg.__bl_original_mes = sourceMes;
-    msg.__bl_diff_source_signature = signature;
-    msg.__bl_diff_last_cleaned_mes = typeof cleanedMes === 'string' ? cleanedMes : '';
-    return signature;
+    const normalizedCleanedMes = typeof cleanedMes === 'string' ? cleanedMes : '';
+    const branchKey = getMessageDiffBranchKey(msg);
+    const hasDiff = sourceMes !== normalizedCleanedMes;
+    const metadataChanged = hasDiff
+        ? writeMessageDiffMeta(msg, branchKey, sourceMes, normalizedCleanedMes, signature)
+        : clearMessageDiffMeta(msg, branchKey);
+    return { signature, metadataChanged, hasDiff };
 }
 
 /**
@@ -556,13 +588,15 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
         snippets: Array.from(new Set(diffResult.snippets || [])),
         fullDiff: diffResult.fullDiff || '',
     };
+    const hasMainDiff = mainCache.snippets.length > 0 || mainCache.fullDiff.includes('bl-diff-full-modified');
 
     if (typeof msg.mes === 'string' && diffResult.cleanedText !== currentMes) {
         msg.mes = diffResult.cleanedText;
         changed = true;
+        if (setCurrentSwipeText(msg, diffResult.cleanedText)) changed = true;
     }
 
-    if (Array.isArray(msg.swipes)) {
+    if (options.cleanAllSwipes === true && Array.isArray(msg.swipes)) {
         for (let i = 0; i < msg.swipes.length; i++) {
             if (typeof msg.swipes[i] === 'string') {
                 const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i]);
@@ -580,13 +614,15 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
         }
     }
 
-    const sourceSignature = syncMessageDiffMetadata(msg, sourceMes, typeof msg.mes === 'string' ? msg.mes : '');
+    const { signature: sourceSignature, metadataChanged } = syncMessageDiffMetadata(msg, sourceMes, typeof msg.mes === 'string' ? msg.mes : '');
+    if (metadataChanged) changed = true;
     writeReadyDiffCache(index, sourceSignature, {
         snippets: mainCache.snippets,
         fullDiff: mainCache.fullDiff,
         signature: sourceSignature,
     }, {
         preserveExistingRealDiff: options.preserveExistingRealDiff === true,
+        persist: hasMainDiff || changed,
     });
     runtimeState.diffRawSourceCache.delete(index);
 
@@ -619,9 +655,7 @@ export function performNonStreamingFinalCleanse(payload) {
     const currentSignature = computeMessageSignature(msg);
     const alreadyFinalizedSameSource = previousState?.status === 'ready'
         && previousState.signature === currentSignature
-        && typeof msg?.mes === 'string'
-        && typeof msg?.__bl_diff_last_cleaned_mes === 'string'
-        && msg.mes === msg.__bl_diff_last_cleaned_mes;
+        && isMessageFinalizedForCurrentBranch(msg);
 
     if (alreadyFinalizedSameSource && hasRealDiffCache(index)) {
         const messageNode = getMessageDomNode(index);
@@ -688,9 +722,7 @@ export function performIncrementalCleanse(payload, options = {}) {
             const previousState = runtimeState.diffMessageStates.get(index);
             const alreadyFinalizedSameSource = previousState?.status === 'ready'
                 && previousState.signature === signature
-                && typeof msg?.mes === 'string'
-                && typeof msg?.__bl_diff_last_cleaned_mes === 'string'
-                && msg.mes === msg.__bl_diff_last_cleaned_mes;
+                && isMessageFinalizedForCurrentBranch(msg);
 
             if (alreadyFinalizedSameSource && hasRealDiffCache(index)) {
                 const messageNode = getMessageDomNode(index);
@@ -723,7 +755,7 @@ export function performIncrementalCleanse(payload, options = {}) {
  */
 export function performGlobalCleanse() {
     logger.info(`[performGlobalCleanse] 全局净化开始`);
-    const { chat, saveChat } = getAppContext();
+    const { chat } = getAppContext();
     buildProcessors();
     if (runtimeState.activeProcessors.length === 0) {
         injectDiffButtons();
@@ -731,7 +763,7 @@ export function performGlobalCleanse() {
     }
 
     let chatChanged = false;
-    const latestDiffIndices = new Set(getLatestTrackableDiffIndices(3));
+    const latestDiffIndices = new Set(getLatestTrackableDiffIndices());
 
     if (chat && Array.isArray(chat)) {
         const { extension_settings } = getAppContext();
@@ -754,31 +786,20 @@ export function performGlobalCleanse() {
                 if (msg.mes !== cleanedText) {
                     msg.mes = cleanedText;
                     msgChanged = true;
+                    if (assistant && setCurrentSwipeText(msg, cleanedText)) msgChanged = true;
                 }
-                if (assistant) signature = syncMessageDiffMetadata(msg, sourceMes, msg.mes);
-            }
-
-            if (!isReverted && msg?.swipes && Array.isArray(msg.swipes)) {
-                for (let i = 0; i < msg.swipes.length; i++) {
-                    if (typeof msg.swipes[i] === 'string') {
-                        const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i]);
-                        if (msg.swipes[i] !== cleanedText) {
-                            msg.swipes[i] = cleanedText;
-                            msgChanged = true;
-                        }
-                    } else if (typeof msg.swipes[i] === 'object' && msg.swipes[i] !== null && typeof msg.swipes[i].mes === 'string') {
-                        const { cleanedText } = buildDiffSnippetsFromText(msg.swipes[i].mes);
-                        if (msg.swipes[i].mes !== cleanedText) {
-                            msg.swipes[i].mes = cleanedText;
-                            msgChanged = true;
-                        }
-                    }
+                if (assistant) {
+                    const syncResult = syncMessageDiffMetadata(msg, sourceMes, msg.mes);
+                    signature = syncResult.signature;
+                    if (syncResult.metadataChanged) msgChanged = true;
                 }
             }
 
             if (assistant && latestDiffIndices.has(index) && !isReverted) {
+                const hasMainDiff = mainCache.snippets.length > 0 || mainCache.fullDiff.includes('bl-diff-full-modified');
                 writeReadyDiffCache(index, signature, mainCache, {
                     preserveExistingRealDiff: true,
+                    persist: hasMainDiff || msgChanged,
                 });
             } else {
                 clearTrackedDiffEntry(index, { persist: false });

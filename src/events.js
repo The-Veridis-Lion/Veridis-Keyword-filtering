@@ -1,4 +1,4 @@
-import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty } from './state.js';
+import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty, minTrackedDiffMessages, maxTrackedDiffMessages, normalizeDiffTrackedMessageLimit } from './state.js';
 import { logger } from './log.js';
 import { createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
 import {
@@ -45,7 +45,9 @@ import {
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
-import { clearTrackedDiffEntry, computeMessageSignature, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, persistTrackedDiffState, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata } from './diff.js';
+import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
+import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
+import { findRelatedRulesForDiffChange } from './relatedRules.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
@@ -244,7 +246,9 @@ export function initRealtimeInterceptor() {
                         if (node.parentNode && isRevertedMessageDomNode(node.parentNode)) continue;
                         if (node.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(node.parentNode)) continue;
                         const original = node.nodeValue;
-                        const nextValue = isStreaming ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
+                        const nextValue = isStreaming
+                            ? applyVisualMask(original, { domSafeOnly: true })
+                            : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                         if (original !== nextValue) node.nodeValue = nextValue;
                         } else if (node.nodeType === 1) {
                             purifyDOM(node);
@@ -261,7 +265,9 @@ export function initRealtimeInterceptor() {
                     if (m.target.parentNode && isRevertedMessageDomNode(m.target.parentNode)) continue;
                     if (m.target.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
-                    const nextValue = isStreaming ? applyVisualMask(original) : applyScopedReplacements(original, { deterministic: true });
+                    const nextValue = isStreaming
+                        ? applyVisualMask(original, { domSafeOnly: true })
+                        : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                     if (original !== nextValue) m.target.nodeValue = nextValue;
                 }
             }
@@ -319,6 +325,160 @@ export function bindEvents() {
         if (!active) return false;
         return hasPresetContentChanges(settings.rules || [], settings.presets[active] || []);
     }
+
+    function normalizeImportedRuleList(rules) {
+        return (Array.isArray(rules) ? rules : []).map((rule, idx) => {
+            const next = deepClone(rule || {});
+            if (!next.name) next.name = next.targets?.[0] || `未命名合集 ${idx + 1}`;
+            if (next.enabled === undefined) next.enabled = true;
+            if (next.targets) {
+                next.subRules = [{
+                    targets: next.targets,
+                    replacements: next.replacements || [],
+                    mode: 'text',
+                    enabled: true,
+                }];
+                delete next.targets;
+                delete next.replacements;
+            }
+            if (!Array.isArray(next.subRules)) next.subRules = [];
+            next.subRules = next.subRules.map((sub) => {
+                const normalizedSub = deepClone(sub || {});
+                if (!normalizedSub.mode) normalizedSub.mode = 'text';
+                if (normalizedSub.enabled === undefined) normalizedSub.enabled = true;
+                if (!Array.isArray(normalizedSub.targets)) normalizedSub.targets = [];
+                if (!Array.isArray(normalizedSub.replacements)) normalizedSub.replacements = [];
+                return normalizedSub;
+            });
+            return next;
+        });
+    }
+
+    function makeUniquePresetName(baseName) {
+        const settings = extension_settings[extensionName];
+        const base = String(baseName || '').trim() || '导入预设';
+        if (!settings.presets?.[base]) return base;
+        let counter = 2;
+        while (settings.presets?.[`${base} (${counter})`]) counter++;
+        return `${base} (${counter})`;
+    }
+
+    function getImportPresetName() {
+        return String($('#bl-import-preset-name').val() || '').trim();
+    }
+
+    function closeImportChoiceModal() {
+        runtimeState.importPresetDraft = null;
+        $('#bl-preset-import-choice-modal').hide();
+    }
+
+    function openImportChoiceModal(rules, defaultName) {
+        const normalizedRules = normalizeImportedRuleList(rules);
+        if (normalizedRules.length === 0) {
+            alert('导入失败：未发现有效规则。');
+            return;
+        }
+        const presetName = makeUniquePresetName(defaultName);
+        runtimeState.importPresetDraft = { rules: normalizedRules, defaultName: presetName };
+        $('#bl-import-preset-name').val(presetName);
+        $('#bl-import-choice-summary').text(`已读取 ${normalizedRules.length} 个规则分组。只导入不会修改当前规则；切换使用和临时预览会替换当前规则并重新净化。`);
+        $('#bl-preset-import-choice-modal').css('display', 'flex');
+        window.setTimeout(() => $('#bl-import-preset-name').trigger('focus').trigger('select'), 0);
+    }
+
+    function confirmBeforeImportChoiceIfUnsaved() {
+        const settings = extension_settings[extensionName];
+        const active = settings.activePreset;
+        if (!active || !checkUnsavedChanges()) return true;
+        return confirm(`当前预设 "${active}" 有未保存的改动。\n\n只导入为新预设不会修改当前规则；导入并切换或临时预览会在执行前再次确认保存。\n\n是否继续选择导入方式？`);
+    }
+
+    function validateImportPresetName() {
+        const settings = extension_settings[extensionName];
+        const name = getImportPresetName();
+        if (!name) {
+            alert('请填写预设名称。');
+            $('#bl-import-preset-name').trigger('focus');
+            return '';
+        }
+        if (settings.presets?.[name]) {
+            alert('存档名称已存在，请换一个名称。');
+            $('#bl-import-preset-name').trigger('focus').trigger('select');
+            return '';
+        }
+        return name;
+    }
+
+    function confirmUnsavedBeforeReplacingCurrentRules(actionLabel) {
+        const settings = extension_settings[extensionName];
+        const active = settings.activePreset;
+        if (!active || !checkUnsavedChanges()) return true;
+        const shouldSave = confirm(`当前预设 "${active}" 有未保存的改动。\n\n点击“确定”先保存并继续${actionLabel}。\n点击“取消”将取消本次导入操作。`);
+        if (!shouldSave) return false;
+        settings.presets[active] = deepClone(settings.rules || []);
+        saveSettingsDebounced();
+        markPresetsUiDirty(true);
+        return true;
+    }
+
+    function getImportDraftRules() {
+        const draft = runtimeState.importPresetDraft;
+        return Array.isArray(draft?.rules) ? deepClone(draft.rules) : null;
+    }
+
+    function importPresetOnly() {
+        const settings = extension_settings[extensionName];
+        const rules = getImportDraftRules();
+        if (!rules) return;
+        const name = validateImportPresetName();
+        if (!name) return;
+
+        settings.presets[name] = rules;
+        markPresetsUiDirty(true);
+        saveSettingsDebounced();
+        updateToolbarUI();
+        closeImportChoiceModal();
+        showToast(`已导入预设：${name}`);
+    }
+
+    function importPresetAndSwitch() {
+        const settings = extension_settings[extensionName];
+        const rules = getImportDraftRules();
+        if (!rules) return;
+        const name = validateImportPresetName();
+        if (!name) return;
+        if (!confirmUnsavedBeforeReplacingCurrentRules('并切换使用导入预设')) return;
+
+        settings.presets[name] = deepClone(rules);
+        settings.activePreset = name;
+        settings.rules = deepClone(rules);
+        markRulesDataDirty({ presetsUi: true });
+        saveSettingsDebounced();
+        updateToolbarUI();
+        renderTags();
+        performGlobalCleanse();
+        closeImportChoiceModal();
+        showToast(`已导入并切换：${name}`);
+    }
+
+    function importPresetAsTemporaryPreview() {
+        const settings = extension_settings[extensionName];
+        const rules = getImportDraftRules();
+        if (!rules) return;
+        if (!confirm('仅临时预览会立刻替换当前规则，但不会保存为预设。\n确定继续吗？')) return;
+        if (!confirmUnsavedBeforeReplacingCurrentRules('并进入临时预览')) return;
+
+        settings.rules = rules;
+        settings.activePreset = "";
+        markRulesDataDirty();
+        saveSettingsDebounced();
+        updateToolbarUI();
+        renderTags();
+        performGlobalCleanse();
+        closeImportChoiceModal();
+        showToast('已进入临时规则预览');
+    }
+
     const { extension_settings, saveSettingsDebounced, eventSource, event_types } = getAppContext();
     const formatRegexTargetError = (error) => `第 ${error.line} 行：${error.message}`;
     const clearRegexTargetValidationState = () => {
@@ -491,6 +651,7 @@ export function bindEvents() {
     const settings = extension_settings[extensionName];
     const isSearchGroupEditFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'group';
     const isSearchDirectSubruleFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'subrule';
+    const isRelatedDirectSubruleFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'related';
     const resetRuleSearchQueryState = () => {
         runtimeState.ruleSearchKeyword = '';
         runtimeState.ruleSearchDraftKeyword = '';
@@ -796,6 +957,172 @@ export function bindEvents() {
         $('#bl-diff-menu-toggle').attr('aria-expanded', 'true');
     };
 
+    const syncDiffLimitControlState = (editing = false) => {
+        const currentSettings = extension_settings[extensionName];
+        const normalized = normalizeDiffTrackedMessageLimit(currentSettings.diffTrackedMessageLimit);
+        currentSettings.diffTrackedMessageLimit = normalized;
+        $('#bl-diff-limit-text').text(`最近 ${normalized} 层`);
+        $('#bl-diff-limit-input')
+            .attr('min', minTrackedDiffMessages)
+            .attr('max', maxTrackedDiffMessages)
+            .val(normalized);
+        $('#bl-diff-limit-edit').prop('hidden', editing === true);
+        $('#bl-diff-limit-editor').prop('hidden', editing !== true);
+    };
+
+    const closeDiffLimitEditor = () => {
+        syncDiffLimitControlState(false);
+    };
+
+    const applyDiffLimitDraft = () => {
+        const currentSettings = extension_settings[extensionName];
+        const previous = normalizeDiffTrackedMessageLimit(currentSettings.diffTrackedMessageLimit);
+        const next = normalizeDiffTrackedMessageLimit($('#bl-diff-limit-input').val());
+        currentSettings.diffTrackedMessageLimit = next;
+        closeDiffLimitEditor();
+        if (next === previous) return;
+
+        saveSettingsDebounced();
+        syncTrackedIndicesToLatestAssistantMessages();
+        injectDiffButtons();
+        if (runtimeState.currentDiffIndex !== undefined) renderDiffModalContent(runtimeState.currentDiffIndex);
+        showToast(`透视楼层已设为最近 ${next} 层`);
+    };
+
+    const closeDiffRelatedModal = ({ clearSelection = true } = {}) => {
+        $('#bl-diff-related-body').empty();
+        $('#bl-diff-related-modal').hide();
+        if (clearSelection) $('#bl-diff-modal-content .bl-diff-change-selected').removeClass('bl-diff-change-selected');
+    };
+
+    const syncDiffRelatedModeState = () => {
+        const enabled = runtimeState.diffRelatedRuleMode === true;
+        $('#bl-diff-modal').toggleClass('bl-diff-related-mode', enabled);
+        $('#bl-diff-related-mode-icon').attr('class', enabled ? 'fa-solid fa-crosshairs bl-related-active-icon' : 'fa-solid fa-crosshairs');
+        $('#bl-diff-related-mode-text').text(enabled ? '相关规则：开启' : '相关规则：关闭');
+        $('#bl-diff-related-mode-toggle').attr('title', enabled ? '关闭相关规则模式' : '点击差异文本后推测相关规则');
+        if (!enabled) closeDiffRelatedModal();
+    };
+
+    const readDiffChangeNumber = (element, name) => {
+        const value = Number(element?.getAttribute?.(`data-bl-${name}`));
+        return Number.isFinite(value) ? value : null;
+    };
+
+    const getAdjacentDiffChangeElement = (element, direction) => {
+        let node = element?.[direction] || null;
+        while (node) {
+            if (node.nodeType === Node.TEXT_NODE && String(node.textContent || '').trim() === '') {
+                node = node[direction];
+                continue;
+            }
+            if (node.nodeType === Node.ELEMENT_NODE && node.matches?.('del.bl-diff-change, ins.bl-diff-change')) return node;
+            return null;
+        }
+        return null;
+    };
+
+    const getContextWindow = (text = '', start = 0, end = start, radius = 160) => {
+        const source = String(text || '');
+        const safeStart = Math.max(0, Math.min(source.length, Number(start) || 0));
+        const safeEnd = Math.max(safeStart, Math.min(source.length, Number(end) || safeStart));
+        return source.slice(Math.max(0, safeStart - radius), Math.min(source.length, safeEnd + radius));
+    };
+
+    const buildDiffChangeFromElement = (element) => {
+        const index = runtimeState.currentDiffIndex;
+        const pair = getDiffComparisonForMessage(index);
+        if (!pair || !element) return null;
+
+        const clickedType = element.getAttribute('data-bl-diff-type') || (element.tagName === 'DEL' ? 'delete' : 'insert');
+        const clickedText = String(element.textContent || '');
+        const previousChange = getAdjacentDiffChangeElement(element, 'previousSibling');
+        const nextChange = getAdjacentDiffChangeElement(element, 'nextSibling');
+        const pairedDelete = clickedType === 'delete' ? element : (previousChange?.tagName === 'DEL' ? previousChange : null);
+        const pairedInsert = clickedType === 'insert' ? element : (nextChange?.tagName === 'INS' ? nextChange : null);
+        const oldStart = readDiffChangeNumber(pairedDelete || element, 'old-start') ?? readDiffChangeNumber(element, 'old-start') ?? 0;
+        const oldEnd = readDiffChangeNumber(pairedDelete || element, 'old-end') ?? oldStart;
+        const newStart = readDiffChangeNumber(pairedInsert || element, 'new-start') ?? readDiffChangeNumber(element, 'new-start') ?? 0;
+        const newEnd = readDiffChangeNumber(pairedInsert || element, 'new-end') ?? newStart;
+        const deletedText = pairedDelete ? String(pairedDelete.textContent || '') : (clickedType === 'delete' ? clickedText : '');
+        const insertedText = pairedInsert ? String(pairedInsert.textContent || '') : (clickedType === 'insert' ? clickedText : '');
+
+        return {
+            clickedType,
+            clickedText,
+            deletedText,
+            insertedText,
+            beforeText: deletedText,
+            afterText: insertedText,
+            oldStart,
+            oldEnd,
+            newStart,
+            newEnd,
+            oldContext: getContextWindow(pair.sourceDisplayText || '', oldStart, oldEnd),
+            newContext: getContextWindow(pair.cleanedDisplayText || '', newStart, newEnd),
+        };
+    };
+
+    const summarizeCandidateTargets = (candidate) => {
+        const targets = Array.isArray(candidate.targets) ? candidate.targets.filter(Boolean) : [];
+        const replacements = Array.isArray(candidate.replacements) ? candidate.replacements.filter(Boolean) : [];
+        const targetText = targets.length > 0 ? targets.join(' / ') : '（空查找词）';
+        const replacementText = replacements.length > 0 ? replacements.join(' / ') : '删除';
+        return `${targetText} -> ${replacementText}`;
+    };
+
+    const renderRelatedRulesModal = (change, candidates) => {
+        const $modal = $('#bl-diff-related-modal');
+        const $body = $('#bl-diff-related-body');
+        if (!$modal.length || !$body.length) return;
+        const clickedText = change?.clickedText ? escapeHtml(change.clickedText).slice(0, 120) : '（空）';
+        if (!Array.isArray(candidates) || candidates.length === 0) {
+            $body.html(`
+                <div class="bl-diff-related-head">
+                    <strong><i class="fa-solid fa-crosshairs"></i> 未找到明显相关规则</strong>
+                    <span>点击文本：${clickedText}</span>
+                </div>
+                <div class="bl-diff-related-note">这是相关规则推测，不保证为实际触发规则。</div>
+            `);
+            $modal.css('display', 'flex');
+            return;
+        }
+
+        const items = candidates.map((candidate) => {
+            const reasons = Array.isArray(candidate.reasons) && candidate.reasons.length > 0
+                ? candidate.reasons.slice(0, 2).join('，')
+                : '相关文本命中';
+            return `
+                <button type="button" class="bl-diff-related-candidate" data-rule-index="${candidate.ruleIndex}" data-subrule-index="${candidate.subRuleIndex}">
+                    <span class="bl-diff-related-candidate-main">
+                        <span class="bl-tag bl-badge-compact">${escapeHtml(candidate.modeLabel || candidate.mode || '规则')}</span>
+                        <strong>${escapeHtml(candidate.groupName || `合集 ${candidate.ruleIndex + 1}`)}</strong>
+                    </span>
+                    <span class="bl-diff-related-candidate-preview">${escapeHtml(summarizeCandidateTargets(candidate))}</span>
+                    <span class="bl-diff-related-candidate-reason">${escapeHtml(reasons)} · 分数 ${Math.round(candidate.score)}</span>
+                </button>
+            `;
+        }).join('');
+
+        $body.html(`
+            <div class="bl-diff-related-head">
+                <strong><i class="fa-solid fa-crosshairs"></i> 可能相关规则</strong>
+                <span>点击文本：${clickedText}</span>
+            </div>
+            <div class="bl-diff-related-note">相关规则推测，不保证为实际触发规则。最多显示 10 条。</div>
+            <div class="bl-diff-related-list">${items}</div>
+        `);
+        $modal.css('display', 'flex');
+    };
+
+    const showRelatedRulesForDiffElement = (element) => {
+        const change = buildDiffChangeFromElement(element);
+        if (!change) return;
+        const rules = extension_settings[extensionName]?.rules || [];
+        const candidates = findRelatedRulesForDiffChange(change, rules, { maxCount: 10 });
+        renderRelatedRulesModal(change, candidates);
+    };
+
     const syncDiffModeToggleState = (mode) => {
         const isFullMode = mode === 'full';
         const nextText = isFullMode ? '切回片段' : '全文模式';
@@ -821,6 +1148,8 @@ export function bindEvents() {
 
     const syncDiffPreferenceMenuState = () => {
         const settings = extension_settings[extensionName];
+        syncDiffLimitControlState(false);
+        syncDiffRelatedModeState();
         syncDiffPositionMenuState(settings);
         syncDiffBottomMenuState(settings);
     };
@@ -868,7 +1197,11 @@ export function bindEvents() {
             delete msg.__bl_is_reverted;
             cleanseMessageDataAtIndex(index, { diffSourceMes: sourceMes });
         } else {
-            msg.mes = typeof msg.__bl_original_mes === 'string' ? msg.__bl_original_mes : msg.mes;
+            const originalMes = getCurrentMessageOriginalMes(msg);
+            if (originalMes) {
+                msg.mes = originalMes;
+                setCurrentSwipeText(msg, originalMes);
+            }
             msg.__bl_is_reverted = true;
             clearTrackedDiffEntry(index);
         }
@@ -879,6 +1212,9 @@ export function bindEvents() {
 
     const closeDiffModal = () => {
         closeDiffActionsMenu();
+        closeDiffRelatedModal();
+        runtimeState.diffRelatedRuleMode = false;
+        syncDiffRelatedModeState();
         $('#bl-diff-modal').hide();
     };
 
@@ -887,6 +1223,7 @@ export function bindEvents() {
         const mode = settings.diffViewMode || 'snippet';
         const msg = getDiffMessageByIndex(index);
         const contentEl = $('#bl-diff-modal-content');
+        closeDiffRelatedModal();
         syncDiffPreferenceMenuState();
         syncDiffModeToggleState(mode);
         syncDiffRevertToggleState(msg);
@@ -901,7 +1238,7 @@ export function bindEvents() {
         const cached = getDiffSnippetsForMessage(index);
 
         if (state.status !== 'ready') {
-            contentEl.html(`<div class="bl-diff-loading"><i class="fas fa-spinner fa-spin"></i><span>Loading...</span></div>`);
+            contentEl.html('<div class="bl-diff-loading"><i class="fas fa-spinner fa-spin"></i><span>Loading...</span></div>');
             return;
         }
         if (mode === 'full') {
@@ -921,6 +1258,7 @@ export function bindEvents() {
         const index = Number($(this).attr('data-index'));
         if (!Number.isInteger(index) || index < 0) return;
         runtimeState.currentDiffIndex = index;
+        closeDiffRelatedModal();
         renderDiffModalContent(index);
         closeDiffActionsMenu();
         $('#bl-diff-modal').css('display', 'flex');
@@ -966,7 +1304,76 @@ export function bindEvents() {
         if (runtimeState.currentDiffIndex !== undefined) renderDiffModalContent(runtimeState.currentDiffIndex);
     });
 
+    $(document).off('click', '#bl-diff-related-mode-toggle').on('click', '#bl-diff-related-mode-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        runtimeState.diffRelatedRuleMode = runtimeState.diffRelatedRuleMode !== true;
+        syncDiffRelatedModeState();
+        closeDiffActionsMenu();
+    });
+
+    $(document).off('click', '#bl-diff-limit-edit').on('click', '#bl-diff-limit-edit', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDiffActionsMenu();
+        syncDiffLimitControlState(true);
+        $('#bl-diff-limit-input').trigger('focus').trigger('select');
+    });
+
+    $(document).off('click', '#bl-diff-limit-confirm').on('click', '#bl-diff-limit-confirm', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        applyDiffLimitDraft();
+    });
+
+    $(document).off('click', '#bl-diff-limit-cancel').on('click', '#bl-diff-limit-cancel', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDiffLimitEditor();
+    });
+
+    $(document).off('keydown', '#bl-diff-limit-input').on('keydown', '#bl-diff-limit-input', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            applyDiffLimitDraft();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeDiffLimitEditor();
+        }
+    });
+
     $(document).off('click', '#bl-diff-revert-toggle').on('click', '#bl-diff-revert-toggle', () => toggleCurrentDiffRevert());
+
+    $(document).off('click', '#bl-diff-modal-content del.bl-diff-change, #bl-diff-modal-content ins.bl-diff-change').on('click', '#bl-diff-modal-content del.bl-diff-change, #bl-diff-modal-content ins.bl-diff-change', function(e) {
+        if (runtimeState.diffRelatedRuleMode !== true) return;
+        e.preventDefault();
+        e.stopPropagation();
+        $('#bl-diff-modal-content .bl-diff-change').removeClass('bl-diff-change-selected');
+        $(this).addClass('bl-diff-change-selected');
+        showRelatedRulesForDiffElement(this);
+    });
+
+    $(document).off('click', '.bl-diff-related-candidate').on('click', '.bl-diff-related-candidate', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const ruleIndex = Number($(this).attr('data-rule-index'));
+        const subRuleIndex = Number($(this).attr('data-subrule-index'));
+        const rules = extension_settings[extensionName]?.rules || [];
+        if (!Number.isInteger(ruleIndex) || ruleIndex < 0 || ruleIndex >= rules.length) return;
+        if (!Number.isInteger(subRuleIndex) || subRuleIndex < 0 || subRuleIndex >= (rules[ruleIndex]?.subRules || []).length) return;
+        closeDiffRelatedModal();
+        openEditModal(ruleIndex, { source: 'search', returnMode: 'related', subRuleIndex });
+        openSingleRuleModal(subRuleIndex, { hideEditModal: true });
+    });
+
+    $(document).off('click', '#bl-diff-related-close').on('click', '#bl-diff-related-close', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        closeDiffRelatedModal();
+    });
+    $(document).off('click', '#bl-diff-related-modal').on('click', '#bl-diff-related-modal', function(e) {
+        if (e.target && e.target.id === 'bl-diff-related-modal') closeDiffRelatedModal();
+    });
 
     $(document).off('click', '#bl-diff-modal-close').on('click', '#bl-diff-modal-close', () => closeDiffModal());
     $(document).off('click', '#bl-diff-modal').on('click', '#bl-diff-modal', function(e) { if (e.target && e.target.id === 'bl-diff-modal') closeDiffModal(); });
@@ -1034,6 +1441,13 @@ export function bindEvents() {
     });
 
     $(document).off('click', '#bl-add-subrule-btn').on('click', '#bl-add-subrule-btn', () => openSingleRuleModal(-1));
+
+    $(document).off('change', '.bl-subrule-toggle').on('change', '.bl-subrule-toggle', function() {
+        const index = Number($(this).data('index'));
+        if (!Number.isInteger(index) || index < 0 || index >= runtimeState.currentEditingSubrules.length) return;
+        runtimeState.currentEditingSubrules[index].enabled = $(this).prop('checked');
+        renderSubrulesToModal();
+    });
 
     $(document).off('click', '.bl-move-subrule-up-btn').on('click', '.bl-move-subrule-up-btn', function() {
         const index = Number($(this).data('index'));
@@ -1108,6 +1522,7 @@ export function bindEvents() {
         const tStr = String($('#bl-modal-sub-target').val() || '');
         const remarkStr = String($('#bl-modal-sub-remark').val() || '').trim();
         const isDirectSearchFlow = isSearchDirectSubruleFlow();
+        const isRelatedFlow = isRelatedDirectSubruleFlow();
 
         if (mode === 'regex') {
             const validation = validateRegexTargetField();
@@ -1135,7 +1550,16 @@ export function bindEvents() {
             return;
         }
 
-        const subRule = { targets, replacements, mode, remark: remarkStr };
+        const previousSubRule = runtimeState.currentSubruleEditIndex >= 0
+            ? runtimeState.currentEditingSubrules[runtimeState.currentSubruleEditIndex]
+            : null;
+        const subRule = {
+            targets,
+            replacements,
+            mode,
+            remark: remarkStr,
+            enabled: previousSubRule?.enabled !== false,
+        };
 
         if (runtimeState.currentSubruleEditIndex === -1) {
             runtimeState.currentEditingSubrules.push(subRule);
@@ -1144,13 +1568,14 @@ export function bindEvents() {
         }
 
         clearRegexTargetValidationState();
-        if (isDirectSearchFlow) {
+        if (isDirectSearchFlow || isRelatedFlow) {
             const saveResult = saveCurrentEditingRule({ toastMessage: '条目保存成功', focusLatest: false });
             if (!saveResult.ok) return;
             $('#bl-subrule-edit-modal').fadeOut(150, () => {
                 $('#bl-rule-edit-modal').hide();
                 clearRuleSearchEditFlow();
-                openRuleSearchModal();
+                if (isDirectSearchFlow) openRuleSearchModal();
+                else if (runtimeState.currentDiffIndex !== undefined) renderDiffModalContent(runtimeState.currentDiffIndex);
             });
             return;
         }
@@ -1166,11 +1591,12 @@ export function bindEvents() {
 
     $(document).off('click', '#bl-modal-sub-cancel').on('click', '#bl-modal-sub-cancel', () => {
         clearRegexTargetValidationState();
-        if (isSearchDirectSubruleFlow()) {
+        if (isSearchDirectSubruleFlow() || isRelatedDirectSubruleFlow()) {
+            const shouldReturnSearch = isSearchDirectSubruleFlow();
             $('#bl-subrule-edit-modal').fadeOut(150, () => {
                 $('#bl-rule-edit-modal').hide();
                 clearRuleSearchEditFlow();
-                openRuleSearchModal();
+                if (shouldReturnSearch) openRuleSearchModal();
             });
             return;
         }
@@ -1333,38 +1759,12 @@ export function bindEvents() {
             const reader = new FileReader();
             reader.onload = event => {
                 try {
-                    let importedRules = normalizeImportedRulesPayload(JSON.parse(event.target.result));
+                    const importedRules = normalizeImportedRulesPayload(JSON.parse(event.target.result));
                     if (!Array.isArray(importedRules)) throw new Error("格式非数组");
 
                     const defaultName = file.name.replace(/\.json$/i, '');
-                    const newName = prompt("导入成功！\n输入存档名称直接保存，或点击取消仅作为临时规则预览：", defaultName);
-                    const settings = extension_settings[extensionName];
-
-                    importedRules.forEach((r, idx) => {
-                        if (!r.name) r.name = r.targets?.[0] || `未命名合集 ${idx + 1}`;
-                        if (r.enabled === undefined) r.enabled = true;
-                        if (r.targets) {
-                            r.subRules = [{ targets: r.targets, replacements: r.replacements || [], mode: 'text' }];
-                            delete r.targets;
-                            delete r.replacements;
-                        }
-                        if (!r.subRules) r.subRules = [];
-                        r.subRules.forEach(sub => { if (!sub.mode) sub.mode = 'text'; });
-                    });
-
-                    settings.rules = importedRules;
-                    if (newName) {
-                        settings.presets[newName] = JSON.parse(JSON.stringify(importedRules));
-                        settings.activePreset = newName;
-                    } else {
-                        settings.activePreset = "";
-                    }
-
-                    markRulesDataDirty({ presetsUi: Boolean(newName) });
-                    saveSettingsDebounced();
-                    renderTags();
-                    updateToolbarUI();
-                    performGlobalCleanse();
+                    if (!confirmBeforeImportChoiceIfUnsaved()) return;
+                    openImportChoiceModal(importedRules, defaultName);
                 } catch (err) {
                     alert("导入失败：检查文件是否为合法规则数组。");
                 }
@@ -1372,6 +1772,23 @@ export function bindEvents() {
             reader.readAsText(file);
         };
         input.click();
+    });
+
+    $(document).off('click', '#bl-import-only').on('click', '#bl-import-only', () => importPresetOnly());
+    $(document).off('click', '#bl-import-switch').on('click', '#bl-import-switch', () => importPresetAndSwitch());
+    $(document).off('click', '#bl-import-preview').on('click', '#bl-import-preview', () => importPresetAsTemporaryPreview());
+    $(document).off('click', '#bl-import-choice-close').on('click', '#bl-import-choice-close', () => closeImportChoiceModal());
+    $(document).off('click', '#bl-preset-import-choice-modal').on('click', '#bl-preset-import-choice-modal', function(e) {
+        if (e.target && e.target.id === 'bl-preset-import-choice-modal') closeImportChoiceModal();
+    });
+    $(document).off('keydown', '#bl-import-preset-name').on('keydown', '#bl-import-preset-name', function(e) {
+        if (e.key === 'Enter') {
+            e.preventDefault();
+            importPresetOnly();
+        } else if (e.key === 'Escape') {
+            e.preventDefault();
+            closeImportChoiceModal();
+        }
     });
 
     const markPendingFromPayload = (payload, options = {}) => {

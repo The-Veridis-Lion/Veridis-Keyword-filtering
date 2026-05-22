@@ -1,4 +1,4 @@
-import { defaultSettings, extensionName, getAppContext, runtimeState } from './state.js';
+import { defaultDeepCleanTimeoutSec, extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
 import { applyScopedReplacements, buildProcessors } from './core.js';
 import { showDeepCleanOverlay, updateDeepCleanOverlay } from './ui.js';
@@ -48,7 +48,7 @@ export function deepCleanObjectSync(rootObj) {
 
         for (let key in current) {
             if (!Object.prototype.hasOwnProperty.call(current, key)) continue;
-            if (key === '__bl_original_mes') continue;
+            if (typeof key === 'string' && key.startsWith('__bl_')) continue;
             const val = current[key];
             if (typeof val === 'string') {
                 const cleaned = applyScopedReplacements(val);
@@ -68,7 +68,7 @@ export function deepCleanObjectSync(rootObj) {
  * 分片执行异步深度清理。
  * @param {object} rootObj 待清理对象根节点。
  * @param {boolean} [isGlobalSettings=false] 是否对全局设置执行清理。
- * @param {{onProgress?: Function, deadline?: number}} [options={}] 进度回调与截止时间。
+ * @param {{onProgress?: Function, deadline?: number, getDeadline?: Function, onTimeout?: Function, completedChanges?: number}} [options={}] 进度回调与截止时间。
  * @returns {Promise<number>} 命中并替换的字段数量。
  */
 export async function safeDeepScrub(rootObj, isGlobalSettings = false, options = {}) {
@@ -79,11 +79,31 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
     buildProcessors();
 
     const onProgress = typeof options.onProgress === 'function' ? options.onProgress : null;
-    const deadline = Number.isFinite(options.deadline) ? options.deadline : Infinity;
+    const staticDeadline = Number.isFinite(options.deadline) ? options.deadline : Infinity;
+    const getDeadline = typeof options.getDeadline === 'function' ? options.getDeadline : () => staticDeadline;
+    const onTimeout = typeof options.onTimeout === 'function' ? options.onTimeout : null;
+    const completedChanges = Number.isFinite(Number(options.completedChanges)) ? Number(options.completedChanges) : 0;
     let iterations = 0;
 
+    const assertWithinDeadline = async () => {
+        const deadline = Number(getDeadline());
+        if (!Number.isFinite(deadline) || Date.now() <= deadline) return;
+        if (onTimeout) {
+            const shouldContinue = await onTimeout({ visited: seen.size, pending: stack.length, changes });
+            if (shouldContinue === true) return;
+            const err = new Error('DEEP_CLEAN_CANCELLED');
+            err.partialChanges = changes;
+            err.totalChanges = completedChanges + changes;
+            throw err;
+        }
+        const err = new Error('DEEP_CLEAN_TIMEOUT');
+        err.partialChanges = changes;
+        err.totalChanges = completedChanges + changes;
+        throw err;
+    };
+
     while (stack.length > 0) {
-        if (Date.now() > deadline) throw new Error('DEEP_CLEAN_TIMEOUT');
+        await assertWithinDeadline();
 
         if (++iterations % 500 === 0) {
             if (onProgress) onProgress({ visited: seen.size, pending: stack.length, changes });
@@ -102,7 +122,7 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
             for (let key in current) {
                 if (Object.prototype.hasOwnProperty.call(current, key)) {
                     if (isGlobalSettings && key === extensionName) continue;
-                    if (key === '__bl_original_mes') continue;
+                    if (typeof key === 'string' && key.startsWith('__bl_')) continue;
                     const nextDepth = depth + 1;
                     const nextRootNamespace = depth === 0 ? key : rootNamespace;
                     if (shouldSkipDbExtensionFieldByMeta(nextDepth, nextRootNamespace, key, isGlobalSettings)) continue;
@@ -130,10 +150,7 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
  * @returns {number} 超时毫秒值。
  */
 export function getDeepCleanTimeoutMs() {
-    const { extension_settings } = getAppContext();
-    const raw = Number(extension_settings[extensionName]?.deepCleanTimeoutSec);
-    const safeSeconds = Number.isFinite(raw) ? Math.min(Math.max(raw, 10), 1800) : defaultSettings.deepCleanTimeoutSec;
-    return safeSeconds * 1000;
+    return defaultDeepCleanTimeoutSec * 1000;
 }
 
 /**
@@ -155,8 +172,10 @@ export async function performDeepCleanse() {
     try {
         let scrubbedItems = 0;
         const timeoutMs = getDeepCleanTimeoutMs();
+        const timeoutSec = Math.round(timeoutMs / 1000);
         const startAt = Date.now();
-        const deadline = startAt + timeoutMs;
+        let deadline = startAt + timeoutMs;
+        let continueCount = 0;
 
         const phases = [];
         if (chat && Array.isArray(chat)) phases.push({ label: '聊天记录', root: chat, isGlobalSettings: false });
@@ -175,13 +194,33 @@ export async function performDeepCleanse() {
             const phaseSpan = 1 / phases.length;
 
             scrubbedItems += await safeDeepScrub(phase.root, phase.isGlobalSettings, {
-                deadline,
+                completedChanges: scrubbedItems,
+                getDeadline: () => deadline,
+                onTimeout: async ({ visited, pending, changes }) => {
+                    const elapsed = Math.round((Date.now() - startAt) / 1000);
+                    updateDeepCleanOverlay(
+                        phaseBase + phaseSpan * 0.5,
+                        `已清理 ${elapsed}s，正在等待是否继续（${phase.label}：已扫描 ${visited}，剩余队列 ${pending}，命中 ${changes}）`
+                    );
+                    await new Promise(r => setTimeout(r, 60));
+                    const shouldContinue = confirm(`深度清理已运行 ${elapsed}s，本轮 ${timeoutSec}s 已到。\n\n当前阶段：${phase.label}\n已扫描：${visited}\n剩余队列：${pending}\n当前阶段命中：${changes}\n\n是否继续再清理 ${timeoutSec}s？\n点击“取消”会停止任务，并保留已完成的处理。`);
+                    if (!shouldContinue) return false;
+                    continueCount++;
+                    deadline = Date.now() + timeoutMs;
+                    updateDeepCleanOverlay(
+                        phaseBase + phaseSpan * 0.5,
+                        `继续清理 ${phase.label}，第 ${continueCount + 1} 轮确认窗口已开始...`
+                    );
+                    await new Promise(r => setTimeout(r, 60));
+                    return true;
+                },
                 onProgress: ({ visited, pending, changes }) => {
                     const elapsed = ((Date.now() - startAt) / 1000).toFixed(1);
+                    const remaining = Math.max(0, Math.ceil((deadline - Date.now()) / 1000));
                     const dynamic = (visited + pending > 0) ? (visited / (visited + pending)) : 0;
                     updateDeepCleanOverlay(
                         phaseBase + dynamic * phaseSpan,
-                        `正在清理 ${phase.label}（已扫描 ${visited}，剩余队列 ${pending}，命中 ${changes}）｜耗时 ${elapsed}s / 超时 ${Math.round(timeoutMs / 1000)}s`
+                        `正在清理 ${phase.label}（已扫描 ${visited}，剩余队列 ${pending}，命中 ${changes}）｜耗时 ${elapsed}s / 距下次确认约 ${remaining}s`
                     );
                 }
             });
@@ -214,9 +253,12 @@ export async function performDeepCleanse() {
     } catch (e) {
         logger.error(`深度清理出错`, e);
         $('#bl-loading-overlay').remove();
-        if (e && e.message === 'DEEP_CLEAN_TIMEOUT') {
+        if (e && e.message === 'DEEP_CLEAN_CANCELLED') {
+            const totalChanges = Number.isFinite(Number(e.totalChanges)) ? Number(e.totalChanges) : 0;
+            alert(`深度清理已停止，已处理 ${totalChanges} 处匹配项。\n已完成的处理会保留在当前页面内；如不想保留，请刷新页面后再操作。`);
+        } else if (e && e.message === 'DEEP_CLEAN_TIMEOUT') {
             const timeoutSec = Math.round(getDeepCleanTimeoutMs() / 1000);
-            alert(`清理超时（${timeoutSec}s）已自动中止。\n建议减少规则范围或调大 deepCleanTimeoutSec 后重试。`);
+            alert(`清理超时（${timeoutSec}s）已自动中止。`);
         } else {
             alert('清理失败，请查看控制台。');
         }
