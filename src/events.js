@@ -1942,7 +1942,7 @@ export function bindEvents() {
             $('#bl-diff-modal').hide();
             applyCharacterPresetBinding(true, { skipCleanse: true });
             restoreDiffStateFromChatMetadata();
-            setTimeout(() => { injectDiffButtons(); performGlobalCleanse(); }, 120);
+            setTimeout(() => { injectDiffButtons(); performGlobalCleanse({ deferLargeChat: true }); }, 120);
         });
     }
 
