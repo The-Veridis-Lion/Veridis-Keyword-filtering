@@ -62,6 +62,7 @@ export const runtimeState = {
     currentTransferRuleIndexes: [],
     importPresetDraft: null,
     deepCleanCancelRequested: false,
+    globalCleanseJob: null,
 };
 
 const appContext = {

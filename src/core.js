@@ -6,6 +6,10 @@ import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffBu
 import { getMessageDomNode, purifyDOM } from './dom.js';
 import { clearMessageDiffMeta, getMessageDiffBranchKey, getMessageDiffMeta, isMessageFinalizedForCurrentBranch, setCurrentSwipeText, writeMessageDiffMeta } from './messageMeta.js';
 
+const chatChangedSyncMessageLimit = 80;
+const chatChangedBackgroundChunkSize = 25;
+const chatChangedBackgroundDelayMs = 35;
+
 /**
  * 按当前规则构建净化处理器。
  * @returns {Array} 处理器数组。
@@ -830,13 +834,144 @@ export function performIncrementalCleanse(payload, options = {}) {
     }
 }
 
+function cancelGlobalCleanseJob() {
+    if (!runtimeState.globalCleanseJob) return;
+    if (runtimeState.globalCleanseJob.timer) clearTimeout(runtimeState.globalCleanseJob.timer);
+    runtimeState.globalCleanseJob.cancelled = true;
+    runtimeState.globalCleanseJob = null;
+}
+
+function getChatChangedSyncIndices(chat, latestDiffIndices) {
+    const indices = new Set(latestDiffIndices);
+    const start = Math.max(0, chat.length - chatChangedSyncMessageLimit);
+    for (let index = start; index < chat.length; index++) indices.add(index);
+    return [...indices].filter(index => index >= 0 && index < chat.length).sort((a, b) => a - b);
+}
+
+function processGlobalCleanseMessage(msg, index, latestDiffIndices, skipUser, options = {}) {
+    const { refreshDom = true } = options;
+    let msgChanged = false;
+    let mainCache = { snippets: [], fullDiff: '' };
+    const assistant = isAssistantMessage(msg);
+    if (skipUser && !assistant) return false;
+    let signature = assistant ? computeMessageSignature(msg) : '';
+    const isReverted = msg?.__bl_is_reverted === true;
+
+    if (!isReverted && typeof msg?.mes === 'string') {
+        const sourceMes = assistant ? resolveMessageDiffSource(msg) : msg.mes;
+        const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(sourceMes);
+        mainCache = {
+            snippets: Array.from(new Set(mesSnippets)),
+            fullDiff,
+        };
+        if (msg.mes !== cleanedText) {
+            msg.mes = cleanedText;
+            msgChanged = true;
+            if (assistant && setCurrentSwipeText(msg, cleanedText)) msgChanged = true;
+        }
+        if (assistant) {
+            const syncResult = syncMessageDiffMetadata(msg, sourceMes, msg.mes);
+            signature = syncResult.signature;
+            if (syncResult.metadataChanged) msgChanged = true;
+        }
+    }
+
+    if (assistant && latestDiffIndices.has(index) && !isReverted) {
+        const hasMainDiff = mainCache.snippets.length > 0 || mainCache.fullDiff.includes('bl-diff-full-modified');
+        writeReadyDiffCache(index, signature, mainCache, {
+            preserveExistingRealDiff: true,
+            persist: hasMainDiff || msgChanged,
+        });
+    } else {
+        clearTrackedDiffEntry(index, { persist: false });
+    }
+
+    if (msgChanged && refreshDom) {
+        refreshMessageDisplay(index, { delay: 50, emitRenderedEvent: 'auto' });
+    }
+
+    return msgChanged;
+}
+
+function processGlobalCleanseMessageSafely(msg, index, latestDiffIndices, skipUser, options = {}) {
+    try {
+        return processGlobalCleanseMessage(msg, index, latestDiffIndices, skipUser, options);
+    } catch (error) {
+        logger.warn(`[performGlobalCleanse] 跳过异常消息 ${index}: ${error?.message || error}`);
+        return false;
+    }
+}
+
+function scheduleGlobalCleanseRemainder(chat, processedIndices, latestDiffIndices, skipUser) {
+    const remainingIndices = [];
+    for (let index = 0; index < chat.length; index++) {
+        if (!processedIndices.has(index)) remainingIndices.push(index);
+    }
+    if (remainingIndices.length === 0) return;
+
+    const job = {
+        cancelled: false,
+        chat,
+        cursor: 0,
+        changed: false,
+        timer: null,
+    };
+    runtimeState.globalCleanseJob = job;
+
+    const runChunk = () => {
+        if (job.cancelled || runtimeState.globalCleanseJob !== job || getAppContext().chat !== job.chat) return;
+        buildProcessors();
+        if (runtimeState.activeProcessors.length === 0) {
+            runtimeState.globalCleanseJob = null;
+            return;
+        }
+
+        const end = Math.min(job.cursor + chatChangedBackgroundChunkSize, remainingIndices.length);
+        for (; job.cursor < end; job.cursor++) {
+            const index = remainingIndices[job.cursor];
+            const msg = job.chat[index];
+            if (!msg || typeof msg !== 'object') continue;
+            if (processGlobalCleanseMessageSafely(msg, index, latestDiffIndices, skipUser, { refreshDom: false })) {
+                job.changed = true;
+            }
+        }
+
+        if (job.cursor < remainingIndices.length) {
+            job.timer = setTimeout(runChunk, chatChangedBackgroundDelayMs);
+            return;
+        }
+
+        runtimeState.globalCleanseJob = null;
+        syncTrackedIndicesToLatestAssistantMessages();
+        if (job.changed) queueIncrementalChatSave();
+        logger.info(`[performGlobalCleanse] 长聊天后台净化完成: ${remainingIndices.length} 条`);
+    };
+
+    job.timer = setTimeout(runChunk, chatChangedBackgroundDelayMs);
+    logger.info(`[performGlobalCleanse] 长聊天后台分片启动: ${remainingIndices.length} 条`);
+}
+
+function purifyMessageDomByIndices(indices) {
+    indices.forEach((index) => {
+        const messageNode = getMessageDomNode(index);
+        if (!messageNode) return;
+        try {
+            purifyDOM(messageNode);
+        } catch (error) {
+            logger.warn(`[performGlobalCleanse] 跳过异常 DOM 消息 ${index}: ${error?.message || error}`);
+        }
+    });
+}
+
 /**
  * 执行全局净化：遍历聊天数据、同步 UI 并刷新差异按钮。
+ * @param {{deferLargeChat?: boolean}} [options={}] 控制长聊天是否分片处理。
  * @returns {void}
  */
-export function performGlobalCleanse() {
+export function performGlobalCleanse(options = {}) {
     logger.info(`[performGlobalCleanse] 全局净化开始`);
     const { chat } = getAppContext();
+    cancelGlobalCleanseJob();
     buildProcessors();
     if (runtimeState.activeProcessors.length === 0) {
         injectDiffButtons();
@@ -845,51 +980,21 @@ export function performGlobalCleanse() {
 
     let chatChanged = false;
     const latestDiffIndices = new Set(getLatestTrackableDiffIndices());
+    let syncIndices = [];
+    let useDeferredLongChat = false;
 
     if (chat && Array.isArray(chat)) {
         const { extension_settings } = getAppContext();
         const skipUser = extension_settings[extensionName]?.skipUserMessages === true;
-        chat.forEach((msg, index) => {
-            let msgChanged = false;
-            let mainCache = { snippets: [], fullDiff: '' };
-            const assistant = isAssistantMessage(msg);
-            if (skipUser && !assistant) return;
-            let signature = assistant ? computeMessageSignature(msg) : '';
-            const isReverted = msg?.__bl_is_reverted === true;
+        useDeferredLongChat = options.deferLargeChat === true && chat.length > chatChangedSyncMessageLimit;
+        syncIndices = useDeferredLongChat
+            ? getChatChangedSyncIndices(chat, latestDiffIndices)
+            : chat.map((_, index) => index);
 
-            if (!isReverted && typeof msg?.mes === 'string') {
-                const sourceMes = assistant ? resolveMessageDiffSource(msg) : msg.mes;
-                const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(sourceMes);
-                mainCache = {
-                    snippets: Array.from(new Set(mesSnippets)),
-                    fullDiff,
-                };
-                if (msg.mes !== cleanedText) {
-                    msg.mes = cleanedText;
-                    msgChanged = true;
-                    if (assistant && setCurrentSwipeText(msg, cleanedText)) msgChanged = true;
-                }
-                if (assistant) {
-                    const syncResult = syncMessageDiffMetadata(msg, sourceMes, msg.mes);
-                    signature = syncResult.signature;
-                    if (syncResult.metadataChanged) msgChanged = true;
-                }
-            }
-
-            if (assistant && latestDiffIndices.has(index) && !isReverted) {
-                const hasMainDiff = mainCache.snippets.length > 0 || mainCache.fullDiff.includes('bl-diff-full-modified');
-                writeReadyDiffCache(index, signature, mainCache, {
-                    preserveExistingRealDiff: true,
-                    persist: hasMainDiff || msgChanged,
-                });
-            } else {
-                clearTrackedDiffEntry(index, { persist: false });
-            }
-
-            if (msgChanged) {
-                chatChanged = true;
-                refreshMessageDisplay(index, { delay: 50, emitRenderedEvent: 'auto' });
-            }
+        syncIndices.forEach((index) => {
+            const msg = chat[index];
+            if (!msg || typeof msg !== 'object') return;
+            if (processGlobalCleanseMessageSafely(msg, index, latestDiffIndices, skipUser, { refreshDom: true })) chatChanged = true;
         });
 
         const latestMsg = chat.length > 0 ? chat[chat.length - 1] : null;
@@ -897,10 +1002,18 @@ export function performGlobalCleanse() {
             ['TavernDB_ACU_Data', 'TavernDB_ACU_SummaryData'].forEach((dbKey) => {
                 const dbVal = latestMsg[dbKey];
                 if (dbVal && typeof dbVal === 'object') {
-                    const dbChanges = deepCleanObjectSync(dbVal);
-                    if (dbChanges > 0) chatChanged = true;
+                    try {
+                        const dbChanges = deepCleanObjectSync(dbVal);
+                        if (dbChanges > 0) chatChanged = true;
+                    } catch (error) {
+                        logger.warn(`[performGlobalCleanse] 跳过异常附加数据 ${dbKey}: ${error?.message || error}`);
+                    }
                 }
             });
+        }
+
+        if (useDeferredLongChat) {
+            scheduleGlobalCleanseRemainder(chat, new Set(syncIndices), latestDiffIndices, skipUser);
         }
     }
 
@@ -909,6 +1022,10 @@ export function performGlobalCleanse() {
     if (chatChanged) {
         queueIncrementalChatSave(); // 使用排队保存
     }
-    purifyDOM(document.getElementById('chat'));
+    if (useDeferredLongChat) {
+        purifyMessageDomByIndices(syncIndices);
+    } else {
+        purifyDOM(document.getElementById('chat'));
+    }
     injectDiffButtons();
 }
