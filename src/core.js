@@ -237,6 +237,83 @@ function findNextScopeTagMatch(text, fromIndex, scopeTags) {
     return nextMatch;
 }
 
+function collectCompleteScopeTagRanges(text, scopeTags) {
+    const ranges = [];
+    if (typeof text !== 'string' || !text || !Array.isArray(scopeTags) || scopeTags.length === 0) return ranges;
+
+    let cursor = 0;
+    while (cursor < text.length) {
+        const nextMatch = findNextScopeTagMatch(text, cursor, scopeTags);
+        if (!nextMatch) break;
+
+        const { index, scopeTag } = nextMatch;
+        const tagBodyStart = index + scopeTag.startTag.length;
+        const endIndex = text.indexOf(scopeTag.endTag, tagBodyStart);
+        if (endIndex < 0) {
+            cursor = tagBodyStart;
+            continue;
+        }
+
+        ranges.push({
+            start: index,
+            end: endIndex + scopeTag.endTag.length,
+            startTag: scopeTag.startTag,
+        });
+        cursor = endIndex + scopeTag.endTag.length;
+    }
+
+    return ranges;
+}
+
+function buildScopeTagSkeleton(text, ranges) {
+    let output = '';
+    let cursor = 0;
+    ranges.forEach((range, index) => {
+        output += text.slice(cursor, range.start);
+        output += `\uE000${index}:${range.startTag}\uE001`;
+        cursor = range.end;
+    });
+    output += text.slice(cursor);
+    return output;
+}
+
+function haveMatchingScopeTagRanges(leftRanges, rightRanges) {
+    if (leftRanges.length !== rightRanges.length) return false;
+    return leftRanges.every((range, index) => range.startTag === rightRanges[index]?.startTag);
+}
+
+function mergeProtectedScopeUpdatesIntoSource(sourceMes, previousCleanedMes, currentMes) {
+    if (getScopeTagMode() !== 'protect') return '';
+    if (!sourceMes || !previousCleanedMes || !currentMes || previousCleanedMes === currentMes) return '';
+
+    const scopeTags = getEnabledScopeTags();
+    if (scopeTags.length === 0) return '';
+
+    const previousRanges = collectCompleteScopeTagRanges(previousCleanedMes, scopeTags);
+    if (previousRanges.length === 0) return '';
+
+    const currentRanges = collectCompleteScopeTagRanges(currentMes, scopeTags);
+    if (!haveMatchingScopeTagRanges(previousRanges, currentRanges)) return '';
+
+    const previousSkeleton = buildScopeTagSkeleton(previousCleanedMes, previousRanges);
+    const currentSkeleton = buildScopeTagSkeleton(currentMes, currentRanges);
+    if (previousSkeleton !== currentSkeleton) return '';
+
+    const sourceRanges = collectCompleteScopeTagRanges(sourceMes, scopeTags);
+    if (!haveMatchingScopeTagRanges(sourceRanges, currentRanges)) return '';
+
+    let merged = '';
+    let cursor = 0;
+    sourceRanges.forEach((sourceRange, index) => {
+        const currentRange = currentRanges[index];
+        merged += sourceMes.slice(cursor, sourceRange.start);
+        merged += currentMes.slice(currentRange.start, currentRange.end);
+        cursor = sourceRange.end;
+    });
+    merged += sourceMes.slice(cursor);
+    return merged;
+}
+
 /**
  * 对消息文本应用“范围标签模式 + 规则替换”。
  * protect 模式保留标签内文本，cleanse-inside 模式仅净化标签内文本。
@@ -532,6 +609,10 @@ function resolveMessageDiffSource(msg, explicitSource) {
     const diffMeta = getMessageDiffMeta(msg);
     if (diffMeta?.lastCleanedMes && currentMes === diffMeta.lastCleanedMes) {
         return diffMeta.originalMes;
+    }
+    if (diffMeta?.originalMes && diffMeta?.lastCleanedMes) {
+        const sourceWithScopeUpdates = mergeProtectedScopeUpdatesIntoSource(diffMeta.originalMes, diffMeta.lastCleanedMes, currentMes);
+        if (sourceWithScopeUpdates) return sourceWithScopeUpdates;
     }
 
     return currentMes;

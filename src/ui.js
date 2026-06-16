@@ -170,7 +170,25 @@ export function showToast(message) {
 
 export function setupUI() {
     logger.debug('[setupUI] 开始初始化 UI');
-    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay, .bl-toast').remove();
+    $('#bl-purifier-popup, #bl-rule-edit-modal, #bl-confirm-modal, #bl-rule-transfer-modal, #bl-preset-import-choice-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay, .bl-toast').remove();
+
+    const ensureExtensionPanelEntry = () => {
+        if ($('#bl-extension-settings-entry').length || !$('#extensions_settings').length) return;
+        $('#extensions_settings').append(`
+            <div id="bl-extension-settings-entry" class="inline-drawer bl-extension-settings-entry">
+                <div class="inline-drawer-toggle inline-drawer-header">
+                    <b>屏蔽词净化助手</b>
+                    <div class="inline-drawer-icon fa-solid fa-circle-chevron-down down interactable"></div>
+                </div>
+                <div class="inline-drawer-content">
+                    <button id="bl-wand-btn-panel" type="button" class="menu_button bl-extension-open-btn">
+                        <i class="fa-solid fa-language fa-fw"></i>
+                        <span>打开词汇映射</span>
+                    </button>
+                </div>
+            </div>
+        `);
+    };
 
     if (!$('#bl-wand-btn').length) {
         $('#data_bank_wand_container').append(`
@@ -178,6 +196,8 @@ export function setupUI() {
                 <i class="fa-solid fa-language fa-fw"></i><span>词汇映射</span>
             </div>`);
     }
+    ensureExtensionPanelEntry();
+    window.setTimeout(ensureExtensionPanelEntry, 500);
 
     $('body').append(`
         <div id="bl-purifier-popup" data-bl-theme="auto" style="display:none;">
@@ -209,7 +229,7 @@ export function setupUI() {
 
             <div class="bl-action-buttons">
                 <button id="bl-open-new-rule-btn" class="bl-btn-secondary"><i class="fas fa-folder-plus"></i> 新增规则分组</button>
-                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 范围标签</button>
+                <button class="bl-btn-secondary" id="bl-scope-tags-btn"><i class="fas fa-tags"></i> 净化模式</button>
                 <button class="bl-btn-secondary" id="bl-batch-toggle"><i class="fas fa-list-check"></i> 批量编辑模式</button>
             </div>
 
@@ -354,24 +374,46 @@ export function setupUI() {
         <div id="bl-scope-tags-modal" class="bl-modal-shell">
             <div class="bl-modal-card bl-scope-tags-card">
                 <div class="bl-scope-tags-header">
-                    <h3 class="bl-edit-modal-title bl-scope-tags-title"><i class="fas fa-tags"></i> 范围标签</h3>
+                    <h3 class="bl-scope-tags-title"><i class="fas fa-tag"></i> 预设净化模式</h3>
                     <button id="bl-scope-tags-close" type="button" class="bl-icon-btn bl-scope-tags-close" title="关闭"><i class="fas fa-times"></i></button>
                 </div>
-                <div class="bl-scope-tags-editor">
-                    <label class="bl-field-label" for="bl-scope-tag-input">可直接填写标签，也可用“标签//备注”设置前面的徽章说明</label>
-                    <div class="bl-scope-tags-input-row">
-                        <input type="text" id="bl-scope-tag-input" class="bl-input bl-scope-tag-input" placeholder="例如：&lt;horae&gt;//horae记忆表格 或直接输入 &lt;horae&gt;">
-                        <button id="bl-scope-tag-reset" type="button" class="bl-icon-btn bl-scope-tag-reset" title="取消编辑" hidden><i class="fas fa-rotate-left"></i></button>
-                        <button id="bl-scope-tag-save" type="button" class="bl-rule-search-submit bl-scope-tag-save">新增标签</button>
+
+                <section class="bl-scope-mode-section" aria-labelledby="bl-scope-mode-title">
+                    <div id="bl-scope-mode-title" class="bl-scope-section-title">当前模式</div>
+                    <div class="bl-scope-mode-segment" role="group" aria-label="范围标签净化模式">
+                        <button id="bl-scope-mode-protect" type="button" class="bl-scope-mode-option" data-mode="protect">保护特定标签</button>
+                        <button id="bl-scope-mode-cleanse" type="button" class="bl-scope-mode-option" data-mode="cleanse-inside">净化特定标签</button>
+                    </div>
+                    <div id="bl-scope-tags-hint" class="bl-scope-tags-hint"></div>
+                </section>
+
+                <section class="bl-scope-manage-section" aria-labelledby="bl-scope-manage-title">
+                    <div class="bl-scope-manage-head">
+                        <h4 id="bl-scope-manage-title" class="bl-scope-section-title">管理标签</h4>
+                        <button id="bl-scope-tag-add-open" type="button" class="bl-icon-btn bl-scope-tag-add-open" title="新增标签" aria-label="新增标签"><i class="fas fa-plus"></i></button>
+                    </div>
+                    <div id="bl-scope-tags-list" class="bl-scope-tags-list"></div>
+                </section>
+            </div>
+
+            <div id="bl-scope-tag-editor-modal" class="bl-scope-tag-editor-modal" hidden>
+                <div class="bl-scope-tag-editor-card" role="dialog" aria-modal="true" aria-labelledby="bl-scope-tag-editor-title">
+                    <h3 id="bl-scope-tag-editor-title" class="bl-scope-tag-editor-title">新增标签</h3>
+                    <div class="bl-scope-tag-editor-field">
+                        <label class="bl-field-label" for="bl-scope-tag-input">输入标签</label>
+                        <input type="text" id="bl-scope-tag-input" class="bl-input bl-scope-tag-input" placeholder="如：UpdateVariable 或 <horae>" autocomplete="off">
+                        <div class="bl-scope-tag-field-help">填写标签名或完整起始标签，会自动补齐；标签名可用字母或数字开头，可包含冒号、下划线和短横线。</div>
+                    </div>
+                    <div class="bl-scope-tag-editor-field">
+                        <label class="bl-field-label" for="bl-scope-tag-label-input">输入备注</label>
+                        <input type="text" id="bl-scope-tag-label-input" class="bl-input bl-scope-tag-input" placeholder="如：选项（选填）" autocomplete="off">
                     </div>
                     <div id="bl-scope-tag-error" class="bl-field-error" aria-live="polite"></div>
-                    <button id="bl-scope-tag-mode-toggle" type="button" class="bl-scope-tag-mode-toggle" title="切换范围标签模式">
-                        <i id="bl-scope-tag-mode-icon" class="fas fa-shield-halved"></i>
-                        <span id="bl-scope-tag-mode-text">标签内保护</span>
-                    </button>
-                    <div id="bl-scope-tags-hint" class="bl-scope-tags-hint">格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。启用后，<strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 包住的内容会跳过净化；如果不写备注，前面的徽章默认显示“范围”。</div>
+                    <div class="bl-scope-tag-editor-actions">
+                        <button id="bl-scope-tag-reset" type="button" class="bl-scope-tag-cancel">取消</button>
+                        <button id="bl-scope-tag-save" type="button" class="bl-scope-tag-confirm">确认</button>
+                    </div>
                 </div>
-                <div id="bl-scope-tags-list" class="bl-scope-tags-list"></div>
             </div>
         </div>
     `);
@@ -638,19 +680,21 @@ export function renderScopeTagsModal() {
         if (scopeTag.id === editId) cotDisplayTag.id = scopeTag.id;
     });
 
-    $('#bl-scope-tag-save').text(isEditing ? '更新标签' : '新增标签');
-    $('#bl-scope-tag-reset').prop('hidden', !isEditing);
-    $('#bl-scope-tag-mode-toggle')
+    $('#bl-scope-tag-editor-title').text(isEditing ? '编辑标签' : '新增标签');
+    $('#bl-scope-tag-save').text('确认');
+    $('#bl-scope-tag-reset').text('取消');
+    $('#bl-scope-mode-protect')
+        .toggleClass('is-active', !isCleanseInsideMode)
+        .attr('aria-pressed', String(!isCleanseInsideMode));
+    $('#bl-scope-mode-cleanse')
         .toggleClass('is-active', isCleanseInsideMode)
-        .attr('title', isCleanseInsideMode ? '当前仅净化启用标签内的内容，点击切回标签内保护' : '当前启用标签内保护，点击切到仅净化标签内');
-    $('#bl-scope-tag-mode-icon').attr('class', isCleanseInsideMode ? 'fas fa-filter' : 'fas fa-shield-halved');
-    $('#bl-scope-tag-mode-text').text(isCleanseInsideMode ? '仅净化标签内' : '标签内保护');
-    $('#bl-scope-tags-hint').html(isCleanseInsideMode
-        ? '格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。当前只净化已启用的 <strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 标签内内容，标签外全部保留。'
-        : '格式示例：<strong>&lt;UpdateVariable&gt;//MVU变量</strong>。当前会保护已启用的 <strong>&lt;tag&gt;...&lt;/tag&gt;</strong> 标签内内容，标签外照常净化。');
+        .attr('aria-pressed', String(isCleanseInsideMode));
+    $('#bl-scope-tags-hint').text(isCleanseInsideMode
+        ? '当前模式下，只会删除或替换列表内标签的内容，标签外内容会被保留。'
+        : '当前模式下，会保护列表内标签的内容，标签外内容将被删除或替换。');
 
     if (displayScopeTags.length === 0) {
-        $list.html(`<div class="bl-empty-state">${isCleanseInsideMode ? '当前没有范围标签，新增并启用后才会净化标签内内容。' : '当前没有范围标签，新增后即可按标签跳过净化。'}</div>`);
+        $list.html(`<div class="bl-empty-state">${isCleanseInsideMode ? '当前没有标签，新增并启用后才会净化标签内内容。' : '当前没有标签，新增后即可保护对应标签内容。'}</div>`);
         return;
     }
 
@@ -659,25 +703,30 @@ export function renderScopeTagsModal() {
         const checkedAttr = isEnabled ? 'checked' : '';
         const activeClass = scopeTag.id === editId ? 'is-active' : '';
         const disabledClass = isEnabled ? '' : 'bl-is-disabled';
-        const badgeText = scopeTag.label || '范围';
+        const labelText = String(scopeTag.label || '').trim();
         const rangeText = isCotScopeTagEntry(scopeTag)
             ? COT_SCOPE_TAG_DISPLAY_TEXT
             : `${scopeTag.startTag} ... ${scopeTag.endTag}`;
-        const actionButtons = `
-            <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签"><i class="fas fa-pen"></i></button>
-            <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签"><i class="fas fa-trash"></i></button>
-        `;
+        const primaryText = labelText || rangeText;
+        const secondaryText = labelText ? rangeText : '';
+        const chipTitle = secondaryText ? `${primaryText} · ${secondaryText}` : primaryText;
         return `
             <div class="bl-scope-tag-chip ${activeClass} ${disabledClass}" data-id="${safeHtml(scopeTag.id)}">
-                <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="点击编辑该范围标签">
-                    <span class="bl-tag">${safeHtml(badgeText)}</span>
-                    <span class="bl-scope-tag-chip-text">${safeHtml(rangeText)}</span>
-                </button>
-                <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该范围标签">
+                <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该标签">
                     <input type="checkbox" class="bl-scope-tag-toggle" data-id="${safeHtml(scopeTag.id)}" ${checkedAttr}>
                     <span class="bl-custom-checkbox bl-square"></span>
                 </label>
-                ${actionButtons}
+                <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="${safeHtml(chipTitle)}">
+                    <span class="bl-scope-tag-chip-title">${safeHtml(primaryText)}</span>
+                    ${secondaryText ? `<span class="bl-scope-tag-chip-text">${safeHtml(secondaryText)}</span>` : ''}
+                </button>
+                <span class="bl-scope-tag-row-divider" aria-hidden="true"></span>
+                <div class="bl-scope-tag-actions">
+                    <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-up"></i></button>
+                    <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-down"></i></button>
+                    <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签" aria-label="编辑标签"><i class="fas fa-pen"></i></button>
+                    <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签" aria-label="删除标签"><i class="fas fa-trash"></i></button>
+                </div>
             </div>
         `;
     }).join('');
@@ -694,17 +743,16 @@ export function openScopeTagsModal() {
         .fadeIn(150, function() {
             $(this).css('display', 'flex');
         });
-    window.setTimeout(() => {
-        $('#bl-scope-tag-input').trigger('focus');
-    }, 20);
 }
 
 export function closeScopeTagsModal(options = {}) {
     const { reset = false } = options;
     if (reset) {
         $('#bl-scope-tag-input').val('').data('scope-edit-id', '');
+        $('#bl-scope-tag-label-input').val('');
         $('#bl-scope-tag-error').removeClass('is-visible').text('');
         $('#bl-scope-tag-input').removeClass('bl-invalid').removeAttr('aria-invalid');
+        $('#bl-scope-tag-editor-modal').prop('hidden', true);
         renderScopeTagsModal();
     }
     $('#bl-scope-tags-modal').fadeOut(150);
@@ -737,14 +785,28 @@ export function focusLatestRuleCard() {
 
 export function showDeepCleanOverlay() {
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
+    runtimeState.deepCleanCancelRequested = false;
     $('body').append(`
         <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}">
-            <h2 class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> 正在执行全方位深度清理 (包含角色卡与世界书)...</h2>
-            <p id="bl-loading-status">正在初始化清理任务，请稍候。</p>
-            <div class="bl-progress-track"><div id="bl-progress-fill" class="bl-progress-fill"></div></div>
-            <p id="bl-progress-percent" class="bl-progress-percent">0%</p>
+            <div class="bl-loading-panel" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
+                <div class="bl-loading-head">
+                    <h2 id="bl-loading-title" class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> 正在执行全方位深度清理</h2>
+                    <button id="bl-loading-cancel" type="button" class="bl-loading-cancel" title="停止深度清理">停止</button>
+                </div>
+                <p id="bl-loading-status">正在初始化清理任务，请稍候。</p>
+                <div class="bl-progress-track"><div id="bl-progress-fill" class="bl-progress-fill"></div></div>
+                <p id="bl-progress-percent" class="bl-progress-percent">0%</p>
+            </div>
         </div>
     `);
+    $('#bl-loading-cancel').off('click').on('click', () => {
+        runtimeState.deepCleanCancelRequested = true;
+        $('#bl-loading-cancel')
+            .prop('disabled', true)
+            .addClass('is-disabled')
+            .text('停止中');
+        $('#bl-loading-status').text('正在停止深度清理，请等待当前批次收尾。');
+    });
 }
 
 export function updateDeepCleanOverlay(progressRatio, statusText) {

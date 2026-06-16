@@ -29,6 +29,13 @@ function isRevertedMessageObject(value) {
     return !!(value && typeof value === 'object' && value.__bl_is_reverted === true);
 }
 
+function createDeepCleanCancelledError(totalChanges = 0, partialChanges = 0) {
+    const err = new Error('DEEP_CLEAN_CANCELLED');
+    err.partialChanges = partialChanges;
+    err.totalChanges = totalChanges;
+    return err;
+}
+
 /**
  * 同步深度清理对象中的所有字符串字段。
  * @param {object} rootObj 待清理对象。
@@ -82,19 +89,20 @@ export async function safeDeepScrub(rootObj, isGlobalSettings = false, options =
     const staticDeadline = Number.isFinite(options.deadline) ? options.deadline : Infinity;
     const getDeadline = typeof options.getDeadline === 'function' ? options.getDeadline : () => staticDeadline;
     const onTimeout = typeof options.onTimeout === 'function' ? options.onTimeout : null;
+    const shouldCancel = typeof options.shouldCancel === 'function' ? options.shouldCancel : null;
     const completedChanges = Number.isFinite(Number(options.completedChanges)) ? Number(options.completedChanges) : 0;
     let iterations = 0;
 
     const assertWithinDeadline = async () => {
+        if (shouldCancel && shouldCancel()) {
+            throw createDeepCleanCancelledError(completedChanges + changes, changes);
+        }
         const deadline = Number(getDeadline());
         if (!Number.isFinite(deadline) || Date.now() <= deadline) return;
         if (onTimeout) {
             const shouldContinue = await onTimeout({ visited: seen.size, pending: stack.length, changes });
             if (shouldContinue === true) return;
-            const err = new Error('DEEP_CLEAN_CANCELLED');
-            err.partialChanges = changes;
-            err.totalChanges = completedChanges + changes;
-            throw err;
+            throw createDeepCleanCancelledError(completedChanges + changes, changes);
         }
         const err = new Error('DEEP_CLEAN_TIMEOUT');
         err.partialChanges = changes;
@@ -166,6 +174,7 @@ export async function performDeepCleanse() {
         return;
     }
 
+    runtimeState.deepCleanCancelRequested = false;
     showDeepCleanOverlay();
     await new Promise(r => setTimeout(r, 100));
 
@@ -196,6 +205,7 @@ export async function performDeepCleanse() {
             scrubbedItems += await safeDeepScrub(phase.root, phase.isGlobalSettings, {
                 completedChanges: scrubbedItems,
                 getDeadline: () => deadline,
+                shouldCancel: () => runtimeState.deepCleanCancelRequested === true,
                 onTimeout: async ({ visited, pending, changes }) => {
                     const elapsed = Math.round((Date.now() - startAt) / 1000);
                     updateDeepCleanOverlay(
@@ -228,6 +238,9 @@ export async function performDeepCleanse() {
             updateDeepCleanOverlay((i + 1) / phases.length, `已完成 ${phase.label}，准备进入下一阶段...`);
         }
 
+        if (runtimeState.deepCleanCancelRequested === true) {
+            throw createDeepCleanCancelledError(scrubbedItems, 0);
+        }
         updateDeepCleanOverlay(0.97, '正在同步数据到磁盘，请稍候。');
 
         if (scrubbedItems > 0) {
@@ -262,5 +275,7 @@ export async function performDeepCleanse() {
         } else {
             alert('清理失败，请查看控制台。');
         }
+    } finally {
+        runtimeState.deepCleanCancelRequested = false;
     }
 }
