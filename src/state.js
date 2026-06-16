@@ -61,6 +61,7 @@ export const runtimeState = {
     batchSelectedRuleIds: [],
     currentTransferRuleIndexes: [],
     importPresetDraft: null,
+    deepCleanCancelRequested: false,
 };
 
 const appContext = {

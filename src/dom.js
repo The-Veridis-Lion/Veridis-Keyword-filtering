@@ -97,7 +97,7 @@ export function isProtectedNode(node) {
     if (node.closest('.name_text')) return true;
     if (isPersonaDescriptionNode(node)) return true;
     if (shouldProtectReasoningNode(node)) return true;
-    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal')) return true;
+    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-preset-import-choice-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay')) return true;
     if (shouldProtectSkipUserNode(node)) return true;
     if (isKnownPluginContainerNode(node)) return true;
     if (isScriptEditorDialogNode(node)) return true;
@@ -129,6 +129,42 @@ export function isRevertedMessageDomNode(node) {
     return msg?.__bl_is_reverted === true;
 }
 
+function shouldSkipTextNode(node) {
+    const parent = node?.parentNode;
+    if (!parent) return true;
+    if (isProtectedNode(parent) || isRevertedMessageDomNode(parent)) return true;
+    if (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))) return true;
+    if (getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(parent)) return true;
+    return false;
+}
+
+function collectPurifiableTextNodes(rootNode) {
+    const nodes = [];
+    if (!rootNode) return nodes;
+    const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT, null, false);
+    let node;
+    while (node = walker.nextNode()) {
+        if (!node.nodeValue || shouldSkipTextNode(node)) continue;
+        nodes.push(node);
+    }
+    return nodes;
+}
+
+function projectTextAcrossNodes(textNodes, nextText) {
+    let offset = 0;
+    for (let i = 0; i < textNodes.length; i++) {
+        const node = textNodes[i];
+        const originalLength = String(node.nodeValue || '').length;
+        const remainingLength = Math.max(0, nextText.length - offset);
+        const takeLength = i === textNodes.length - 1
+            ? remainingLength
+            : Math.min(originalLength, remainingLength);
+        const projected = takeLength > 0 ? nextText.slice(offset, offset + takeLength) : '';
+        if (node.nodeValue !== projected) node.nodeValue = projected;
+        offset += takeLength;
+    }
+}
+
 /**
  * 对指定 DOM 子树执行净化替换。
  * @param {Node} rootNode 待净化根节点。
@@ -144,9 +180,7 @@ export function purifyDOM(rootNode) {
 
 let node;
     while (node = walker.nextNode()) {
-        const parent = node.parentNode;
-        if (parent && (isProtectedNode(parent) || isRevertedMessageDomNode(parent) || (document.activeElement && (document.activeElement === parent || parent.contains(document.activeElement))))) continue;
-        if (parent && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(parent)) continue;
+        if (shouldSkipTextNode(node)) continue;
 
         const original = node.nodeValue || '';
         if (original.trim() === '') continue;
@@ -156,6 +190,33 @@ let node;
             : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
         if (original !== nextValue) node.nodeValue = nextValue;
     }
+}
+
+/**
+ * 流式输出时按整条消息做视觉净化，兼容移动端文本节点碎裂导致的跨节点漏命中。
+ * 该函数只改 DOM 显示，不写入 chat 数据；生成结束后仍由数据净化流程落盘。
+ * @param {Element} messageNode 消息 DOM 节点。
+ * @returns {boolean} 是否发生视觉替换。
+ */
+export function purifyStreamingMessageDom(messageNode) {
+    if (!messageNode || messageNode.nodeType !== 1 || runtimeState.isStreamingGeneration !== true) return false;
+    if (isRevertedMessageDomNode(messageNode)) return false;
+
+    buildProcessors();
+    if (runtimeState.activeProcessors.length === 0) return false;
+
+    const rootNode = messageNode.querySelector?.('.mes_text') || messageNode;
+    const textNodes = collectPurifiableTextNodes(rootNode);
+    if (textNodes.length <= 1) return false;
+
+    const originalText = textNodes.map((node) => node.nodeValue || '').join('');
+    if (!originalText.trim()) return false;
+
+    const nextText = applyVisualMask(originalText, { domSafeOnly: true });
+    if (originalText === nextText) return false;
+
+    projectTextAcrossNodes(textNodes, nextText);
+    return true;
 }
 
 /**

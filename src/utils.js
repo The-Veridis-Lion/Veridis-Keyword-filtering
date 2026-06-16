@@ -3,7 +3,8 @@ import { logger } from './log.js';
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 const REGEX_LITERAL_ALLOWED_FLAGS = new Set(['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']);
-const SCOPE_TAG_START_PATTERN = /^<([A-Za-z][A-Za-z0-9:_-]*)>$/;
+const SCOPE_TAG_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
+const SCOPE_TAG_START_PATTERN = /^<([A-Za-z0-9][A-Za-z0-9:_-]*)>$/;
 const SCOPE_TAG_LABEL_SEPARATOR = '//';
 const DEFAULT_SCOPE_TAG_LABEL = '范围';
 const BUILTIN_SCOPE_TAG_DEFS = [
@@ -196,7 +197,7 @@ export function createScopeTagId() {
 export function parseScopeTagInput(input) {
     const source = String(input ?? '').trim();
     if (!source) {
-        return { ok: false, error: { message: '请输入范围标签，例如 <horae> 或 <horae>//horae记忆表格。' } };
+        return { ok: false, error: { message: '请输入标签名或完整起始标签，例如 horae、<horae>，备注可填在下方。' } };
     }
 
     let label = '';
@@ -208,11 +209,17 @@ export function parseScopeTagInput(input) {
     }
 
     const match = tagSource.match(SCOPE_TAG_START_PATTERN);
-    if (!match) {
-        return { ok: false, error: { message: '标签部分仅支持无属性的完整起始标签，例如 <horae>；也可写成 <horae>//备注。' } };
+    const bareTagName = SCOPE_TAG_NAME_PATTERN.test(tagSource) ? tagSource : '';
+    if (!match && !bareTagName) {
+        const bracketMatch = tagSource.match(/^<([^<>/\s][^<>]*)>$/);
+        const rawName = bracketMatch ? bracketMatch[1].trim() : tagSource.replace(/[<>]/g, '').trim();
+        if (rawName && !SCOPE_TAG_NAME_PATTERN.test(rawName)) {
+            return { ok: false, error: { message: '标签名必须以字母或数字开头，只能包含字母、数字、冒号、下划线和短横线，例如 horae 或 UpdateVariable。' } };
+        }
+        return { ok: false, error: { message: '请输入标签名或无属性起始标签，例如 horae、UpdateVariable、<horae>。' } };
     }
 
-    const tagName = match[1];
+    const tagName = match ? match[1] : bareTagName;
     return {
         ok: true,
         value: {

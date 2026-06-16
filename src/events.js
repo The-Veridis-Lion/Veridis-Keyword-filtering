@@ -44,7 +44,7 @@ import {
     refreshMessageDisplay,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
+import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
@@ -219,6 +219,13 @@ export function initRealtimeInterceptor() {
         node.querySelectorAll?.('.mes').forEach((mes) => bucket.push(mes));
     };
 
+    const collectClosestTrackableMessageNode = (node, bucket) => {
+        if (!node) return;
+        const element = node.nodeType === 1 ? node : node.parentElement;
+        const mesNode = element?.matches?.('.mes') ? element : element?.closest?.('.mes');
+        if (mesNode && isTrackableMessageDomNode(mesNode)) bucket.add(mesNode);
+    };
+
     const primePendingComparisonForNode = (messageNode, options = {}) => {
         const { chat } = getAppContext();
         const index = resolveNodeMessageIndex(messageNode);
@@ -235,6 +242,7 @@ export function initRealtimeInterceptor() {
     if (runtimeState.activeProcessors.length === 0) return;
         
         const touchedMessageIndices = new Set();
+        const streamingMessageNodes = new Set();
         isPurifying = true;
         try {
             for (let mi = 0; mi < mutations.length; mi++) {
@@ -250,6 +258,7 @@ export function initRealtimeInterceptor() {
                             ? applyVisualMask(original, { domSafeOnly: true })
                             : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                         if (original !== nextValue) node.nodeValue = nextValue;
+                        if (isStreaming) collectClosestTrackableMessageNode(node, streamingMessageNodes);
                         } else if (node.nodeType === 1) {
                             purifyDOM(node);
                             const messageNodes = [];
@@ -257,6 +266,7 @@ export function initRealtimeInterceptor() {
                         messageNodes.forEach((mesNode) => {
                             const index = primePendingComparisonForNode(mesNode, { skipPersist: isStreaming });
                             if (index >= 0) touchedMessageIndices.add(index);
+                            if (isStreaming) streamingMessageNodes.add(mesNode);
                         });
                     }
                 }
@@ -269,7 +279,16 @@ export function initRealtimeInterceptor() {
                         ? applyVisualMask(original, { domSafeOnly: true })
                         : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                     if (original !== nextValue) m.target.nodeValue = nextValue;
+                    if (isStreaming) collectClosestTrackableMessageNode(m.target, streamingMessageNodes);
                 }
+            }
+
+            if (isStreaming) {
+                streamingMessageNodes.forEach((mesNode) => {
+                    if (!purifyStreamingMessageDom(mesNode)) return;
+                    const index = primePendingComparisonForNode(mesNode, { skipPersist: true });
+                    if (index >= 0) touchedMessageIndices.add(index);
+                });
             }
         } finally {
             chatObserver.takeRecords();
@@ -369,7 +388,10 @@ export function bindEvents() {
 
     function closeImportChoiceModal() {
         runtimeState.importPresetDraft = null;
-        $('#bl-preset-import-choice-modal').hide();
+        $('#bl-preset-import-choice-modal')
+            .removeClass('bl-is-open')
+            .attr('aria-hidden', 'true')
+            .hide();
     }
 
     function openImportChoiceModal(rules, defaultName) {
@@ -382,8 +404,15 @@ export function bindEvents() {
         runtimeState.importPresetDraft = { rules: normalizedRules, defaultName: presetName };
         $('#bl-import-preset-name').val(presetName);
         $('#bl-import-choice-summary').text(`已读取 ${normalizedRules.length} 个规则分组。只导入不会修改当前规则；切换使用和临时预览会替换当前规则并重新净化。`);
-        $('#bl-preset-import-choice-modal').css('display', 'flex');
-        window.setTimeout(() => $('#bl-import-preset-name').trigger('focus').trigger('select'), 0);
+        const $modal = $('#bl-preset-import-choice-modal');
+        $modal.detach().appendTo(document.body);
+        $modal
+            .attr('aria-hidden', 'false')
+            .addClass('bl-is-open')
+            .css('display', 'flex');
+        // iOS browsers sometimes need a layout pass after the file picker returns.
+        $modal[0]?.getBoundingClientRect();
+        window.setTimeout(() => $('#bl-import-preset-name').trigger('focus').trigger('select'), 50);
     }
 
     function confirmBeforeImportChoiceIfUnsaved() {
@@ -566,8 +595,56 @@ export function bindEvents() {
     const getScopeTagEditId = () => String($('#bl-scope-tag-input').data('scope-edit-id') || '');
     const resetScopeTagEditor = () => {
         $('#bl-scope-tag-input').val('').data('scope-edit-id', '');
+        $('#bl-scope-tag-label-input').val('');
+        $('#bl-scope-tag-editor-modal').prop('hidden', true);
         clearScopeTagValidationState();
         renderScopeTagsModal();
+    };
+    const normalizeScopeTagDraftStart = (tagText) => {
+        const trimmed = String(tagText || '').trim();
+        if (/^<[^<>/\s]+>$/.test(trimmed)) return trimmed;
+        return `<${trimmed.replace(/[<>]/g, '')}>`;
+    };
+    const buildScopeTagInputFromEditor = () => {
+        const rawTagText = String($('#bl-scope-tag-input').val() || '').trim();
+        const labelText = String($('#bl-scope-tag-label-input').val() || '').trim();
+        if (!rawTagText) return '';
+        if (rawTagText.includes('//')) {
+            const [tagPart, ...labelParts] = rawTagText.split('//');
+            const inlineLabel = labelParts.join('//').trim();
+            const normalizedLabel = labelText || inlineLabel;
+            const tagSource = normalizeScopeTagDraftStart(tagPart);
+            return normalizedLabel ? `${tagSource}//${normalizedLabel}` : tagSource;
+        }
+        const tagSource = normalizeScopeTagDraftStart(rawTagText);
+        return labelText ? `${tagSource}//${labelText}` : tagSource;
+    };
+    const openScopeTagEditor = (scopeTag = null) => {
+        const formattedInput = scopeTag ? formatScopeTagInput(scopeTag) : '';
+        const tagSource = formattedInput.split('//')[0]?.trim() || '';
+        const tagName = tagSource.match(/^<([^<>/\s]+)>$/)?.[1] || tagSource;
+        $('#bl-scope-tag-input')
+            .val(scopeTag ? tagName : '')
+            .data('scope-edit-id', scopeTag?.id || '');
+        $('#bl-scope-tag-label-input').val(scopeTag?.label || '');
+        clearScopeTagValidationState();
+        renderScopeTagsModal();
+        $('#bl-scope-tag-editor-modal').prop('hidden', false);
+        window.setTimeout(() => {
+            $('#bl-scope-tag-input').trigger('focus');
+        }, 20);
+    };
+    const setScopeTagMode = (mode) => {
+        const nextMode = mode === 'cleanse-inside' ? 'cleanse-inside' : 'protect';
+        if (settings.scopeTagMode === nextMode) {
+            renderScopeTagsModal();
+            return;
+        }
+        settings.scopeTagMode = nextMode;
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+        performGlobalCleanse();
+        showToast(settings.scopeTagMode === 'cleanse-inside' ? '已切换为净化特定标签' : '已切换为保护特定标签');
     };
     const persistScopeTags = (scopeTags, options = {}) => {
         const sourceScopeTags = normalizeScopeTagList(scopeTags);
@@ -583,7 +660,7 @@ export function bindEvents() {
         return normalized;
     };
     const saveScopeTag = () => {
-        const rawInput = String($('#bl-scope-tag-input').val() || '').trim();
+        const rawInput = buildScopeTagInputFromEditor();
         const parsed = parseScopeTagInput(rawInput);
         if (!parsed.ok) {
             applyScopeTagValidationError(parsed.error.message);
@@ -629,7 +706,7 @@ export function bindEvents() {
         return true;
     };
 
-    $(document).off('click', '#bl-wand-btn').on('click', '#bl-wand-btn', () => {
+    $(document).off('click', '#bl-wand-btn, #bl-wand-btn-panel').on('click', '#bl-wand-btn, #bl-wand-btn-panel', () => {
         updateToolbarUI();
         renderTags();
         $('#bl-purifier-popup').css('display', 'flex').hide().fadeIn(200);
@@ -789,12 +866,16 @@ export function bindEvents() {
         openScopeTagsModal();
     });
 
+    $(document).off('click', '#bl-scope-tag-add-open').on('click', '#bl-scope-tag-add-open', () => {
+        openScopeTagEditor();
+    });
+
     $(document).off('click', '#bl-scope-tag-mode-toggle').on('click', '#bl-scope-tag-mode-toggle', () => {
-        settings.scopeTagMode = settings.scopeTagMode === 'cleanse-inside' ? 'protect' : 'cleanse-inside';
-        saveSettingsDebounced();
-        renderScopeTagsModal();
-        performGlobalCleanse();
-        showToast(settings.scopeTagMode === 'cleanse-inside' ? '已切换为仅净化标签内' : '已切换为标签内保护');
+        setScopeTagMode(settings.scopeTagMode === 'cleanse-inside' ? 'protect' : 'cleanse-inside');
+    });
+
+    $(document).off('click', '#bl-scope-mode-protect, #bl-scope-mode-cleanse').on('click', '#bl-scope-mode-protect, #bl-scope-mode-cleanse', function() {
+        setScopeTagMode(String($(this).data('mode') || 'protect'));
     });
 
     $(document).off('click', '#bl-scope-tags-close').on('click', '#bl-scope-tags-close', () => {
@@ -806,6 +887,12 @@ export function bindEvents() {
     });
 
     $(document).off('click', '#bl-scope-tag-save').on('click', '#bl-scope-tag-save', () => {
+        saveScopeTag();
+    });
+
+    $(document).off('keydown', '#bl-scope-tag-label-input').on('keydown', '#bl-scope-tag-label-input', function(e) {
+        if (e.key !== 'Enter') return;
+        e.preventDefault();
         saveScopeTag();
     });
 
@@ -858,14 +945,16 @@ export function bindEvents() {
         if (e.target && e.target.id === 'bl-scope-tags-modal') closeScopeTagsModal({ reset: true });
     });
 
+    $(document).off('click', '#bl-scope-tag-editor-modal').on('click', '#bl-scope-tag-editor-modal', function(e) {
+        if (e.target && e.target.id === 'bl-scope-tag-editor-modal') resetScopeTagEditor();
+    });
+
     $(document).off('click', '.bl-scope-tag-chip-main, .bl-scope-tag-edit').on('click', '.bl-scope-tag-chip-main, .bl-scope-tag-edit', function(e) {
         e.preventDefault();
         const tagId = String($(this).attr('data-id') || '');
         const scopeTag = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed).find((tag) => tag.id === tagId);
         if (!scopeTag) return;
-        $('#bl-scope-tag-input').val(formatScopeTagInput(scopeTag)).data('scope-edit-id', scopeTag.id).trigger('focus');
-        clearScopeTagValidationState();
-        renderScopeTagsModal();
+        openScopeTagEditor(scopeTag);
     });
 
     $(document).off('change', '.bl-scope-tag-toggle').on('change', '.bl-scope-tag-toggle', function() {
@@ -1752,10 +1841,26 @@ export function bindEvents() {
     $(document).off('click', '#bl-preset-import').on('click', '#bl-preset-import', function() {
         const input = document.createElement('input');
         input.type = 'file';
-        input.accept = '.json';
+        input.accept = '.json,application/json';
+        input.style.position = 'fixed';
+        input.style.left = '-1000px';
+        input.style.top = '0';
+        input.style.width = '1px';
+        input.style.height = '1px';
+        input.style.opacity = '0';
+        input.style.pointerEvents = 'none';
+        document.body.appendChild(input);
+        const cleanupInput = () => {
+            window.setTimeout(() => {
+                if (input.parentNode) input.parentNode.removeChild(input);
+            }, 0);
+        };
         input.onchange = e => {
             const file = e.target.files[0];
-            if (!file) return;
+            if (!file) {
+                cleanupInput();
+                return;
+            }
             const reader = new FileReader();
             reader.onload = event => {
                 try {
@@ -1767,11 +1872,15 @@ export function bindEvents() {
                     openImportChoiceModal(importedRules, defaultName);
                 } catch (err) {
                     alert("导入失败：检查文件是否为合法规则数组。");
+                } finally {
+                    cleanupInput();
                 }
             };
+            reader.onerror = cleanupInput;
             reader.readAsText(file);
         };
         input.click();
+        window.setTimeout(cleanupInput, 120000);
     });
 
     $(document).off('click', '#bl-import-only').on('click', '#bl-import-only', () => importPresetOnly());
