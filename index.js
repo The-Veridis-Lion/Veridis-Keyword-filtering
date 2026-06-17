@@ -1,5 +1,6 @@
 import * as extensionsModule from "../../../extensions.js";
-import { saveSettingsDebounced, eventSource, event_types, saveChat, chat_metadata, chat } from "../../../../script.js";
+import * as scriptModule from "../../../../script.js";
+import { saveSettingsDebounced, eventSource, event_types, saveChat as importedSaveChat, chat_metadata, chat } from "../../../../script.js";
 
 import { defaultSettings, extensionName, initAppContext, runtimeState, markRulesDataDirty, normalizeDiffTrackedMessageLimit } from './src/state.js';
 import { logger } from './src/log.js';
@@ -8,6 +9,7 @@ import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPr
 import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.js';
 import { performGlobalCleanse } from './src/core.js';
 import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList } from './src/utils.js';
+import { isBaiBaiToolkitInstalled, isTauriTavernHost, waitForTauriTavernReady } from './src/platform.js';
 
 const { extension_settings, getContext: getSillyTavernContext } = extensionsModule;
 
@@ -16,10 +18,11 @@ initAppContext({
     saveSettingsDebounced,
     eventSource,
     event_types,
-    saveChat,
+    saveChat: importedSaveChat,
     chat_metadata,
     chat,
     getSillyTavernContext,
+    markWindowedChatDirtyFromIndex: scriptModule.markWindowedChatDirtyFromIndex,
 });
 
 function ensureSettingsShape() {
@@ -113,10 +116,13 @@ jQuery(() => {
     migrateOldData();
     ensureSettingsShape();
 
-    const boot = () => {
+    const boot = async () => {
         if (runtimeState.isBooted) return;
         runtimeState.isBooted = true;
+        await waitForTauriTavernReady();
         logger.info('[屏蔽词净化助手] 启动初始化开始...');
+        if (isTauriTavernHost()) logger.info('[屏蔽词净化助手] 已启用 TauriTavern 兼容层');
+        if (isBaiBaiToolkitInstalled()) logger.info('[屏蔽词净化助手] 已启用柏宝箱兼容层');
         setupUI();
         bindEvents();
         initRealtimeInterceptor();

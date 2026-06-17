@@ -52,12 +52,14 @@ export const runtimeState = {
     chatSaveTimer: null,
     chatSaveInFlight: false,
     pendingChatSave: false,
+    chatSaveDelayCount: 0,
     isBooted: false,
     diffSnippetsCache: new Map(),
     diffRawSourceCache: new Map(),
     nonStreamingRawMessageCache: new Map(),
     diffMessageStates: new Map(),
     trackedDiffMessageOrder: [],
+    hostRenderedEventSuppressUntil: new Map(),
     currentDiffIndex: undefined,
     diffModalRefresh: null,
     diffRelatedRuleMode: false,
@@ -77,6 +79,7 @@ const appContext = {
     chat_metadata: null,
     chat: null,
     getSillyTavernContext: null,
+    markWindowedChatDirtyFromIndex: null,
 };
 
 export function initAppContext(context) {

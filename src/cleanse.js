@@ -2,6 +2,7 @@ import { defaultDeepCleanTimeoutSec, extensionName, getAppContext, runtimeState 
 import { logger } from './log.js';
 import { applyScopedReplacements, buildProcessors } from './core.js';
 import { showDeepCleanOverlay, updateDeepCleanOverlay } from './ui.js';
+import { markHostChatDirtyFromIndex, runPreferredSaveChat } from './platform.js';
 
 /**
  * 判断是否应跳过数据库扩展字段。
@@ -167,7 +168,7 @@ export function getDeepCleanTimeoutMs() {
  */
 export async function performDeepCleanse() {
     logger.info('[performDeepCleanse] 深度清理开始');
-    const { chat, chat_metadata, extension_settings, saveChat, saveSettingsDebounced } = getAppContext();
+    const { chat, chat_metadata, extension_settings, saveSettingsDebounced } = getAppContext();
     buildProcessors();
     if (runtimeState.activeProcessors.length === 0) {
         alert('没有开启的屏蔽规则，无需清理。');
@@ -202,7 +203,7 @@ export async function performDeepCleanse() {
             const phaseBase = i / phases.length;
             const phaseSpan = 1 / phases.length;
 
-            scrubbedItems += await safeDeepScrub(phase.root, phase.isGlobalSettings, {
+            const phaseChanges = await safeDeepScrub(phase.root, phase.isGlobalSettings, {
                 completedChanges: scrubbedItems,
                 getDeadline: () => deadline,
                 shouldCancel: () => runtimeState.deepCleanCancelRequested === true,
@@ -234,6 +235,8 @@ export async function performDeepCleanse() {
                     );
                 }
             });
+            scrubbedItems += phaseChanges;
+            if (phase.root === chat && phaseChanges > 0) markHostChatDirtyFromIndex(0);
 
             updateDeepCleanOverlay((i + 1) / phases.length, `已完成 ${phase.label}，准备进入下一阶段...`);
         }
@@ -244,8 +247,7 @@ export async function performDeepCleanse() {
         updateDeepCleanOverlay(0.97, '正在同步数据到磁盘，请稍候。');
 
         if (scrubbedItems > 0) {
-            const saveChatPromise = saveChat();
-            if (saveChatPromise instanceof Promise) await saveChatPromise;
+            await runPreferredSaveChat();
 
             saveSettingsDebounced();
             const remainingMs = Math.max(300, Math.min(2000, deadline - Date.now()));
