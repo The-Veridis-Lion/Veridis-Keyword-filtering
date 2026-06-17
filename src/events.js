@@ -48,7 +48,6 @@ import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNod
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
-import { convertRuleListChinese } from './zhConversion.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
@@ -600,8 +599,8 @@ export function bindEvents() {
         $('#bl-scope-tag-group-select').val(DEFAULT_SCOPE_TAG_GROUP_ID);
         $('#bl-scope-tag-editor-modal').prop('hidden', true);
         $('#bl-scope-group-manager-modal').prop('hidden', true);
-        $('#bl-scope-tag-action-menu, #bl-zh-convert-menu').prop('hidden', true);
-        $('#bl-scope-tag-menu-open, #bl-zh-convert-open').attr('aria-expanded', 'false');
+        $('#bl-scope-tag-action-menu').prop('hidden', true);
+        $('#bl-scope-tag-menu-open').attr('aria-expanded', 'false');
         clearScopeTagValidationState();
         renderScopeTagsModal();
     };
@@ -651,10 +650,6 @@ export function bindEvents() {
     const closeScopeTagActionMenu = () => {
         $('#bl-scope-tag-action-menu').prop('hidden', true);
         $('#bl-scope-tag-menu-open').attr('aria-expanded', 'false');
-    };
-    const closeZhConvertMenu = () => {
-        $('#bl-zh-convert-menu').prop('hidden', true);
-        $('#bl-zh-convert-open').attr('aria-expanded', 'false');
     };
     const renderScopeGroupManager = (focusGroupId = '') => {
         const groups = getScopeTagGroups();
@@ -877,32 +872,17 @@ export function bindEvents() {
         settings.themeMode = normalized;
         $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay').attr('data-bl-theme', normalized);
     };
-    const convertCurrentRulesChinese = (direction) => {
-        const targetLabel = direction === 's2t' ? '繁体' : '简体';
-        const rules = Array.isArray(settings.rules) ? settings.rules : [];
-        if (rules.length === 0) {
-            showToast('当前没有可转换的规则');
-            return;
-        }
-        if (!confirm(`将当前规则合集的名称、查找内容、替换内容和备注转为${targetLabel}。\n\n这会修改当前规则内容，可继续用保存按钮写入当前预设。是否继续？`)) return;
-
-        const before = JSON.stringify(rules);
-        const convertedRules = convertRuleListChinese(rules, direction);
-        if (JSON.stringify(convertedRules) === before) {
-            showToast(`没有发现需要转为${targetLabel}的内容`);
-            return;
-        }
-
-        settings.rules = convertedRules;
-        markRulesDataDirty();
-        saveSettingsDebounced();
-        renderTags();
-        renderRuleSearchModal();
-        performGlobalCleanse();
-        showToast(`已转为${targetLabel}`);
+    const syncZhCompatToggle = () => {
+        const enabled = settings.zhVariantCompatEnabled === true;
+        $('#bl-zh-compat-toggle')
+            .toggleClass('bl-bind-active', enabled)
+            .attr('aria-pressed', String(enabled))
+            .attr('title', enabled
+                ? '简繁兼容已开启：会匹配简中、繁中和半转换文本（点击关闭）'
+                : '简繁兼容已关闭：按当前规则精确匹配（点击开启）');
     };
-
     applyThemeMode(settings.themeMode || 'auto');
+    syncZhCompatToggle();
 
     $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function() {
         const current = settings.themeMode || 'auto';
@@ -910,25 +890,14 @@ export function bindEvents() {
         saveSettingsDebounced();
     });
 
-    $(document).off('click', '#bl-zh-convert-open').on('click', '#bl-zh-convert-open', function(e) {
+    $(document).off('click', '#bl-zh-compat-toggle').on('click', '#bl-zh-compat-toggle', function(e) {
         e.preventDefault();
-        e.stopPropagation();
-        const $menu = $('#bl-zh-convert-menu');
-        const nextHidden = !$menu.prop('hidden');
-        $menu.prop('hidden', nextHidden);
-        $(this).attr('aria-expanded', String(!nextHidden));
-    });
-
-    $(document).off('click', '.bl-zh-convert-item').on('click', '.bl-zh-convert-item', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        const direction = String($(this).data('direction') || 's2t');
-        closeZhConvertMenu();
-        convertCurrentRulesChinese(direction === 't2s' ? 't2s' : 's2t');
-    });
-
-    $(document).off('click', '#bl-purifier-popup').on('click', '#bl-purifier-popup', function(e) {
-        if ($(e.target).closest('.bl-zh-convert-wrap').length === 0) closeZhConvertMenu();
+        settings.zhVariantCompatEnabled = settings.zhVariantCompatEnabled !== true;
+        markRulesDataDirty({ rulesUi: false });
+        saveSettingsDebounced();
+        syncZhCompatToggle();
+        performGlobalCleanse();
+        showToast(settings.zhVariantCompatEnabled ? '简繁兼容已开启' : '简繁兼容已关闭');
     });
 
     $('#bl-diff-global-toggle').prop('checked', settings.enableVisualDiff !== false);

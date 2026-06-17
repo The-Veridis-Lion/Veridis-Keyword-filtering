@@ -224,15 +224,7 @@ export function setupUI() {
                     <button id="bl-preset-new" title="新建"><i class="fas fa-plus"></i></button>
                     <button id="bl-preset-delete" title="删除存档"><i class="fas fa-trash"></i></button>
                     <button id="bl-preset-search" title="搜索规则"><i class="fas fa-magnifying-glass"></i></button>
-                    <div class="bl-toolbar-menu-wrap bl-zh-convert-wrap">
-                        <button id="bl-zh-convert-open" type="button" title="简繁转换" aria-label="简繁转换" aria-haspopup="true" aria-expanded="false">
-                            <i class="fas fa-language"></i>
-                        </button>
-                        <div id="bl-zh-convert-menu" class="bl-toolbar-menu" hidden>
-                            <button type="button" class="bl-toolbar-menu-item bl-zh-convert-item" data-direction="t2s">转为简体</button>
-                            <button type="button" class="bl-toolbar-menu-item bl-zh-convert-item" data-direction="s2t">转为繁体</button>
-                        </div>
-                    </div>
+                    <button id="bl-zh-compat-toggle" class="bl-zh-compat-toggle" type="button" title="简繁兼容已关闭：按当前规则精确匹配" aria-label="简繁兼容模式" aria-pressed="false"><i class="fas fa-language"></i></button>
                 </div>
             </div>
 

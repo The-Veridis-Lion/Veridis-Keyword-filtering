@@ -214,6 +214,9 @@
 #bl-purifier-popup .bl-toolbar .bl-icon-group button i, #bl-purifier-popup .bl-toolbar .bl-icon-group button svg {
     width: 18px !important; height: 18px !important; line-height: 1 !important; display: inline-flex !important; align-items: center !important; justify-content: center !important;
 }
+#bl-purifier-popup .bl-toolbar .bl-icon-group button.bl-zh-compat-toggle.bl-bind-active {
+    color: var(--bl-accent-color) !important;
+}
 .bl-select-box {
     flex: 1 1 auto !important; min-width: 0 !important; background-color: var(--bl-bg-button);
     padding: 0 14px; border-radius: 6px; font-size: 14px; color: var(--bl-text-main); cursor: pointer;
@@ -2699,53 +2702,6 @@
     max-width: 100% !important;
 }
 
-/* 主工具栏菜单：简繁转换 */
-#bl-purifier-popup .bl-toolbar-menu-wrap {
-    position: relative !important;
-    display: inline-flex !important;
-    align-items: center !important;
-    justify-content: center !important;
-}
-#bl-purifier-popup .bl-toolbar .bl-icon-group {
-    flex: 0 0 36% !important;
-    min-width: 132px !important;
-}
-#bl-purifier-popup .bl-toolbar-menu {
-    position: absolute !important;
-    top: calc(100% + 8px) !important;
-    right: 0 !important;
-    min-width: 104px !important;
-    padding: 4px !important;
-    border-radius: 8px !important;
-    border: 1px solid var(--bl-border-color) !important;
-    background: var(--bl-background-popup) !important;
-    box-shadow: 0 12px 28px color-mix(in srgb, black 20%, transparent) !important;
-    z-index: 10000010 !important;
-}
-#bl-purifier-popup .bl-toolbar-menu[hidden] {
-    display: none !important;
-}
-#bl-purifier-popup .bl-toolbar .bl-icon-group .bl-toolbar-menu .bl-toolbar-menu-item {
-    width: 100% !important;
-    min-width: 0 !important;
-    min-height: 32px !important;
-    height: auto !important;
-    padding: 8px 10px !important;
-    justify-content: flex-start !important;
-    border-radius: 6px !important;
-    color: var(--bl-text-primary) !important;
-    font-size: 12px !important;
-    font-weight: 700 !important;
-    line-height: 1.2 !important;
-    white-space: nowrap !important;
-    transform: none !important;
-}
-#bl-purifier-popup .bl-toolbar .bl-icon-group .bl-toolbar-menu .bl-toolbar-menu-item:hover {
-    background: var(--bl-background-secondary) !important;
-    color: var(--bl-accent-color) !important;
-    transform: none !important;
-}
-
 /* 净化模式分组与菜单最终布局 */
 #bl-scope-tags-modal .bl-scope-manage-actions {
     display: inline-flex !important;
@@ -2987,10 +2943,6 @@
 }
 
 @media screen and (max-width: 600px) {
-    #bl-purifier-popup .bl-toolbar .bl-icon-group {
-        flex: 0 0 40% !important;
-        min-width: 124px !important;
-    }
     #bl-scope-tags-modal .bl-scope-manage-head {
         align-items: center !important;
         gap: 8px !important;
