@@ -24,6 +24,7 @@ export const defaultSettings = {
     themeMode: "auto",
     logLevel: 2,  // 0=off, 1=error, 2=warn(default), 3=info, 4=debug
     skipUserMessages: false,
+    zhVariantCompatEnabled: false,
     protectPersonaDescription: false,
 };
 

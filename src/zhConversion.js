@@ -1,4 +1,7 @@
 const S2T_PHRASES = {
+    '戏谑': '戲謔',
+    '略显': '略顯',
+    '粗糙': '粗糙',
     '屏蔽词': '屏蔽詞',
     '净化': '淨化',
     '标签': '標籤',
@@ -146,8 +149,8 @@ const S2T_CHARS = {
     '贪': '貪', '谈': '談', '汤': '湯', '条': '條', '听': '聽', '厅': '廳', '头': '頭', '图': '圖',
     '团': '團', '万': '萬', '网': '網', '为': '為', '违': '違', '围': '圍', '维': '維', '卫': '衛',
     '稳': '穩', '务': '務', '雾': '霧', '习': '習', '戏': '戲', '细': '細', '虾': '蝦', '狭': '狹',
-    '侠': '俠', '峡': '峽', '县': '縣', '现': '現', '线': '線', '乡': '鄉', '写': '寫', '协': '協',
-    '谢': '謝', '兴': '興', '须': '須', '选': '選', '学': '學', '寻': '尋', '压': '壓', '亚': '亞',
+    '侠': '俠', '峡': '峽', '县': '縣', '显': '顯', '现': '現', '线': '線', '乡': '鄉', '写': '寫', '协': '協',
+    '谢': '謝', '谑': '謔', '兴': '興', '须': '須', '选': '選', '学': '學', '寻': '尋', '压': '壓', '亚': '亞',
     '严': '嚴', '盐': '鹽', '阳': '陽', '样': '樣', '养': '養', '叶': '葉', '页': '頁', '业': '業',
     '医': '醫', '亿': '億', '忆': '憶', '义': '義', '艺': '藝', '异': '異', '译': '譯', '议': '議',
     '应': '應', '营': '營', '拥': '擁', '优': '優', '邮': '郵', '余': '餘', '鱼': '魚', '语': '語',
@@ -178,6 +181,48 @@ const T2S_PHRASES = reverseMap(S2T_PHRASES);
 const T2S_CHARS = reverseMap(S2T_CHARS);
 const S2T_PHRASE_ENTRIES = Object.entries(S2T_PHRASES).sort((a, b) => b[0].length - a[0].length);
 const T2S_PHRASE_ENTRIES = Object.entries(T2S_PHRASES).sort((a, b) => b[0].length - a[0].length);
+
+function uniqueValues(values) {
+    const seen = new Set();
+    const result = [];
+    values.forEach((value) => {
+        const normalized = String(value ?? '');
+        if (!normalized || seen.has(normalized)) return;
+        seen.add(normalized);
+        result.push(normalized);
+    });
+    return result;
+}
+
+function escapeRegExpLiteral(value) {
+    return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function escapeRegExpCharClassValue(value) {
+    return String(value ?? '')
+        .replace(/\\/g, '\\\\')
+        .replace(/\]/g, '\\]')
+        .replace(/\^/g, '\\^')
+        .replace(/-/g, '\\-');
+}
+
+export function getChineseCharVariants(char) {
+    const source = String(char ?? '');
+    if (!source) return [];
+    return uniqueValues([
+        source,
+        S2T_CHARS[source],
+        T2S_CHARS[source],
+    ]);
+}
+
+export function buildChineseVariantPattern(value) {
+    return Array.from(String(value ?? '')).map((char) => {
+        const variants = getChineseCharVariants(char);
+        if (variants.length <= 1) return escapeRegExpLiteral(char);
+        return `[${variants.map(escapeRegExpCharClassValue).join('')}]`;
+    }).join('');
+}
 
 export function convertChineseText(value, direction) {
     if (typeof value !== 'string' || value.length === 0) return value;

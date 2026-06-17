@@ -1,6 +1,7 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
 import { buildSimpleWildcardPattern, compileRegexTarget, mergeScopeTagsWithBuiltins } from './utils.js';
+import { buildChineseVariantPattern } from './zhConversion.js';
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
@@ -18,10 +19,98 @@ function isRegexDomSafe(pattern = '') {
     return !/\(\?<?[=!]/.test(String(pattern || ''));
 }
 
+function escapeRegExpLiteral(value) {
+    return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function buildTargetLiteralPattern(value = '', useZhVariantCompat = false) {
+    return useZhVariantCompat ? buildChineseVariantPattern(value) : escapeRegExpLiteral(value);
+}
+
+function buildLegacySimpleTargetPattern(target = '') {
+    return String(target ?? '')
+        .replace(/[.+^$()[\]\\]/g, '\\$&')
+        .replace(/\{([^}]+)\}/g, (match, group) => {
+            const alternatives = group.split(',').map((item) => item.trim()).filter(Boolean);
+            return alternatives.length > 0 ? `(?:${alternatives.join('|')})` : match;
+        })
+        .replace(/\*/g, buildSimpleWildcardPattern());
+}
+
+function buildSimpleTargetPattern(target = '', useZhVariantCompat = false) {
+    if (!useZhVariantCompat) return buildLegacySimpleTargetPattern(target);
+
+    const source = String(target ?? '');
+    let pattern = '';
+
+    for (let index = 0; index < source.length; index++) {
+        const char = source[index];
+        if (char === '*') {
+            pattern += buildSimpleWildcardPattern();
+            continue;
+        }
+
+        if (char === '{') {
+            const closeIndex = source.indexOf('}', index + 1);
+            if (closeIndex > index) {
+                const alternatives = source
+                    .slice(index + 1, closeIndex)
+                    .split(/[,，]/)
+                    .map((item) => item.trim())
+                    .filter(Boolean)
+                    .map((item) => buildTargetLiteralPattern(item, useZhVariantCompat));
+                if (alternatives.length > 0) {
+                    pattern += `(?:${alternatives.join('|')})`;
+                    index = closeIndex;
+                    continue;
+                }
+            }
+        }
+
+        pattern += buildTargetLiteralPattern(char, useZhVariantCompat);
+    }
+
+    return pattern;
+}
+
+function buildTextTargetEntries(targets, replacementsMap, useZhVariantCompat = false) {
+    return [...new Set(targets)]
+        .sort((a, b) => b.length - a.length)
+        .map((target) => {
+            const pattern = buildTargetLiteralPattern(target, useZhVariantCompat);
+            const entry = {
+                target,
+                replacements: replacementsMap[target] || [],
+                pattern,
+            };
+            if (useZhVariantCompat) entry.matchRegex = new RegExp(`^(?:${pattern})$`, 'mu');
+            return entry;
+        });
+}
+
+function groupTextTargetEntriesByLength(entries = []) {
+    const grouped = new Map();
+    entries.forEach((entry) => {
+        const key = entry.target.length;
+        if (!grouped.has(key)) grouped.set(key, []);
+        grouped.get(key).push(entry);
+    });
+    return grouped;
+}
+
+function findTextTargetEntryForMatch(processor, match = '') {
+    const candidates = processor?.targetEntriesByLength?.get(String(match).length)
+        || processor?.targetEntries
+        || [];
+    return candidates.find((entry) => entry.matchRegex?.test(match));
+}
+
 export function buildProcessors() {
     if (!runtimeState.isRegexDirty) return runtimeState.activeProcessors;
     const { extension_settings } = getAppContext();
-    const rules = extension_settings[extensionName]?.rules || [];
+    const settings = extension_settings[extensionName] || {};
+    const rules = settings.rules || [];
+    const useZhVariantCompat = settings.zhVariantCompatEnabled === true;
 
     let textTargets = [];
     let wordToReplacements = Object.create(null);
@@ -64,14 +153,8 @@ export function buildProcessors() {
                 for (const t of targets) {
                     if (t) {
                         try {
-                            let escaped = t.replace(/[.+^$()[\]\\]/g, '\\$&');
-                            // 展开 {A,B} 备选分组，并将 * 转为受限通配片段。
-                            escaped = escaped.replace(/\{([^}]+)\}/g, (match, group) => {
-                                return '(?:' + group.split(',').map(s => s.trim()).join('|') + ')';
-                            });
-                            escaped = escaped.replace(/\*/g, buildSimpleWildcardPattern());
-
-                            let testRegex = new RegExp(escaped, 'gmu');
+                            const pattern = buildSimpleTargetPattern(t, useZhVariantCompat);
+                            let testRegex = new RegExp(pattern, 'gmu');
                             if (testRegex.test("")) {
                                 logger.warn(`拦截到危险的简易空匹配规则，已忽略: ${t}`);
                                 return;
@@ -88,11 +171,16 @@ export function buildProcessors() {
     }
 
     if (textTargets.length > 0) {
-        const uniqueTargets = [...new Set(textTargets)];
-        const sorted = uniqueTargets.sort((a, b) => b.length - a.length);
-        const escaped = sorted.map(w => w.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'));
-        const textRegex = new RegExp(`(${escaped.join('|')})`, 'gmu');
-        processors.unshift({ regex: textRegex, replacerMap: wordToReplacements, kind: 'text', domSafe: true });
+        const targetEntries = buildTextTargetEntries(textTargets, wordToReplacements, useZhVariantCompat);
+        const textRegex = new RegExp(`(${targetEntries.map((entry) => entry.pattern).join('|')})`, 'gmu');
+        processors.unshift({
+            regex: textRegex,
+            replacerMap: wordToReplacements,
+            targetEntries: useZhVariantCompat ? targetEntries : undefined,
+            targetEntriesByLength: useZhVariantCompat ? groupTextTargetEntriesByLength(targetEntries) : undefined,
+            kind: 'text',
+            domSafe: true,
+        });
     }
 
     runtimeState.activeProcessors = processors;
@@ -204,7 +292,9 @@ export function applyReplacements(originalText, options = {}) {
                 return String(pickReplacement(reps, repKey) ?? '');
             }
 
-            const reps = proc.replacerMap[match];
+            const exactReps = proc.replacerMap[match];
+            const targetEntry = exactReps ? null : findTextTargetEntryForMatch(proc, match);
+            const reps = exactReps || targetEntry?.replacements;
             if (!reps || reps.length === 0) return '';
             const repKey = deterministic ? `${procIndex}|${match}` : '';
             return pickReplacement(reps, repKey);
