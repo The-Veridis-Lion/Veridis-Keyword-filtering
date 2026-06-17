@@ -6,6 +6,7 @@ import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 import { clearMessageDiffMeta, getMessageDiffBranchKey, getMessageDiffMeta, isMessageFinalizedForCurrentBranch, setCurrentSwipeText, writeMessageDiffMeta } from './messageMeta.js';
+import { getMaxHostChatSaveDefers, getRecommendedChatSaveDelay, getSillyTavernContextSnapshot, isBaiBaiToolkitInstalled, isTauriTavernHost, markHostChatDirtyFromIndex, runPreferredSaveChat, shouldDelayChatSaveForHost } from './platform.js';
 
 const chatChangedSyncMessageLimit = 80;
 const chatChangedBackgroundChunkSize = 25;
@@ -493,59 +494,49 @@ function notifyChatSaveFailure(error) {
     }
 }
 
+function scheduleQueuedChatSave(delay = getRecommendedChatSaveDelay()) {
+    runtimeState.chatSaveTimer = setTimeout(runQueuedChatSave, Math.max(0, Number(delay) || 0));
+}
+
+async function runQueuedChatSave() {
+    runtimeState.chatSaveTimer = null;
+    if (!runtimeState.pendingChatSave) return;
+
+    if (shouldDelayChatSaveForHost() && runtimeState.chatSaveDelayCount < getMaxHostChatSaveDefers()) {
+        runtimeState.chatSaveDelayCount += 1;
+        scheduleQueuedChatSave(getRecommendedChatSaveDelay());
+        return;
+    }
+
+    runtimeState.chatSaveDelayCount = 0;
+    if (runtimeState.chatSaveInFlight) {
+        scheduleQueuedChatSave(getRecommendedChatSaveDelay());
+        return;
+    }
+
+    runtimeState.pendingChatSave = false;
+    runtimeState.chatSaveInFlight = true;
+    try {
+        await runPreferredSaveChat();
+        chatSaveFailureNotified = false;
+    } catch (e) {
+        notifyChatSaveFailure(e);
+    } finally {
+        runtimeState.chatSaveInFlight = false;
+        if (runtimeState.pendingChatSave) scheduleQueuedChatSave(getRecommendedChatSaveDelay());
+    }
+}
+
 export function queueIncrementalChatSave() {
-    const { saveChat } = getAppContext();
     runtimeState.pendingChatSave = true;
     if (runtimeState.chatSaveTimer) return;
-
-    runtimeState.chatSaveTimer = setTimeout(async () => {
-        runtimeState.chatSaveTimer = null;
-        if (!runtimeState.pendingChatSave) return;
-        if (runtimeState.chatSaveInFlight) {
-            queueIncrementalChatSave();
-            return;
-        }
-
-        runtimeState.pendingChatSave = false;
-        runtimeState.chatSaveInFlight = true;
-        try {
-            if (typeof saveChat === 'function') {
-                const result = saveChat();
-                if (result instanceof Promise) await result;
-            }
-            chatSaveFailureNotified = false;
-        } catch (e) {
-            notifyChatSaveFailure(e);
-        } finally {
-            runtimeState.chatSaveInFlight = false;
-            if (runtimeState.pendingChatSave) queueIncrementalChatSave();
-        }
-    }, 600);
+    scheduleQueuedChatSave(getRecommendedChatSaveDelay());
 }
 
 let messageRefreshMissingWarned = false;
 let messageRefreshReloadInFlight = false;
-
-function getSillyTavernContextSnapshot() {
-    const { getSillyTavernContext } = getAppContext();
-    if (typeof getSillyTavernContext === 'function') {
-        try {
-            const context = getSillyTavernContext();
-            if (context && typeof context === 'object') return context;
-        } catch (e) {
-            logger.warn('获取 SillyTavern 上下文失败', e);
-        }
-    }
-
-    try {
-        const context = globalThis.SillyTavern?.getContext?.();
-        if (context && typeof context === 'object') return context;
-    } catch (e) {
-        logger.warn('从 globalThis.SillyTavern 获取上下文失败', e);
-    }
-
-    return {};
-}
+const postRefreshDomSettleTimers = new Map();
+const hostRenderedEventSuppressMs = 500;
 
 function warnMissingMessageRefresh(index) {
     if (messageRefreshMissingWarned) return;
@@ -599,6 +590,62 @@ function scheduleRenderedEvent(index, message, context) {
     }
 }
 
+function suppressOwnRenderedEventCleanse(index) {
+    if (!Number.isInteger(index) || index < 0) return;
+    const until = Date.now() + hostRenderedEventSuppressMs;
+    runtimeState.hostRenderedEventSuppressUntil.set(index, until);
+    setTimeout(() => {
+        if (runtimeState.hostRenderedEventSuppressUntil.get(index) === until) {
+            runtimeState.hostRenderedEventSuppressUntil.delete(index);
+        }
+    }, hostRenderedEventSuppressMs + 50);
+}
+
+function scheduleMessageUpdatedEvent(index, context) {
+    const appContext = getAppContext();
+    const eventSource = context.eventSource || appContext.eventSource;
+    const eventTypes = context.eventTypes || context.event_types || appContext.event_types;
+    const eventType = eventTypes?.MESSAGE_UPDATED;
+    if (!eventSource || typeof eventSource.emit !== 'function' || !eventType) return;
+
+    const emitEvent = () => {
+        Promise.resolve(eventSource.emit(eventType, index))
+            .catch((e) => logger.warn(`补发消息更新事件失败 index=${index}`, e));
+    };
+
+    if (typeof globalThis.requestAnimationFrame === 'function') {
+        globalThis.requestAnimationFrame(emitEvent);
+    } else if (typeof globalThis.setTimeout === 'function') {
+        globalThis.setTimeout(emitEvent, 0);
+    } else {
+        emitEvent();
+    }
+}
+
+function schedulePostRefreshDomSettle(index) {
+    if (!getMessageDomNode(index)) return;
+    const existingTimers = postRefreshDomSettleTimers.get(index);
+    if (Array.isArray(existingTimers)) existingTimers.forEach((timer) => clearTimeout(timer));
+
+    const delays = isBaiBaiToolkitInstalled() ? [120, 450, 1000] : [120, 450];
+    const timers = delays.map((delay) => {
+        return setTimeout(() => {
+            const messageNode = getMessageDomNode(index);
+            if (!messageNode) return;
+            try {
+                purifyDOM(messageNode);
+                ensureMessageDiffButton(index, messageNode);
+            } catch (error) {
+                logger.warn(`宿主刷新后 DOM 收敛失败 index=${index}`, error);
+            }
+        }, delay);
+    });
+    postRefreshDomSettleTimers.set(index, timers);
+    setTimeout(() => {
+        if (postRefreshDomSettleTimers.get(index) === timers) postRefreshDomSettleTimers.delete(index);
+    }, Math.max(...delays) + 50);
+}
+
 /**
  * 使用 SillyTavern 宿主渲染器刷新消息块，避免直接写 raw text 破坏排版。
  * @param {number} index 消息索引。
@@ -627,7 +674,13 @@ export function refreshMessageDisplay(index, options = {}) {
             hostUpdateMessageBlock(index, message);
             const shouldEmitRenderedEvent = options.emitRenderedEvent === true
                 || (options.emitRenderedEvent === 'auto' && looksLikeTemplateRenderedContent(index, message));
-            if (shouldEmitRenderedEvent) scheduleRenderedEvent(index, message, stContext);
+            const needsHostSettle = isTauriTavernHost() || isBaiBaiToolkitInstalled();
+            if (needsHostSettle) suppressOwnRenderedEventCleanse(index);
+            if (shouldEmitRenderedEvent || needsHostSettle) scheduleRenderedEvent(index, message, stContext);
+            if (needsHostSettle) {
+                scheduleMessageUpdatedEvent(index, stContext);
+                schedulePostRefreshDomSettle(index);
+            }
             return true;
         } catch (e) {
             logger.warn(`updateMessageBlock 调用失败 index=${index}`, e);
@@ -801,6 +854,7 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
     });
     runtimeState.diffRawSourceCache.delete(index);
 
+    if (changed) markHostChatDirtyFromIndex(index);
     return changed;
 }
 
@@ -980,6 +1034,7 @@ function processGlobalCleanseMessage(msg, index, latestDiffIndices, skipUser, op
         refreshMessageDisplay(index, { delay: 50, emitRenderedEvent: 'auto' });
     }
 
+    if (msgChanged) markHostChatDirtyFromIndex(index);
     return msgChanged;
 }
 
@@ -1094,7 +1149,10 @@ export function performGlobalCleanse(options = {}) {
                 if (dbVal && typeof dbVal === 'object') {
                     try {
                         const dbChanges = deepCleanObjectSync(dbVal);
-                        if (dbChanges > 0) chatChanged = true;
+                        if (dbChanges > 0) {
+                            chatChanged = true;
+                            markHostChatDirtyFromIndex(chat.length - 1);
+                        }
                     } catch (error) {
                         logger.warn(`[performGlobalCleanse] 跳过异常附加数据 ${dbKey}: ${error?.message || error}`);
                     }

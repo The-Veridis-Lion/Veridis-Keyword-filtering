@@ -48,6 +48,7 @@ import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNod
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
+import { isBaiBaiToolkitInstalled, isTauriTavernHost } from './platform.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
@@ -2125,6 +2126,37 @@ export function bindEvents() {
             if (editCleanseTimer) clearTimeout(editCleanseTimer);
             editCleanseTimer = setTimeout(() => { performIncrementalCleanse(payload, { visualOnly: false, fallbackLatest: true }); }, 100);
         });
+    }
+
+    if (isTauriTavernHost() || isBaiBaiToolkitInstalled()) {
+        let updateCleanseTimer = null;
+        const pendingRenderedCleanseIndices = new Set();
+        const shouldSkipOwnRenderedEvent = (index) => {
+            const until = runtimeState.hostRenderedEventSuppressUntil?.get(index);
+            if (!Number.isFinite(until)) return false;
+            if (Date.now() <= until) return true;
+            runtimeState.hostRenderedEventSuppressUntil.delete(index);
+            return false;
+        };
+        const scheduleRenderedMessageCleanse = (payload, delay = 120) => {
+            const explicitIndex = getMessageIndexFromEvent(payload);
+            const index = explicitIndex >= 0 ? explicitIndex : getLatestMessageIndex();
+            if (index < 0) return;
+            if (shouldSkipOwnRenderedEvent(index)) return;
+            pendingRenderedCleanseIndices.add(index);
+            markPendingFromPayload(index);
+            if (updateCleanseTimer) clearTimeout(updateCleanseTimer);
+            updateCleanseTimer = setTimeout(() => {
+                const indices = [...pendingRenderedCleanseIndices];
+                pendingRenderedCleanseIndices.clear();
+                indices.forEach((messageIndex) => {
+                    performIncrementalCleanse(messageIndex, { visualOnly: false, fallbackLatest: true });
+                });
+            }, delay);
+        };
+
+        if (event_types.MESSAGE_UPDATED) eventSource.on(event_types.MESSAGE_UPDATED, (payload) => scheduleRenderedMessageCleanse(payload, 120));
+        if (event_types.CHARACTER_MESSAGE_RENDERED) eventSource.on(event_types.CHARACTER_MESSAGE_RENDERED, (payload) => scheduleRenderedMessageCleanse(payload, 180));
     }
 
     if (event_types.GENERATION_STARTED) eventSource.on(event_types.GENERATION_STARTED, () => { runtimeState.isStreamingGeneration = true; });
