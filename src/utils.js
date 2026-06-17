@@ -3,10 +3,12 @@ import { logger } from './log.js';
 
 const SIMPLE_WILDCARD_STOP_CHARS = ",，。.!?！？；;\n";
 const REGEX_LITERAL_ALLOWED_FLAGS = new Set(['d', 'g', 'i', 'm', 's', 'u', 'v', 'y']);
-const SCOPE_TAG_NAME_PATTERN = /^[A-Za-z0-9][A-Za-z0-9:_-]*$/;
-const SCOPE_TAG_START_PATTERN = /^<([A-Za-z0-9][A-Za-z0-9:_-]*)>$/;
+const SCOPE_TAG_NAME_PATTERN = /^[\p{L}\p{N}_:][\p{L}\p{N}\p{M}_.:-]*$/u;
+const SCOPE_TAG_START_PATTERN = /^<([\p{L}\p{N}_:][\p{L}\p{N}\p{M}_.:-]*)>$/u;
 const SCOPE_TAG_LABEL_SEPARATOR = '//';
 const DEFAULT_SCOPE_TAG_LABEL = '范围';
+export const DEFAULT_SCOPE_TAG_GROUP_ID = 'default';
+export const DEFAULT_SCOPE_TAG_GROUP_NAME = '默认分组';
 const BUILTIN_SCOPE_TAG_DEFS = [
     { key: '<UpdateVariable>', startTag: '<UpdateVariable>', label: 'MVU变量' },
     { key: '<horae>', startTag: '<horae>', label: 'horae记忆表格' },
@@ -194,10 +196,66 @@ export function createScopeTagId() {
     return `scope-tag-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
+export function createScopeTagGroupId() {
+    return `scope-group-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
+function normalizeScopeTagGroupName(name) {
+    return String(name ?? '').trim().replace(/\s+/g, ' ');
+}
+
+export function normalizeScopeTagGroupEntry(entry, fallbackIndex = 0) {
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) return null;
+    const id = String(entry.id || '').trim();
+    if (!id) return null;
+    const fallbackName = id === DEFAULT_SCOPE_TAG_GROUP_ID
+        ? DEFAULT_SCOPE_TAG_GROUP_NAME
+        : `分组 ${fallbackIndex + 1}`;
+    return {
+        id,
+        name: normalizeScopeTagGroupName(entry.name) || fallbackName,
+    };
+}
+
+export function normalizeScopeTagGroupList(entries) {
+    const groups = [];
+    const seen = new Set();
+    const addGroup = (entry, index = groups.length) => {
+        const group = normalizeScopeTagGroupEntry(entry, index);
+        if (!group || seen.has(group.id)) return;
+        seen.add(group.id);
+        groups.push(group);
+    };
+
+    if (Array.isArray(entries)) {
+        entries.forEach((entry, index) => addGroup(entry, index));
+    }
+
+    if (!seen.has(DEFAULT_SCOPE_TAG_GROUP_ID)) {
+        groups.unshift({ id: DEFAULT_SCOPE_TAG_GROUP_ID, name: DEFAULT_SCOPE_TAG_GROUP_NAME });
+    }
+
+    return groups.length > 0 ? groups : [{ id: DEFAULT_SCOPE_TAG_GROUP_ID, name: DEFAULT_SCOPE_TAG_GROUP_NAME }];
+}
+
+export function normalizeScopeTagCollapsedGroupList(entries, groups = []) {
+    if (!Array.isArray(entries)) return [];
+    const validGroupIds = new Set(normalizeScopeTagGroupList(groups).map((group) => group.id));
+    const seen = new Set();
+    const normalized = [];
+    entries.forEach((entry) => {
+        const groupId = String(entry || '').trim();
+        if (!groupId || seen.has(groupId) || !validGroupIds.has(groupId)) return;
+        seen.add(groupId);
+        normalized.push(groupId);
+    });
+    return normalized;
+}
+
 export function parseScopeTagInput(input) {
     const source = String(input ?? '').trim();
     if (!source) {
-        return { ok: false, error: { message: '请输入标签名或完整起始标签，例如 horae、<horae>，备注可填在下方。' } };
+        return { ok: false, error: { message: '请输入标签名或完整起始标签，例如 状态、<horae>，备注可填在下方。' } };
     }
 
     let label = '';
@@ -214,9 +272,9 @@ export function parseScopeTagInput(input) {
         const bracketMatch = tagSource.match(/^<([^<>/\s][^<>]*)>$/);
         const rawName = bracketMatch ? bracketMatch[1].trim() : tagSource.replace(/[<>]/g, '').trim();
         if (rawName && !SCOPE_TAG_NAME_PATTERN.test(rawName)) {
-            return { ok: false, error: { message: '标签名必须以字母或数字开头，只能包含字母、数字、冒号、下划线和短横线，例如 horae 或 UpdateVariable。' } };
+            return { ok: false, error: { message: '标签名必须以中文、字母、数字、下划线或冒号开头，可包含中文、字母、数字、冒号、下划线、短横线和点号。' } };
         }
-        return { ok: false, error: { message: '请输入标签名或无属性起始标签，例如 horae、UpdateVariable、<horae>。' } };
+        return { ok: false, error: { message: '请输入标签名或无属性起始标签，例如 状态、UpdateVariable、<horae>。' } };
     }
 
     const tagName = match ? match[1] : bareTagName;
@@ -295,6 +353,7 @@ export function normalizeScopeTagEntry(entry, fallbackId = '') {
         : sourceBuiltinKey;
     const parsed = parseScopeTagInput(migratedStartTag);
     if (!parsed.ok) return null;
+    const groupId = String(entry.groupId || DEFAULT_SCOPE_TAG_GROUP_ID).trim() || DEFAULT_SCOPE_TAG_GROUP_ID;
     const builtinKey = normalizeScopeTagBuiltinKey(
         migratedBuiltinKey || (entry.builtin === true && rawId === 'builtin-scope-tag-3' ? '<horaeevent>' : migratedBuiltinKey),
         parsed.value.startTag
@@ -305,6 +364,7 @@ export function normalizeScopeTagEntry(entry, fallbackId = '') {
         endTag: parsed.value.endTag,
         label: normalizeScopeTagLabel(entry.label),
         enabled: entry.enabled !== false,
+        groupId,
         builtinKey,
         builtin: builtinKey !== '',
     };
@@ -337,6 +397,7 @@ export function getBuiltinScopeTags() {
             endTag: parsed.value.endTag,
             label: scopeTagDef.label,
             enabled: false,
+            groupId: DEFAULT_SCOPE_TAG_GROUP_ID,
             builtinKey: scopeTagDef.key,
             builtin: true,
         };

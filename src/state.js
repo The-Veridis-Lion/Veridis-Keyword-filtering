@@ -12,6 +12,8 @@ export const defaultSettings = {
     defaultPreset: "",
     characterBindings: {},
     scopeTags: [],
+    scopeTagGroups: [{ id: "default", name: "默认分组" }],
+    scopeTagCollapsedGroups: [],
     scopeTagBuiltinDismissed: [],
     scopeTagMode: "protect",
     enableVisualDiff: true,
