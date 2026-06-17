@@ -7,7 +7,7 @@ import { bindEvents, initRealtimeInterceptor } from './src/events.js';
 import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPresetBindings } from './src/ui.js';
 import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.js';
 import { performGlobalCleanse } from './src/core.js';
-import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList } from './src/utils.js';
+import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList } from './src/utils.js';
 
 const { extension_settings, getContext: getSillyTavernContext } = extensionsModule;
 
@@ -30,6 +30,8 @@ function ensureSettingsShape() {
     if (settings.activePreset === undefined) settings.activePreset = "";
     if (settings.defaultPreset === undefined) settings.defaultPreset = "";
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    settings.scopeTagGroups = normalizeScopeTagGroupList(settings.scopeTagGroups);
+    settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, settings.scopeTagGroups);
     settings.scopeTagBuiltinDismissed = normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed);
     settings.scopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
     if (!['protect', 'cleanse-inside'].includes(settings.scopeTagMode)) settings.scopeTagMode = 'protect';

@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markRulesUiDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
-import { COT_SCOPE_TAG_DISPLAY_TEXT, deepClone, getCurrentCharacterContext, getPresetForCharacter, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, parseInputToWords } from './utils.js';
+import { COT_SCOPE_TAG_DISPLAY_TEXT, DEFAULT_SCOPE_TAG_GROUP_ID, DEFAULT_SCOPE_TAG_GROUP_NAME, deepClone, getCurrentCharacterContext, getPresetForCharacter, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
@@ -224,6 +224,15 @@ export function setupUI() {
                     <button id="bl-preset-new" title="新建"><i class="fas fa-plus"></i></button>
                     <button id="bl-preset-delete" title="删除存档"><i class="fas fa-trash"></i></button>
                     <button id="bl-preset-search" title="搜索规则"><i class="fas fa-magnifying-glass"></i></button>
+                    <div class="bl-toolbar-menu-wrap bl-zh-convert-wrap">
+                        <button id="bl-zh-convert-open" type="button" title="简繁转换" aria-label="简繁转换" aria-haspopup="true" aria-expanded="false">
+                            <i class="fas fa-language"></i>
+                        </button>
+                        <div id="bl-zh-convert-menu" class="bl-toolbar-menu" hidden>
+                            <button type="button" class="bl-toolbar-menu-item bl-zh-convert-item" data-direction="t2s">转为简体</button>
+                            <button type="button" class="bl-toolbar-menu-item bl-zh-convert-item" data-direction="s2t">转为繁体</button>
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -390,7 +399,27 @@ export function setupUI() {
                 <section class="bl-scope-manage-section" aria-labelledby="bl-scope-manage-title">
                     <div class="bl-scope-manage-head">
                         <h4 id="bl-scope-manage-title" class="bl-scope-section-title">管理标签</h4>
-                        <button id="bl-scope-tag-add-open" type="button" class="bl-icon-btn bl-scope-tag-add-open" title="新增标签" aria-label="新增标签"><i class="fas fa-plus"></i></button>
+                        <div class="bl-scope-manage-actions">
+                            <button id="bl-scope-tags-expand-all" type="button" class="bl-icon-btn bl-scope-manage-icon" title="全部展开" aria-label="全部展开">
+                                <i class="fas fa-expand-alt"></i>
+                            </button>
+                            <button id="bl-scope-tags-collapse-all" type="button" class="bl-icon-btn bl-scope-manage-icon" title="全部折叠" aria-label="全部折叠">
+                                <i class="fas fa-compress-alt"></i>
+                            </button>
+                            <div class="bl-scope-tag-menu-wrap">
+                                <button id="bl-scope-tag-menu-open" type="button" class="bl-icon-btn bl-scope-manage-icon" title="标签菜单" aria-label="标签菜单" aria-haspopup="true" aria-expanded="false">
+                                    <i class="fas fa-ellipsis-v"></i>
+                                </button>
+                                <div id="bl-scope-tag-action-menu" class="bl-scope-tag-action-menu" hidden>
+                                    <button id="bl-scope-tag-add-open" type="button" class="bl-scope-tag-action-item">
+                                        <i class="fas fa-plus"></i><span>添加标签</span>
+                                    </button>
+                                    <button id="bl-scope-group-manage-open" type="button" class="bl-scope-tag-action-item">
+                                        <i class="fas fa-layer-group"></i><span>管理分组</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
                     </div>
                     <div id="bl-scope-tags-list" class="bl-scope-tags-list"></div>
                 </section>
@@ -400,9 +429,13 @@ export function setupUI() {
                 <div class="bl-scope-tag-editor-card" role="dialog" aria-modal="true" aria-labelledby="bl-scope-tag-editor-title">
                     <h3 id="bl-scope-tag-editor-title" class="bl-scope-tag-editor-title">新增标签</h3>
                     <div class="bl-scope-tag-editor-field">
+                        <label class="bl-field-label" for="bl-scope-tag-group-select">所属分组</label>
+                        <select id="bl-scope-tag-group-select" class="bl-input bl-scope-tag-input"></select>
+                    </div>
+                    <div class="bl-scope-tag-editor-field">
                         <label class="bl-field-label" for="bl-scope-tag-input">输入标签</label>
-                        <input type="text" id="bl-scope-tag-input" class="bl-input bl-scope-tag-input" placeholder="如：UpdateVariable 或 <horae>" autocomplete="off">
-                        <div class="bl-scope-tag-field-help">填写标签名或完整起始标签，会自动补齐；标签名可用字母或数字开头，可包含冒号、下划线和短横线。</div>
+                        <input type="text" id="bl-scope-tag-input" class="bl-input bl-scope-tag-input" placeholder="如：状态 或 <UpdateVariable>" autocomplete="off">
+                        <div class="bl-scope-tag-field-help">填写标签名或完整起始标签，会自动补齐；支持中文标签名，不支持带属性的起始标签。</div>
                     </div>
                     <div class="bl-scope-tag-editor-field">
                         <label class="bl-field-label" for="bl-scope-tag-label-input">输入备注</label>
@@ -412,6 +445,17 @@ export function setupUI() {
                     <div class="bl-scope-tag-editor-actions">
                         <button id="bl-scope-tag-reset" type="button" class="bl-scope-tag-cancel">取消</button>
                         <button id="bl-scope-tag-save" type="button" class="bl-scope-tag-confirm">确认</button>
+                    </div>
+                </div>
+            </div>
+
+            <div id="bl-scope-group-manager-modal" class="bl-scope-group-manager-modal" hidden>
+                <div class="bl-scope-group-manager-card" role="dialog" aria-modal="true" aria-labelledby="bl-scope-group-manager-title">
+                    <h3 id="bl-scope-group-manager-title" class="bl-scope-tag-editor-title">管理分组</h3>
+                    <div id="bl-scope-group-manager-list" class="bl-scope-group-manager-list"></div>
+                    <div class="bl-scope-group-manager-actions">
+                        <button id="bl-scope-group-add" type="button" class="bl-scope-tag-cancel">新增分组</button>
+                        <button id="bl-scope-group-done" type="button" class="bl-scope-tag-confirm">完成</button>
                     </div>
                 </div>
             </div>
@@ -647,18 +691,67 @@ export function closeRuleSearchModal(options = {}) {
     $('#bl-rule-search-modal').fadeOut(150);
 }
 
+function getScopeTagGroupsForSettings(settings = {}) {
+    return normalizeScopeTagGroupList(settings?.scopeTagGroups);
+}
+
+function getScopeTagCollapsedGroupSet(settings = {}, groups = []) {
+    return new Set(normalizeScopeTagCollapsedGroupList(settings?.scopeTagCollapsedGroups, groups));
+}
+
+function getScopeTagDisplayGroupId(scopeTag, groupIds) {
+    const groupId = String(scopeTag?.groupId || DEFAULT_SCOPE_TAG_GROUP_ID).trim() || DEFAULT_SCOPE_TAG_GROUP_ID;
+    return groupIds.has(groupId) ? groupId : DEFAULT_SCOPE_TAG_GROUP_ID;
+}
+
+function buildScopeTagChipHtml(scopeTag, editId) {
+    const isEnabled = scopeTag.enabled !== false;
+    const checkedAttr = isEnabled ? 'checked' : '';
+    const activeClass = scopeTag.id === editId ? 'is-active' : '';
+    const disabledClass = isEnabled ? '' : 'bl-is-disabled';
+    const labelText = String(scopeTag.label || '').trim();
+    const rangeText = isCotScopeTagEntry(scopeTag)
+        ? COT_SCOPE_TAG_DISPLAY_TEXT
+        : `${scopeTag.startTag} ... ${scopeTag.endTag}`;
+    const primaryText = labelText || '标签范围';
+    const chipTitle = `${primaryText} · ${rangeText}`;
+    return `
+        <div class="bl-scope-tag-chip ${activeClass} ${disabledClass}" data-id="${safeHtml(scopeTag.id)}">
+            <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该标签">
+                <input type="checkbox" class="bl-scope-tag-toggle" data-id="${safeHtml(scopeTag.id)}" ${checkedAttr}>
+                <span class="bl-custom-checkbox bl-square"></span>
+            </label>
+            <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="${safeHtml(chipTitle)}">
+                <span class="bl-scope-tag-chip-title">${safeHtml(primaryText)}</span>
+                <span class="bl-scope-tag-chip-text">${safeHtml(rangeText)}</span>
+            </button>
+            <span class="bl-scope-tag-row-divider" aria-hidden="true"></span>
+            <div class="bl-scope-tag-actions">
+                <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-up"></i></button>
+                <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-down"></i></button>
+                <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签" aria-label="编辑标签"><i class="fas fa-pen"></i></button>
+                <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签" aria-label="删除标签"><i class="fas fa-trash"></i></button>
+            </div>
+        </div>
+    `;
+}
+
 export function renderScopeTagsModal() {
     const $list = $('#bl-scope-tags-list');
     if (!$list.length) return;
 
     const { extension_settings } = getAppContext();
+    const settings = extension_settings?.[extensionName] || {};
+    const groups = getScopeTagGroupsForSettings(settings);
+    const groupIds = new Set(groups.map((group) => group.id));
+    const collapsedGroups = getScopeTagCollapsedGroupSet(settings, groups);
     const scopeTags = mergeScopeTagsWithBuiltins(
-        extension_settings?.[extensionName]?.scopeTags,
-        extension_settings?.[extensionName]?.scopeTagBuiltinDismissed
+        settings.scopeTags,
+        settings.scopeTagBuiltinDismissed
     );
     const editId = String($('#bl-scope-tag-input').data('scope-edit-id') || '');
     const isEditing = editId !== '';
-    const scopeTagMode = extension_settings?.[extensionName]?.scopeTagMode === 'cleanse-inside' ? 'cleanse-inside' : 'protect';
+    const scopeTagMode = settings.scopeTagMode === 'cleanse-inside' ? 'cleanse-inside' : 'protect';
     const isCleanseInsideMode = scopeTagMode === 'cleanse-inside';
     const displayScopeTags = [];
     let cotDisplayTag = null;
@@ -673,6 +766,7 @@ export function renderScopeTagsModal() {
                 ...scopeTag,
                 label: scopeTag.label || 'COT思维链',
                 enabled: false,
+                groupId: getScopeTagDisplayGroupId(scopeTag, groupIds),
             };
             displayScopeTags.push(cotDisplayTag);
         }
@@ -693,45 +787,37 @@ export function renderScopeTagsModal() {
         ? '当前模式下，只会删除或替换列表内标签的内容，标签外内容会被保留。'
         : '当前模式下，会保护列表内标签的内容，标签外内容将被删除或替换。');
 
-    if (displayScopeTags.length === 0) {
-        $list.html(`<div class="bl-empty-state">${isCleanseInsideMode ? '当前没有标签，新增并启用后才会净化标签内内容。' : '当前没有标签，新增后即可保护对应标签内容。'}</div>`);
-        return;
-    }
+    const grouped = groups.map((group) => ({ ...group, tags: [] }));
+    const groupedMap = new Map(grouped.map((group) => [group.id, group]));
+    displayScopeTags.forEach((scopeTag) => {
+        const groupId = getScopeTagDisplayGroupId(scopeTag, groupIds);
+        const targetGroup = groupedMap.get(groupId) || groupedMap.get(DEFAULT_SCOPE_TAG_GROUP_ID) || grouped[0];
+        if (targetGroup) targetGroup.tags.push(scopeTag);
+    });
 
-    const html = displayScopeTags.map((scopeTag) => {
-        const isEnabled = scopeTag.enabled !== false;
-        const checkedAttr = isEnabled ? 'checked' : '';
-        const activeClass = scopeTag.id === editId ? 'is-active' : '';
-        const disabledClass = isEnabled ? '' : 'bl-is-disabled';
-        const labelText = String(scopeTag.label || '').trim();
-        const rangeText = isCotScopeTagEntry(scopeTag)
-            ? COT_SCOPE_TAG_DISPLAY_TEXT
-            : `${scopeTag.startTag} ... ${scopeTag.endTag}`;
-        const primaryText = labelText || rangeText;
-        const secondaryText = labelText ? rangeText : '';
-        const chipTitle = secondaryText ? `${primaryText} · ${secondaryText}` : primaryText;
+    const html = grouped.map((group) => {
+        const isCollapsed = collapsedGroups.has(group.id);
+        const groupTitle = safeHtml(group.name || DEFAULT_SCOPE_TAG_GROUP_NAME);
+        const tagsHtml = group.tags.length > 0
+            ? group.tags.map((scopeTag) => buildScopeTagChipHtml(scopeTag, editId)).join('')
+            : `<div class="bl-scope-tag-group-empty">${isCleanseInsideMode ? '此分组暂无标签。' : '此分组暂无标签。'}</div>`;
         return `
-            <div class="bl-scope-tag-chip ${activeClass} ${disabledClass}" data-id="${safeHtml(scopeTag.id)}">
-                <label class="bl-checkbox-label bl-scope-tag-toggle-wrap" title="启用或停用该标签">
-                    <input type="checkbox" class="bl-scope-tag-toggle" data-id="${safeHtml(scopeTag.id)}" ${checkedAttr}>
-                    <span class="bl-custom-checkbox bl-square"></span>
-                </label>
-                <button type="button" class="bl-scope-tag-chip-main" data-id="${safeHtml(scopeTag.id)}" title="${safeHtml(chipTitle)}">
-                    <span class="bl-scope-tag-chip-title">${safeHtml(primaryText)}</span>
-                    ${secondaryText ? `<span class="bl-scope-tag-chip-text">${safeHtml(secondaryText)}</span>` : ''}
+            <div class="bl-scope-tag-group ${isCollapsed ? 'is-collapsed' : ''}" data-group-id="${safeHtml(group.id)}">
+                <button type="button" class="bl-scope-tag-group-head" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
+                    <i class="fas fa-chevron-down bl-scope-tag-group-caret"></i>
+                    <span class="bl-scope-tag-group-title">${groupTitle}</span>
+                    <span class="bl-scope-tag-group-count">${group.tags.length}</span>
                 </button>
-                <span class="bl-scope-tag-row-divider" aria-hidden="true"></span>
-                <div class="bl-scope-tag-actions">
-                    <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-up"></i></button>
-                    <button type="button" class="bl-icon-btn bl-scope-tag-move" title="保持当前顺序" aria-label="保持当前顺序" disabled><i class="fas fa-arrow-down"></i></button>
-                    <button type="button" class="bl-icon-btn bl-scope-tag-edit" data-id="${safeHtml(scopeTag.id)}" title="编辑标签" aria-label="编辑标签"><i class="fas fa-pen"></i></button>
-                    <button type="button" class="bl-icon-btn bl-scope-tag-del bl-danger-btn" data-id="${safeHtml(scopeTag.id)}" title="删除标签" aria-label="删除标签"><i class="fas fa-trash"></i></button>
+                <div class="bl-scope-tag-group-body">
+                    <div class="bl-scope-tag-group-inner">
+                        ${tagsHtml}
+                    </div>
                 </div>
             </div>
         `;
     }).join('');
 
-    $list.html(html);
+    $list.html(html || `<div class="bl-empty-state">${isCleanseInsideMode ? '当前没有标签，新增并启用后才会净化标签内内容。' : '当前没有标签，新增后即可保护对应标签内容。'}</div>`);
 }
 
 export function openScopeTagsModal() {
@@ -753,6 +839,9 @@ export function closeScopeTagsModal(options = {}) {
         $('#bl-scope-tag-error').removeClass('is-visible').text('');
         $('#bl-scope-tag-input').removeClass('bl-invalid').removeAttr('aria-invalid');
         $('#bl-scope-tag-editor-modal').prop('hidden', true);
+        $('#bl-scope-group-manager-modal').prop('hidden', true);
+        $('#bl-scope-tag-action-menu').prop('hidden', true);
+        $('#bl-scope-tag-menu-open').attr('aria-expanded', 'false');
         renderScopeTagsModal();
     }
     $('#bl-scope-tags-modal').fadeOut(150);

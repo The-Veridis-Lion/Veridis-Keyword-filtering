@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty, minTrackedDiffMessages, maxTrackedDiffMessages, normalizeDiffTrackedMessageLimit } from './state.js';
 import { logger } from './log.js';
-import { createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
+import { DEFAULT_SCOPE_TAG_GROUP_ID, createScopeTagGroupId, createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
 import {
     applyPresetByName,
     closeScopeTagsModal,
@@ -48,6 +48,7 @@ import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNod
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
+import { convertRuleListChinese } from './zhConversion.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
@@ -596,7 +597,11 @@ export function bindEvents() {
     const resetScopeTagEditor = () => {
         $('#bl-scope-tag-input').val('').data('scope-edit-id', '');
         $('#bl-scope-tag-label-input').val('');
+        $('#bl-scope-tag-group-select').val(DEFAULT_SCOPE_TAG_GROUP_ID);
         $('#bl-scope-tag-editor-modal').prop('hidden', true);
+        $('#bl-scope-group-manager-modal').prop('hidden', true);
+        $('#bl-scope-tag-action-menu, #bl-zh-convert-menu').prop('hidden', true);
+        $('#bl-scope-tag-menu-open, #bl-zh-convert-open').attr('aria-expanded', 'false');
         clearScopeTagValidationState();
         renderScopeTagsModal();
     };
@@ -619,10 +624,71 @@ export function bindEvents() {
         const tagSource = normalizeScopeTagDraftStart(rawTagText);
         return labelText ? `${tagSource}//${labelText}` : tagSource;
     };
+    const getScopeTagGroups = () => normalizeScopeTagGroupList(settings.scopeTagGroups);
+    const getScopeTagGroupIds = () => new Set(getScopeTagGroups().map((group) => group.id));
+    const resolveScopeTagGroupId = (groupId) => {
+        const candidate = String(groupId || DEFAULT_SCOPE_TAG_GROUP_ID).trim() || DEFAULT_SCOPE_TAG_GROUP_ID;
+        return getScopeTagGroupIds().has(candidate) ? candidate : DEFAULT_SCOPE_TAG_GROUP_ID;
+    };
+    const renderScopeTagGroupOptions = (selectedGroupId = DEFAULT_SCOPE_TAG_GROUP_ID) => {
+        const groups = getScopeTagGroups();
+        const resolvedGroupId = resolveScopeTagGroupId(selectedGroupId);
+        const $select = $('#bl-scope-tag-group-select');
+        $select.empty();
+        groups.forEach((group) => {
+            $('<option>').val(group.id).text(group.name).appendTo($select);
+        });
+        $select.val(resolvedGroupId);
+    };
+    const getSelectedScopeTagGroupId = () => resolveScopeTagGroupId($('#bl-scope-tag-group-select').val());
+    const normalizeScopeTagsToKnownGroups = (scopeTags) => {
+        const groupIds = getScopeTagGroupIds();
+        return normalizeScopeTagList(scopeTags).map((tag) => {
+            const groupId = String(tag.groupId || DEFAULT_SCOPE_TAG_GROUP_ID).trim() || DEFAULT_SCOPE_TAG_GROUP_ID;
+            return groupIds.has(groupId) ? tag : { ...tag, groupId: DEFAULT_SCOPE_TAG_GROUP_ID };
+        });
+    };
+    const closeScopeTagActionMenu = () => {
+        $('#bl-scope-tag-action-menu').prop('hidden', true);
+        $('#bl-scope-tag-menu-open').attr('aria-expanded', 'false');
+    };
+    const closeZhConvertMenu = () => {
+        $('#bl-zh-convert-menu').prop('hidden', true);
+        $('#bl-zh-convert-open').attr('aria-expanded', 'false');
+    };
+    const renderScopeGroupManager = (focusGroupId = '') => {
+        const groups = getScopeTagGroups();
+        const html = groups.map((group, index) => {
+            const isDefault = group.id === DEFAULT_SCOPE_TAG_GROUP_ID;
+            const moveUpDisabled = index === 0 ? 'disabled' : '';
+            const moveDownDisabled = index === groups.length - 1 ? 'disabled' : '';
+            const deleteDisabled = isDefault ? 'disabled' : '';
+            return `
+                <div class="bl-scope-group-manager-item" data-group-id="${escapeHtml(group.id)}">
+                    <input type="text" class="bl-scope-group-name-input" data-group-id="${escapeHtml(group.id)}" value="${escapeHtml(group.name)}" aria-label="分组名称">
+                    <div class="bl-scope-group-manager-item-actions">
+                        <button type="button" class="bl-icon-btn bl-scope-group-move-up" data-group-id="${escapeHtml(group.id)}" title="上移分组" ${moveUpDisabled}><i class="fas fa-arrow-up"></i></button>
+                        <button type="button" class="bl-icon-btn bl-scope-group-move-down" data-group-id="${escapeHtml(group.id)}" title="下移分组" ${moveDownDisabled}><i class="fas fa-arrow-down"></i></button>
+                        <button type="button" class="bl-icon-btn bl-scope-group-delete bl-danger-btn" data-group-id="${escapeHtml(group.id)}" title="${isDefault ? '默认分组不可删除' : '删除分组'}" ${deleteDisabled}><i class="fas fa-trash"></i></button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+        $('#bl-scope-group-manager-list').html(html || '<div class="bl-empty-state">暂无分组</div>');
+        if (focusGroupId) {
+            window.setTimeout(() => {
+                const escapedGroupId = typeof CSS !== 'undefined' && typeof CSS.escape === 'function'
+                    ? CSS.escape(focusGroupId)
+                    : String(focusGroupId).replace(/["\\]/g, '\\$&');
+                $(`#bl-scope-group-manager-list .bl-scope-group-name-input[data-group-id="${escapedGroupId}"]`).trigger('focus').trigger('select');
+            }, 20);
+        }
+    };
     const openScopeTagEditor = (scopeTag = null) => {
         const formattedInput = scopeTag ? formatScopeTagInput(scopeTag) : '';
         const tagSource = formattedInput.split('//')[0]?.trim() || '';
         const tagName = tagSource.match(/^<([^<>/\s]+)>$/)?.[1] || tagSource;
+        renderScopeTagGroupOptions(scopeTag?.groupId || DEFAULT_SCOPE_TAG_GROUP_ID);
         $('#bl-scope-tag-input')
             .val(scopeTag ? tagName : '')
             .data('scope-edit-id', scopeTag?.id || '');
@@ -646,14 +712,30 @@ export function bindEvents() {
         performGlobalCleanse();
         showToast(settings.scopeTagMode === 'cleanse-inside' ? '已切换为净化特定标签' : '已切换为保护特定标签');
     };
+    const persistScopeTagGroups = (groups, options = {}) => {
+        const normalizedGroups = normalizeScopeTagGroupList(groups);
+        settings.scopeTagGroups = normalizedGroups;
+        settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, normalizedGroups);
+        const knownGroupIds = new Set(normalizedGroups.map((group) => group.id));
+        const currentScopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+        settings.scopeTags = normalizeScopeTagList(currentScopeTags).map((tag) => {
+            const groupId = String(tag.groupId || DEFAULT_SCOPE_TAG_GROUP_ID).trim() || DEFAULT_SCOPE_TAG_GROUP_ID;
+            return knownGroupIds.has(groupId) ? tag : { ...tag, groupId: DEFAULT_SCOPE_TAG_GROUP_ID };
+        });
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+        renderScopeTagGroupOptions($('#bl-scope-tag-group-select').val() || DEFAULT_SCOPE_TAG_GROUP_ID);
+        renderScopeGroupManager(options.focusGroupId || '');
+    };
     const persistScopeTags = (scopeTags, options = {}) => {
-        const sourceScopeTags = normalizeScopeTagList(scopeTags);
+        settings.scopeTagGroups = getScopeTagGroups();
+        const sourceScopeTags = normalizeScopeTagsToKnownGroups(scopeTags);
         const representedBuiltinKeys = new Set(sourceScopeTags.map((tag) => tag.builtinKey).filter(Boolean));
         const dismissedBuiltinKeys = normalizeScopeTagBuiltinDismissedList(options.dismissedBuiltinKeys ?? settings.scopeTagBuiltinDismissed)
             .filter((builtinKey) => !representedBuiltinKeys.has(builtinKey));
         const normalized = mergeScopeTagsWithBuiltins(sourceScopeTags, dismissedBuiltinKeys);
         settings.scopeTagBuiltinDismissed = dismissedBuiltinKeys;
-        settings.scopeTags = normalized;
+        settings.scopeTags = normalizeScopeTagsToKnownGroups(normalized);
         saveSettingsDebounced();
         renderScopeTagsModal();
         if (options.skipCleanse !== true) performGlobalCleanse();
@@ -693,6 +775,7 @@ export function bindEvents() {
             startTag: parsed.value.startTag,
             endTag: parsed.value.endTag,
             label: parsed.value.label,
+            groupId: getSelectedScopeTagGroupId(),
             enabled: currentTag ? currentTag.enabled !== false : true,
         };
         if (nextBuiltinKey) nextScopeTag.builtinKey = nextBuiltinKey;
@@ -794,6 +877,30 @@ export function bindEvents() {
         settings.themeMode = normalized;
         $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay').attr('data-bl-theme', normalized);
     };
+    const convertCurrentRulesChinese = (direction) => {
+        const targetLabel = direction === 's2t' ? '繁体' : '简体';
+        const rules = Array.isArray(settings.rules) ? settings.rules : [];
+        if (rules.length === 0) {
+            showToast('当前没有可转换的规则');
+            return;
+        }
+        if (!confirm(`将当前规则合集的名称、查找内容、替换内容和备注转为${targetLabel}。\n\n这会修改当前规则内容，可继续用保存按钮写入当前预设。是否继续？`)) return;
+
+        const before = JSON.stringify(rules);
+        const convertedRules = convertRuleListChinese(rules, direction);
+        if (JSON.stringify(convertedRules) === before) {
+            showToast(`没有发现需要转为${targetLabel}的内容`);
+            return;
+        }
+
+        settings.rules = convertedRules;
+        markRulesDataDirty();
+        saveSettingsDebounced();
+        renderTags();
+        renderRuleSearchModal();
+        performGlobalCleanse();
+        showToast(`已转为${targetLabel}`);
+    };
 
     applyThemeMode(settings.themeMode || 'auto');
 
@@ -801,6 +908,27 @@ export function bindEvents() {
         const current = settings.themeMode || 'auto';
         applyThemeMode(current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto');
         saveSettingsDebounced();
+    });
+
+    $(document).off('click', '#bl-zh-convert-open').on('click', '#bl-zh-convert-open', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $menu = $('#bl-zh-convert-menu');
+        const nextHidden = !$menu.prop('hidden');
+        $menu.prop('hidden', nextHidden);
+        $(this).attr('aria-expanded', String(!nextHidden));
+    });
+
+    $(document).off('click', '.bl-zh-convert-item').on('click', '.bl-zh-convert-item', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const direction = String($(this).data('direction') || 's2t');
+        closeZhConvertMenu();
+        convertCurrentRulesChinese(direction === 't2s' ? 't2s' : 's2t');
+    });
+
+    $(document).off('click', '#bl-purifier-popup').on('click', '#bl-purifier-popup', function(e) {
+        if ($(e.target).closest('.bl-zh-convert-wrap').length === 0) closeZhConvertMenu();
     });
 
     $('#bl-diff-global-toggle').prop('checked', settings.enableVisualDiff !== false);
@@ -866,8 +994,104 @@ export function bindEvents() {
         openScopeTagsModal();
     });
 
+    $(document).off('click', '#bl-scope-tag-menu-open').on('click', '#bl-scope-tag-menu-open', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $menu = $('#bl-scope-tag-action-menu');
+        const nextHidden = !$menu.prop('hidden');
+        $menu.prop('hidden', nextHidden);
+        $(this).attr('aria-expanded', String(!nextHidden));
+    });
+
     $(document).off('click', '#bl-scope-tag-add-open').on('click', '#bl-scope-tag-add-open', () => {
+        closeScopeTagActionMenu();
         openScopeTagEditor();
+    });
+
+    $(document).off('click', '#bl-scope-group-manage-open').on('click', '#bl-scope-group-manage-open', () => {
+        closeScopeTagActionMenu();
+        renderScopeGroupManager();
+        $('#bl-scope-group-manager-modal').prop('hidden', false);
+    });
+
+    $(document).off('click', '#bl-scope-tags-expand-all').on('click', '#bl-scope-tags-expand-all', () => {
+        settings.scopeTagCollapsedGroups = [];
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+    });
+
+    $(document).off('click', '#bl-scope-tags-collapse-all').on('click', '#bl-scope-tags-collapse-all', () => {
+        settings.scopeTagCollapsedGroups = getScopeTagGroups().map((group) => group.id);
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+    });
+
+    $(document).off('click', '.bl-scope-tag-group-head').on('click', '.bl-scope-tag-group-head', function(e) {
+        e.preventDefault();
+        const groupId = String($(this).attr('data-group-id') || '');
+        if (!groupId) return;
+        const groups = getScopeTagGroups();
+        const collapsed = new Set(normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, groups));
+        if (collapsed.has(groupId)) collapsed.delete(groupId);
+        else collapsed.add(groupId);
+        settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList([...collapsed], groups);
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+    });
+
+    $(document).off('click', '#bl-scope-group-add').on('click', '#bl-scope-group-add', () => {
+        const group = { id: createScopeTagGroupId(), name: '未命名分组' };
+        persistScopeTagGroups([...getScopeTagGroups(), group], { focusGroupId: group.id });
+    });
+
+    $(document).off('click', '#bl-scope-group-done').on('click', '#bl-scope-group-done', () => {
+        $('#bl-scope-group-manager-modal').prop('hidden', true);
+    });
+
+    $(document).off('input', '.bl-scope-group-name-input').on('input', '.bl-scope-group-name-input', function() {
+        const groupId = String($(this).attr('data-group-id') || '');
+        const nextName = String($(this).val() || '').trim();
+        if (!groupId) return;
+        settings.scopeTagGroups = normalizeScopeTagGroupList(getScopeTagGroups().map((group) => (
+            group.id === groupId ? { ...group, name: nextName || group.name } : group
+        )));
+        saveSettingsDebounced();
+        renderScopeTagsModal();
+        renderScopeTagGroupOptions($('#bl-scope-tag-group-select').val() || DEFAULT_SCOPE_TAG_GROUP_ID);
+    });
+
+    const moveScopeGroup = (groupId, direction) => {
+        const groups = getScopeTagGroups();
+        const index = groups.findIndex((group) => group.id === groupId);
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+        if (index < 0 || targetIndex < 0 || targetIndex >= groups.length) return;
+        [groups[index], groups[targetIndex]] = [groups[targetIndex], groups[index]];
+        persistScopeTagGroups(groups);
+    };
+
+    $(document).off('click', '.bl-scope-group-move-up').on('click', '.bl-scope-group-move-up', function() {
+        moveScopeGroup(String($(this).attr('data-group-id') || ''), 'up');
+    });
+
+    $(document).off('click', '.bl-scope-group-move-down').on('click', '.bl-scope-group-move-down', function() {
+        moveScopeGroup(String($(this).attr('data-group-id') || ''), 'down');
+    });
+
+    $(document).off('click', '.bl-scope-group-delete').on('click', '.bl-scope-group-delete', function() {
+        const groupId = String($(this).attr('data-group-id') || '');
+        if (!groupId || groupId === DEFAULT_SCOPE_TAG_GROUP_ID) return;
+        const group = getScopeTagGroups().find((item) => item.id === groupId);
+        if (!group) return;
+        if (!confirm(`确定删除分组 "${group.name}" 吗？\n该分组内的标签会移至默认分组。`)) return;
+        const currentScopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+        settings.scopeTags = currentScopeTags.map((tag) => (
+            tag.groupId === groupId ? { ...tag, groupId: DEFAULT_SCOPE_TAG_GROUP_ID } : tag
+        ));
+        settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList(
+            (settings.scopeTagCollapsedGroups || []).filter((id) => id !== groupId),
+            getScopeTagGroups().filter((item) => item.id !== groupId)
+        );
+        persistScopeTagGroups(getScopeTagGroups().filter((item) => item.id !== groupId));
     });
 
     $(document).off('click', '#bl-scope-tag-mode-toggle').on('click', '#bl-scope-tag-mode-toggle', () => {
@@ -942,11 +1166,16 @@ export function bindEvents() {
     });
 
     $(document).off('click', '#bl-scope-tags-modal').on('click', '#bl-scope-tags-modal', function(e) {
+        if ($(e.target).closest('.bl-scope-tag-menu-wrap').length === 0) closeScopeTagActionMenu();
         if (e.target && e.target.id === 'bl-scope-tags-modal') closeScopeTagsModal({ reset: true });
     });
 
     $(document).off('click', '#bl-scope-tag-editor-modal').on('click', '#bl-scope-tag-editor-modal', function(e) {
         if (e.target && e.target.id === 'bl-scope-tag-editor-modal') resetScopeTagEditor();
+    });
+
+    $(document).off('click', '#bl-scope-group-manager-modal').on('click', '#bl-scope-group-manager-modal', function(e) {
+        if (e.target && e.target.id === 'bl-scope-group-manager-modal') $('#bl-scope-group-manager-modal').prop('hidden', true);
     });
 
     $(document).off('click', '.bl-scope-tag-chip-main, .bl-scope-tag-edit').on('click', '.bl-scope-tag-chip-main, .bl-scope-tag-edit', function(e) {
