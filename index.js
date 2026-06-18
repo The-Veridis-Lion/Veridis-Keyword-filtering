@@ -10,6 +10,7 @@ import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.
 import { performGlobalCleanse } from './src/core.js';
 import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList } from './src/utils.js';
 import { isBaiBaiToolkitInstalled, isLoreFrameInstalled, isTauriTavernHost, waitForTauriTavernReady } from './src/platform.js';
+import { normalizeZhVariantSettings, restoreZhDictionaryPackageFromCache } from './src/zhConversion.js';
 
 const { extension_settings, getContext: getSillyTavernContext } = extensionsModule;
 
@@ -45,6 +46,10 @@ function ensureSettingsShape() {
     settings.diffTrackedMessageLimit = normalizeDiffTrackedMessageLimit(settings.diffTrackedMessageLimit);
     if (settings.logLevel === undefined) settings.logLevel = 2;
     if (settings.skipUserMessages === undefined) settings.skipUserMessages = false;
+    normalizeZhVariantSettings(settings);
+    if (settings.zhVariantCompatEnabled === true && !restoreZhDictionaryPackageFromCache(settings)) {
+        settings.zhVariantCompatEnabled = false;
+    }
     if (settings.protectPersonaDescription === undefined) settings.protectPersonaDescription = false;
     cleanupInvalidPresetBindings();
 }

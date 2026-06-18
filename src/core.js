@@ -1,7 +1,7 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { logger } from './log.js';
 import { buildSimpleWildcardPattern, compileRegexTarget, mergeScopeTagsWithBuiltins } from './utils.js';
-import { buildChineseVariantPattern } from './zhConversion.js';
+import { buildChineseVariantPattern, getChineseTextVariantLengths, getZhVariantCompatOptions, isZhDictionaryReady } from './zhConversion.js';
 import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
@@ -24,8 +24,8 @@ function escapeRegExpLiteral(value) {
     return String(value ?? '').replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
-function buildTargetLiteralPattern(value = '', useZhVariantCompat = false) {
-    return useZhVariantCompat ? buildChineseVariantPattern(value) : escapeRegExpLiteral(value);
+function buildTargetLiteralPattern(value = '', useZhVariantCompat = false, zhVariantOptions = {}) {
+    return useZhVariantCompat ? buildChineseVariantPattern(value, zhVariantOptions) : escapeRegExpLiteral(value);
 }
 
 function buildLegacySimpleTargetPattern(target = '') {
@@ -38,7 +38,7 @@ function buildLegacySimpleTargetPattern(target = '') {
         .replace(/\*/g, buildSimpleWildcardPattern());
 }
 
-function buildSimpleTargetPattern(target = '', useZhVariantCompat = false) {
+function buildSimpleTargetPattern(target = '', useZhVariantCompat = false, zhVariantOptions = {}) {
     if (!useZhVariantCompat) return buildLegacySimpleTargetPattern(target);
 
     const source = String(target ?? '');
@@ -59,7 +59,7 @@ function buildSimpleTargetPattern(target = '', useZhVariantCompat = false) {
                     .split(/[,，]/)
                     .map((item) => item.trim())
                     .filter(Boolean)
-                    .map((item) => buildTargetLiteralPattern(item, useZhVariantCompat));
+                    .map((item) => buildTargetLiteralPattern(item, useZhVariantCompat, zhVariantOptions));
                 if (alternatives.length > 0) {
                     pattern += `(?:${alternatives.join('|')})`;
                     index = closeIndex;
@@ -68,23 +68,26 @@ function buildSimpleTargetPattern(target = '', useZhVariantCompat = false) {
             }
         }
 
-        pattern += buildTargetLiteralPattern(char, useZhVariantCompat);
+        pattern += buildTargetLiteralPattern(char, useZhVariantCompat, zhVariantOptions);
     }
 
     return pattern;
 }
 
-function buildTextTargetEntries(targets, replacementsMap, useZhVariantCompat = false) {
+function buildTextTargetEntries(targets, replacementsMap, useZhVariantCompat = false, zhVariantOptions = {}) {
     return [...new Set(targets)]
         .sort((a, b) => b.length - a.length)
         .map((target) => {
-            const pattern = buildTargetLiteralPattern(target, useZhVariantCompat);
+            const pattern = buildTargetLiteralPattern(target, useZhVariantCompat, zhVariantOptions);
             const entry = {
                 target,
                 replacements: replacementsMap[target] || [],
                 pattern,
             };
-            if (useZhVariantCompat) entry.matchRegex = new RegExp(`^(?:${pattern})$`, 'mu');
+            if (useZhVariantCompat) {
+                entry.matchRegex = new RegExp(`^(?:${pattern})$`, 'mu');
+                entry.matchLengths = getChineseTextVariantLengths(target, zhVariantOptions);
+            }
             return entry;
         });
 }
@@ -92,9 +95,15 @@ function buildTextTargetEntries(targets, replacementsMap, useZhVariantCompat = f
 function groupTextTargetEntriesByLength(entries = []) {
     const grouped = new Map();
     entries.forEach((entry) => {
-        const key = entry.target.length;
-        if (!grouped.has(key)) grouped.set(key, []);
-        grouped.get(key).push(entry);
+        const lengths = Array.isArray(entry.matchLengths) && entry.matchLengths.length > 0
+            ? entry.matchLengths
+            : [entry.target.length];
+        lengths.forEach((length) => {
+            const key = Number(length);
+            if (!Number.isFinite(key) || key < 0) return;
+            if (!grouped.has(key)) grouped.set(key, []);
+            grouped.get(key).push(entry);
+        });
     });
     return grouped;
 }
@@ -111,7 +120,8 @@ export function buildProcessors() {
     const { extension_settings } = getAppContext();
     const settings = extension_settings[extensionName] || {};
     const rules = settings.rules || [];
-    const useZhVariantCompat = settings.zhVariantCompatEnabled === true;
+    const useZhVariantCompat = settings.zhVariantCompatEnabled === true && isZhDictionaryReady(settings);
+    const zhVariantOptions = getZhVariantCompatOptions(settings);
 
     let textTargets = [];
     let wordToReplacements = Object.create(null);
@@ -154,7 +164,7 @@ export function buildProcessors() {
                 for (const t of targets) {
                     if (t) {
                         try {
-                            const pattern = buildSimpleTargetPattern(t, useZhVariantCompat);
+                            const pattern = buildSimpleTargetPattern(t, useZhVariantCompat, zhVariantOptions);
                             let testRegex = new RegExp(pattern, 'gmu');
                             if (testRegex.test("")) {
                                 logger.warn(`拦截到危险的简易空匹配规则，已忽略: ${t}`);
@@ -172,7 +182,7 @@ export function buildProcessors() {
     }
 
     if (textTargets.length > 0) {
-        const targetEntries = buildTextTargetEntries(textTargets, wordToReplacements, useZhVariantCompat);
+        const targetEntries = buildTextTargetEntries(textTargets, wordToReplacements, useZhVariantCompat, zhVariantOptions);
         const textRegex = new RegExp(`(${targetEntries.map((entry) => entry.pattern).join('|')})`, 'gmu');
         processors.unshift({
             regex: textRegex,
@@ -276,6 +286,7 @@ export function applyReplacements(originalText, options = {}) {
     const processors = buildProcessors();
 
     processors.forEach((proc, procIndex) => {
+        if (options.unsafeRegexOnly === true && proc.domSafe !== false) return;
         if (options.domSafeOnly === true && proc.domSafe === false) return;
         text = text.replace(proc.regex, (match, ...args) => {
             if (proc.kind === 'regex') {

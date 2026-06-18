@@ -108,7 +108,7 @@ export function isProtectedNode(node) {
     if (node.closest('.name_text')) return true;
     if (isPersonaDescriptionNode(node)) return true;
     if (shouldProtectReasoningNode(node)) return true;
-    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-preset-import-choice-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay')) return true;
+    if (node.closest('#bl-purifier-popup, #bl-batch-popup, #bl-confirm-modal, #bl-zh-dictionary-modal, #bl-rule-edit-modal, #bl-rule-transfer-modal, #bl-preset-import-choice-modal, #bl-rule-search-modal, #bl-scope-tags-modal, #bl-diff-modal, #bl-subrule-edit-modal, #bl-loading-overlay')) return true;
     if (shouldProtectSkipUserNode(node)) return true;
     if (isKnownPluginContainerNode(node)) return true;
     if (isScriptEditorDialogNode(node)) return true;
@@ -207,9 +207,10 @@ let node;
  * 流式输出时按整条消息做视觉净化，兼容移动端文本节点碎裂导致的跨节点漏命中。
  * 该函数只改 DOM 显示，不写入 chat 数据；生成结束后仍由数据净化流程落盘。
  * @param {Element} messageNode 消息 DOM 节点。
+ * @param {{domSafeOnly?: boolean, unsafeRegexOnly?: boolean}} [options={}] 净化选项。
  * @returns {boolean} 是否发生视觉替换。
  */
-export function purifyStreamingMessageDom(messageNode) {
+export function purifyStreamingMessageDom(messageNode, options = {}) {
     if (!messageNode || messageNode.nodeType !== 1 || runtimeState.isStreamingGeneration !== true) return false;
     if (isRevertedMessageDomNode(messageNode)) return false;
 
@@ -218,12 +219,15 @@ export function purifyStreamingMessageDom(messageNode) {
 
     const rootNode = messageNode.querySelector?.('.mes_text') || messageNode;
     const textNodes = collectPurifiableTextNodes(rootNode);
-    if (textNodes.length <= 1) return false;
+    const unsafeRegexOnly = options.unsafeRegexOnly === true;
+    if (textNodes.length === 0 || (!unsafeRegexOnly && textNodes.length <= 1)) return false;
 
     const originalText = textNodes.map((node) => node.nodeValue || '').join('');
     if (!originalText.trim()) return false;
 
-    const nextText = applyVisualMask(originalText, { domSafeOnly: true });
+    const nextText = unsafeRegexOnly
+        ? applyVisualMask(originalText, { unsafeRegexOnly: true })
+        : applyVisualMask(originalText, { domSafeOnly: options.domSafeOnly !== false });
     if (originalText === nextText) return false;
 
     projectTextAcrossNodes(textNodes, nextText);

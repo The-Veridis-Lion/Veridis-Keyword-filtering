@@ -24,6 +24,11 @@ import {
     syncRuleSearchInputUi,
     clearRuleSearchEditFlow,
     showToast,
+    openZhDictionaryModal,
+    closeZhDictionaryModal,
+    showZhDictionaryInstallOverlay,
+    updateZhDictionaryInstallOverlay,
+    closeLoadingOverlay,
     removeRegexReplacementInput,
     startEditingRegexReplacementInput,
     recognizeRegexReplacementInput,
@@ -49,11 +54,22 @@ import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComp
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
 import { isBaiBaiToolkitInstalled, isTauriTavernHost } from './platform.js';
+import {
+    downloadZhDictionaryPackage,
+    getZhDictionaryPackageStats,
+    getZhDictionaryPackageStatus,
+    getZhVariantCompatOptions,
+    isZhDictionaryReady,
+    markZhDictionaryInstallFailed,
+    normalizeZhVariantSettings,
+    restoreZhDictionaryPackageFromCache,
+} from './zhConversion.js';
 
 let streamingDiffInjectTimer = null;
 let streamingPendingDiffIndices = [];
 const ruleObjectIdMap = new WeakMap();
 let nextRuleObjectId = 1;
+let zhDictionaryInstallAbortController = null;
 
 function ensureRuleObjectId(rule) {
     if (!rule || typeof rule !== 'object') return '';
@@ -235,6 +251,84 @@ export function initRealtimeInterceptor() {
         return index;
     };
 
+    const streamingVisualPurifyNodes = new Set();
+    const streamingVisualPurifyTextCache = new WeakMap();
+    const streamingVisualPurifyBaseDelay = 80;
+    const streamingVisualPurifySlowDelay = 220;
+    const streamingVisualPurifySlowThreshold = 40;
+    let streamingVisualPurifyTimer = null;
+    let streamingVisualPurifyDelay = streamingVisualPurifyBaseDelay;
+
+    const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+
+    const getLatestStreamingAssistantIndex = () => {
+        const { chat } = getAppContext();
+        if (!Array.isArray(chat)) return -1;
+        for (let i = chat.length - 1; i >= 0; i--) {
+            if (isAssistantMessage(chat[i])) return i;
+        }
+        return -1;
+    };
+
+    const scheduleStreamingMessageVisualPurify = (messageNodes) => {
+        if (!runtimeState.isStreamingGeneration) return;
+        messageNodes.forEach((node) => {
+            if (node && node.nodeType === 1 && isTrackableMessageDomNode(node)) {
+                streamingVisualPurifyNodes.add(node);
+            }
+        });
+        if (streamingVisualPurifyNodes.size === 0 || streamingVisualPurifyTimer) return;
+        streamingVisualPurifyTimer = setTimeout(flushStreamingMessageVisualPurify, streamingVisualPurifyDelay);
+    };
+
+    function flushStreamingMessageVisualPurify() {
+        streamingVisualPurifyTimer = null;
+        if (!runtimeState.isStreamingGeneration) {
+            streamingVisualPurifyNodes.clear();
+            return;
+        }
+
+        const pendingNodes = [...streamingVisualPurifyNodes];
+        streamingVisualPurifyNodes.clear();
+        if (pendingNodes.length === 0) return;
+
+        const latestIndex = getLatestStreamingAssistantIndex();
+        if (latestIndex < 0) return;
+
+        const touchedMessageIndices = new Set();
+        const startTime = now();
+        isPurifying = true;
+        try {
+            pendingNodes.forEach((mesNode) => {
+                if (!mesNode?.isConnected || isRevertedMessageDomNode(mesNode)) return;
+
+                const index = resolveNodeMessageIndex(mesNode);
+                if (index !== latestIndex) return;
+
+                const textRoot = mesNode.querySelector?.('.mes_text') || mesNode;
+                const currentText = textRoot?.textContent || '';
+                if (!currentText || streamingVisualPurifyTextCache.get(mesNode) === currentText) return;
+
+                streamingVisualPurifyTextCache.set(mesNode, currentText);
+                if (!purifyStreamingMessageDom(mesNode, { unsafeRegexOnly: true })) return;
+
+                const nextTextRoot = mesNode.querySelector?.('.mes_text') || mesNode;
+                streamingVisualPurifyTextCache.set(mesNode, nextTextRoot?.textContent || '');
+                const touchedIndex = primePendingComparisonForNode(mesNode, { skipPersist: true });
+                if (touchedIndex >= 0) touchedMessageIndices.add(touchedIndex);
+            });
+        } finally {
+            chatObserver.takeRecords();
+            injectDiffButtonsStreamingSafe([...touchedMessageIndices]);
+            isPurifying = false;
+        }
+
+        const elapsed = now() - startTime;
+        streamingVisualPurifyDelay = elapsed > streamingVisualPurifySlowThreshold
+            ? streamingVisualPurifySlowDelay
+            : streamingVisualPurifyBaseDelay;
+    }
+
     const chatObserver = new MutationObserver((mutations) => {
     if (isPurifying) return;
     const isStreaming = runtimeState.isStreamingGeneration;
@@ -262,6 +356,7 @@ export function initRealtimeInterceptor() {
                         if (isStreaming) collectClosestTrackableMessageNode(node, streamingMessageNodes);
                         } else if (node.nodeType === 1) {
                             purifyDOM(node);
+                            if (isStreaming) collectClosestTrackableMessageNode(node, streamingMessageNodes);
                             const messageNodes = [];
                             collectMessageNodes(node, messageNodes);
                         messageNodes.forEach((mesNode) => {
@@ -290,6 +385,7 @@ export function initRealtimeInterceptor() {
                     const index = primePendingComparisonForNode(mesNode, { skipPersist: true });
                     if (index >= 0) touchedMessageIndices.add(index);
                 });
+                scheduleStreamingMessageVisualPurify(streamingMessageNodes);
             }
         } finally {
             chatObserver.takeRecords();
@@ -316,6 +412,11 @@ export function initRealtimeInterceptor() {
         }
     }, 800);
     window.addEventListener('beforeunload', () => clearInterval(theaterIntervalId), { once: true });
+    window.addEventListener('beforeunload', () => {
+        if (streamingVisualPurifyTimer) clearTimeout(streamingVisualPurifyTimer);
+        streamingVisualPurifyTimer = null;
+        streamingVisualPurifyNodes.clear();
+    }, { once: true });
 
     document.addEventListener('input', (e) => {
         const el = e.target;
@@ -805,6 +906,7 @@ export function bindEvents() {
         $('#bl-purifier-popup').fadeOut(200);
     });
     const settings = extension_settings[extensionName];
+    normalizeZhVariantSettings(settings);
     const isSearchGroupEditFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'group';
     const isSearchDirectSubruleFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'subrule';
     const isRelatedDirectSubruleFlow = () => runtimeState.searchEditFlow.active === true && runtimeState.searchEditFlow.returnMode === 'related';
@@ -874,13 +976,80 @@ export function bindEvents() {
         $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay').attr('data-bl-theme', normalized);
     };
     const syncZhCompatToggle = () => {
-        const enabled = settings.zhVariantCompatEnabled === true;
+        const packageStatus = getZhDictionaryPackageStatus(settings);
+        const ready = settings.zhVariantCompatEnabled === true
+            ? isZhDictionaryReady(settings)
+            : packageStatus.ready;
+        if (settings.zhVariantCompatEnabled === true && !ready) {
+            settings.zhVariantCompatEnabled = false;
+        }
+        const enabled = settings.zhVariantCompatEnabled === true && ready;
+        const options = getZhVariantCompatOptions(settings);
+        const regionText = [
+            options.tw ? '台繁' : '',
+            options.hk ? '港繁' : '',
+        ].filter(Boolean).join('、') || '标准简繁';
         $('#bl-zh-compat-toggle')
             .toggleClass('bl-bind-active', enabled)
             .attr('aria-pressed', String(enabled))
             .attr('title', enabled
-                ? '简繁兼容已开启：会匹配简中、繁中和半转换文本（点击关闭）'
-                : '简繁兼容已关闭：按当前规则精确匹配（点击开启）');
+                ? `简繁兼容已开启：${regionText} 变体参与匹配（点击关闭）`
+                : packageStatus.ready
+                    ? `简繁兼容已关闭：已安装增强词典，点击启用 ${regionText} 匹配`
+                    : '简繁兼容未安装：点击下载 OpenCC 增强词典包');
+    };
+    const enableVerifiedZhCompat = (toastMessage = '简繁兼容已开启') => {
+        if (!restoreZhDictionaryPackageFromCache(settings)) return false;
+        settings.zhVariantCompatEnabled = true;
+        markRulesDataDirty({ rulesUi: false });
+        saveSettingsDebounced();
+        syncZhCompatToggle();
+        performGlobalCleanse();
+        showToast(toastMessage);
+        return true;
+    };
+    const openZhDictionaryInstallPrompt = () => {
+        const stats = getZhDictionaryPackageStats();
+        openZhDictionaryModal(stats, getZhVariantCompatOptions(settings));
+    };
+    const runZhDictionaryInstall = async () => {
+        if (zhDictionaryInstallAbortController) return;
+        settings.zhVariantCompatOptions = {
+            tw: $('#bl-zh-dict-tw').prop('checked') === true,
+            hk: $('#bl-zh-dict-hk').prop('checked') === true,
+        };
+        settings.zhVariantCompatEnabled = false;
+        saveSettingsDebounced();
+        closeZhDictionaryModal();
+
+        zhDictionaryInstallAbortController = new AbortController();
+        showZhDictionaryInstallOverlay(() => {
+            zhDictionaryInstallAbortController?.abort();
+        });
+
+        try {
+            await downloadZhDictionaryPackage({
+                signal: zhDictionaryInstallAbortController.signal,
+                onProgress: ({ ratio, statusText }) => updateZhDictionaryInstallOverlay(ratio, statusText),
+            });
+            settings.zhVariantCompatEnabled = true;
+            markRulesDataDirty({ rulesUi: false });
+            saveSettingsDebounced();
+            syncZhCompatToggle();
+            performGlobalCleanse();
+            showToast('增强简繁词典已安装并启用');
+        } catch (error) {
+            const message = markZhDictionaryInstallFailed(error);
+            settings.zhVariantCompatEnabled = false;
+            markRulesDataDirty({ rulesUi: false });
+            saveSettingsDebounced();
+            syncZhCompatToggle();
+            if (error?.name === 'AbortError') showToast('已取消词典下载');
+            else showToast(`词典安装失败：${message}`);
+        } finally {
+            zhDictionaryInstallAbortController = null;
+            window.setTimeout(() => closeLoadingOverlay(), 260);
+        }
     };
     applyThemeMode(settings.themeMode || 'auto');
     syncZhCompatToggle();
@@ -893,12 +1062,28 @@ export function bindEvents() {
 
     $(document).off('click', '#bl-zh-compat-toggle').on('click', '#bl-zh-compat-toggle', function(e) {
         e.preventDefault();
-        settings.zhVariantCompatEnabled = settings.zhVariantCompatEnabled !== true;
-        markRulesDataDirty({ rulesUi: false });
-        saveSettingsDebounced();
-        syncZhCompatToggle();
-        performGlobalCleanse();
-        showToast(settings.zhVariantCompatEnabled ? '简繁兼容已开启' : '简繁兼容已关闭');
+        if (settings.zhVariantCompatEnabled === true && isZhDictionaryReady(settings)) {
+            settings.zhVariantCompatEnabled = false;
+            markRulesDataDirty({ rulesUi: false });
+            saveSettingsDebounced();
+            syncZhCompatToggle();
+            performGlobalCleanse();
+            showToast('简繁兼容已关闭');
+            return;
+        }
+
+        if (enableVerifiedZhCompat()) return;
+        openZhDictionaryInstallPrompt();
+    });
+
+    $(document).off('click', '#bl-zh-dict-close, #bl-zh-dict-cancel').on('click', '#bl-zh-dict-close, #bl-zh-dict-cancel', function(e) {
+        e.preventDefault();
+        closeZhDictionaryModal();
+    });
+
+    $(document).off('click', '#bl-zh-dict-download').on('click', '#bl-zh-dict-download', function(e) {
+        e.preventDefault();
+        runZhDictionaryInstall();
     });
 
     $('#bl-diff-global-toggle').prop('checked', settings.enableVisualDiff !== false);

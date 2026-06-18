@@ -1,186 +1,117 @@
-const S2T_PHRASES = {
-    '戏谑': '戲謔',
-    '略显': '略顯',
-    '粗糙': '粗糙',
-    '屏蔽词': '屏蔽詞',
-    '净化': '淨化',
-    '标签': '標籤',
-    '范围': '範圍',
-    '预设': '預設',
-    '默认': '默認',
-    '默认分组': '默認分組',
-    '分组': '分組',
-    '规则': '規則',
-    '合集': '合集',
-    '备注': '備註',
-    '简体': '簡體',
-    '繁体': '繁體',
-    '简中': '簡中',
-    '繁中': '繁中',
-    '当前': '當前',
-    '启用': '啟用',
-    '停用': '停用',
-    '关闭': '關閉',
-    '打开': '開啟',
-    '添加': '添加',
-    '新增': '新增',
-    '删除': '刪除',
-    '编辑': '編輯',
-    '保存': '儲存',
-    '导入': '匯入',
-    '导出': '匯出',
-    '复制': '複製',
-    '转移': '轉移',
-    '转换': '轉換',
-    '全局': '全域',
-    '用户': '使用者',
-    '消息': '訊息',
-    '角色': '角色',
-    '世界书': '世界書',
-    '思维链': '思維鏈',
-    '变量': '變數',
-    '选项': '選項',
-    '选择': '選擇',
-    '查找': '尋找',
-    '替换': '替換',
-    '文本': '文字',
-    '正则': '正規',
-    '简单': '簡單',
-    '简易': '簡易',
-    '普通': '普通',
-    '透视': '透視',
-    '深度清理': '深度清理',
-    '清理': '清理',
-    '保护': '保護',
-    '特定': '特定',
-    '内容': '內容',
-    '数据': '資料',
-    '数据库': '資料庫',
-    '软件': '軟體',
-    '硬件': '硬體',
-    '网络': '網路',
-    '服务器': '伺服器',
-    '后台': '後台',
-    '以后': '以後',
-    '之后': '之後',
-    '前后': '前後',
-    '后续': '後續',
-    '后面': '後面',
-    '然后': '然後',
-    '皇后': '皇后',
-    '王后': '王后',
-    '太后': '太后',
-    '后羿': '后羿',
-    '后土': '后土',
-    '头发': '頭髮',
-    '理发': '理髮',
-    '触发': '觸發',
-    '发生': '發生',
-    '发展': '發展',
-    '发现': '發現',
-    '发布': '發布',
-    '发出': '發出',
-    '干净': '乾淨',
-    '干燥': '乾燥',
-    '树干': '樹幹',
-    '才干': '才幹',
-    '干涉': '干涉',
-    '干预': '干預',
-    '里面': '裡面',
-    '这里': '這裡',
-    '那里': '那裡',
-    '哪里': '哪裡',
-    '历史': '歷史',
-    '日历': '日曆',
-    '经历': '經歷',
-    '复杂': '複雜',
-    '重复': '重複',
-    '回复': '回覆',
-    '复原': '復原',
-    '复位': '復位',
-    '制度': '制度',
-    '制作': '製作',
-    '制造': '製造',
-    '控制': '控制',
-    '只读': '唯讀',
-    '一只': '一隻',
-    '几只': '幾隻',
-    '只会': '只會',
-    '只要': '只要',
-    '钟表': '鐘錶',
-    '分钟': '分鐘',
-    '小时': '小時',
-    '系统': '系統',
-    '联系': '聯繫',
-};
+import { extensionName, getAppContext, runtimeState } from './state.js';
+import { logger } from './log.js';
 
-const S2T_CHARS = {
-    '爱': '愛', '碍': '礙', '罢': '罷', '备': '備', '贝': '貝', '笔': '筆', '毕': '畢', '边': '邊',
-    '宾': '賓', '标': '標', '别': '別', '变': '變', '并': '併', '补': '補', '财': '財', '参': '參', '仓': '倉',
-    '层': '層', '产': '產', '长': '長', '尝': '嘗', '车': '車', '彻': '徹', '尘': '塵', '陈': '陳',
-    '衬': '襯', '称': '稱', '惩': '懲', '迟': '遲', '齿': '齒', '冲': '衝', '虫': '蟲', '丑': '醜',
-    '处': '處', '触': '觸', '传': '傳', '创': '創', '辞': '辭', '词': '詞', '聪': '聰', '从': '從', '达': '達',
-    '带': '帶', '单': '單', '当': '當', '党': '黨', '导': '導', '灯': '燈', '邓': '鄧', '敌': '敵',
-    '点': '點', '电': '電', '淀': '澱', '冻': '凍', '东': '東', '动': '動', '断': '斷', '对': '對',
-    '队': '隊', '夺': '奪', '儿': '兒', '尔': '爾', '发': '發', '罚': '罰', '范': '範', '飞': '飛',
-    '奋': '奮', '丰': '豐', '风': '風', '凤': '鳳', '肤': '膚', '复': '復', '该': '該', '盖': '蓋',
-    '干': '幹', '个': '個', '给': '給', '宫': '宮', '够': '夠', '构': '構', '购': '購', '广': '廣',
-    '归': '歸', '龟': '龜', '国': '國', '过': '過', '汉': '漢', '号': '號', '贺': '賀', '轰': '轟',
-    '后': '後', '护': '護', '沪': '滬', '怀': '懷', '坏': '壞', '欢': '歡', '环': '環', '还': '還',
-    '会': '會', '汇': '匯', '绘': '繪', '获': '獲', '击': '擊', '机': '機', '积': '積', '极': '極',
-    '际': '際', '继': '繼', '纪': '紀', '记': '記', '夹': '夾', '价': '價', '间': '間', '监': '監', '见': '見',
-    '荐': '薦', '将': '將', '奖': '獎', '讲': '講', '酱': '醬', '胶': '膠', '阶': '階', '节': '節',
-    '洁': '潔', '结': '結', '仅': '僅', '尽': '盡', '进': '進', '经': '經', '惊': '驚', '旧': '舊',
-    '举': '舉', '据': '據', '剧': '劇', '觉': '覺', '开': '開', '壳': '殼', '课': '課', '块': '塊',
-    '矿': '礦', '亏': '虧', '扩': '擴', '来': '來', '赖': '賴', '兰': '蘭', '栏': '欄', '览': '覽',
-    '劳': '勞', '类': '類', '礼': '禮', '离': '離', '里': '裡', '历': '歷', '厉': '厲', '联': '聯',
-    '脸': '臉', '练': '練', '炼': '煉', '粮': '糧', '两': '兩', '辆': '輛', '疗': '療', '辽': '遼',
-    '临': '臨', '邻': '鄰', '龄': '齡', '刘': '劉', '龙': '龍', '楼': '樓', '录': '錄', '虑': '慮',
-    '论': '論', '轮': '輪', '罗': '羅', '滤': '濾', '吗': '嗎', '买': '買', '卖': '賣', '麦': '麥', '门': '門',
-    '们': '們', '梦': '夢', '灭': '滅', '难': '難', '脑': '腦', '拟': '擬', '鸟': '鳥', '宁': '寧',
-    '农': '農', '盘': '盤', '评': '評', '凭': '憑', '气': '氣', '迁': '遷', '签': '簽', '强': '強',
-    '乔': '喬', '亲': '親', '请': '請', '穷': '窮', '区': '區', '驱': '驅', '权': '權', '劝': '勸',
-    '确': '確', '让': '讓', '热': '熱', '认': '認', '荣': '榮', '软': '軟', '润': '潤', '洒': '灑',
-    '杀': '殺', '筛': '篩', '闪': '閃', '删': '刪', '伤': '傷', '赏': '賞', '烧': '燒', '设': '設',
-    '摄': '攝', '审': '審', '声': '聲', '胜': '勝', '圣': '聖', '师': '師', '时': '時', '实': '實',
-    '试': '試', '视': '視', '释': '釋', '势': '勢', '适': '適', '书': '書', '输': '輸', '术': '術',
-    '树': '樹', '数': '數', '帅': '帥', '双': '雙', '谁': '誰', '说': '說', '顺': '順', '丝': '絲',
-    '苏': '蘇', '虽': '雖', '随': '隨', '损': '損', '孙': '孫', '缩': '縮', '台': '臺', '态': '態',
-    '贪': '貪', '谈': '談', '汤': '湯', '条': '條', '听': '聽', '厅': '廳', '头': '頭', '图': '圖',
-    '团': '團', '万': '萬', '网': '網', '为': '為', '违': '違', '围': '圍', '维': '維', '卫': '衛',
-    '稳': '穩', '务': '務', '雾': '霧', '习': '習', '戏': '戲', '细': '細', '虾': '蝦', '狭': '狹',
-    '侠': '俠', '峡': '峽', '县': '縣', '显': '顯', '现': '現', '线': '線', '乡': '鄉', '写': '寫', '协': '協',
-    '谢': '謝', '谑': '謔', '兴': '興', '须': '須', '选': '選', '学': '學', '寻': '尋', '压': '壓', '亚': '亞',
-    '严': '嚴', '盐': '鹽', '阳': '陽', '样': '樣', '养': '養', '叶': '葉', '页': '頁', '业': '業',
-    '医': '醫', '亿': '億', '忆': '憶', '义': '義', '艺': '藝', '异': '異', '译': '譯', '议': '議',
-    '应': '應', '营': '營', '拥': '擁', '优': '優', '邮': '郵', '余': '餘', '鱼': '魚', '语': '語',
-    '预': '預', '远': '遠', '员': '員', '园': '園', '圆': '圓', '缘': '緣', '运': '運', '杂': '雜',
-    '赞': '讚', '责': '責', '则': '則', '泽': '澤', '贼': '賊', '赠': '贈', '战': '戰', '张': '張',
-    '帐': '帳', '账': '賬', '赵': '趙', '这': '這', '阵': '陣', '郑': '鄭', '证': '證',
-    '职': '職', '执': '執', '纸': '紙', '志': '誌', '质': '質', '钟': '鐘', '终': '終', '种': '種',
-    '众': '眾', '诸': '諸', '专': '專', '转': '轉', '装': '裝', '庄': '莊', '壮': '壯', '状': '狀',
-    '准': '準', '浊': '濁', '总': '總', '纵': '縱', '组': '組', '钻': '鑽',
-    '测': '測', '读': '讀', '简': '簡', '猫': '貓',
-    '钉': '釘', '针': '針', '钓': '釣', '钟': '鐘', '钢': '鋼', '钥': '鑰', '钩': '鉤', '钮': '鈕',
-    '钱': '錢', '钳': '鉗', '钻': '鑽', '铁': '鐵', '铃': '鈴', '铅': '鉛', '铜': '銅', '铝': '鋁',
-    '铭': '銘', '银': '銀', '铺': '鋪', '链': '鏈', '销': '銷', '锁': '鎖', '锈': '鏽', '错': '錯',
-    '锅': '鍋', '锤': '錘', '键': '鍵', '锯': '鋸', '镇': '鎮', '镜': '鏡',
-    '闻': '聞', '问': '問', '闯': '闖', '闲': '閒', '间': '間', '闷': '悶', '闸': '閘', '闹': '鬧',
-    '闺': '閨', '阀': '閥', '阁': '閣', '阅': '閱', '阎': '閻', '阐': '闡', '阔': '闊',
-};
+const OPENCC_DICTIONARY_COMMIT = '2736adb0f27d8c2e2747ea58dfaa016c41503cc4';
+export const ZH_DICTIONARY_PACKAGE_VERSION = `opencc-${OPENCC_DICTIONARY_COMMIT.slice(0, 12)}-zh-variant-v1`;
+const OPENCC_DICTIONARY_BASE_URL = `https://raw.githubusercontent.com/BYVoid/OpenCC/${OPENCC_DICTIONARY_COMMIT}/data/dictionary`;
+const CACHE_KEY = `${extensionName}:zh-variant-dictionary:${ZH_DICTIONARY_PACKAGE_VERSION}`;
+const MAX_VARIANTS_PER_TARGET = 96;
 
-function reverseMap(map) {
-    const reversed = {};
-    Object.entries(map).forEach(([key, value]) => {
-        if (!Object.prototype.hasOwnProperty.call(reversed, value)) reversed[value] = key;
-    });
-    return reversed;
+const DICTIONARY_FILES = [
+    { name: 'STCharacters.txt', bucket: 'base', group: 's2t', bytes: 35832, entries: 4011, sha256: '5f1ed494af5a5fc793be3693cc9f151c980e3d78c6b12626a084a91f79eee1b3' },
+    { name: 'STPhrases.txt', bucket: 'base', group: 's2t', bytes: 1012478, entries: 49385, sha256: 'dc04ae06cb7d53152494e83bcf4ee7ceb623c9a766a705060b0bae23986dddcd' },
+    { name: 'TSCharacters.txt', bucket: 'base', group: 't2s', bytes: 104369, entries: 4143, sha256: '795f53d3f3a29284f9325e2efe64215e199a53339a22b666342aad3ab1e6e722' },
+    { name: 'TSPhrases.txt', bucket: 'base', group: 't2s', bytes: 8620, entries: 469, sha256: 'ed408a9addd621a0523dde359dfa392e378d65b44fc50293fdc7c1456b83c5c9' },
+    { name: 'TWPhrases.txt', bucket: 'tw', group: 'tw', bytes: 17769, entries: 776, sha256: '4798f5c6297c29595b28a1272c3be633282fffedd2c24c049c6fcdb3155cd8b6' },
+    { name: 'TWVariants.txt', bucket: 'tw', group: 'tw', bytes: 554, entries: 38, sha256: '75d5c5b83220dfd0c22ff500081b553da4e447ff6b1822fec44f40e4b33c0a56' },
+    { name: 'TWVariantsRevPhrases.txt', bucket: 'tw', group: 'tw', bytes: 20983, entries: 1004, sha256: '4cc2de3f6b3bc8034f217bf98023264ad1e3deecccd7ed0a3ff7c4176ca0a8e2' },
+    { name: 'HKVariants.txt', bucket: 'hk', group: 'hk', bytes: 774, entries: 63, sha256: '3a06c3619d17d739203be6452045786b2298b0eec81b8a2a4b9a372b6346ecb2' },
+    { name: 'HKVariantsRevPhrases.txt', bucket: 'hk', group: 'hk', bytes: 22520, entries: 1073, sha256: 'f2d3046e3fd8f8b8abfca8668df3e13f9dfe218b320d078a99701bec08b37d15' },
+];
+
+const EXPECTED_TOTAL_BYTES = DICTIONARY_FILES.reduce((sum, file) => sum + file.bytes, 0);
+const EXPECTED_TOTAL_ENTRIES = DICTIONARY_FILES.reduce((sum, file) => sum + file.entries, 0);
+const EXPECTED_PACKAGE_DIGEST_SOURCE = DICTIONARY_FILES.map((file) => `${file.name}:${file.sha256}`).join('|');
+
+function getSettings() {
+    return getAppContext().extension_settings?.[extensionName] || {};
 }
 
-const T2S_PHRASES = reverseMap(S2T_PHRASES);
-const T2S_CHARS = reverseMap(S2T_CHARS);
-const S2T_PHRASE_ENTRIES = Object.entries(S2T_PHRASES).sort((a, b) => b[0].length - a[0].length);
-const T2S_PHRASE_ENTRIES = Object.entries(T2S_PHRASES).sort((a, b) => b[0].length - a[0].length);
+function normalizeBoolean(value, fallback = true) {
+    return typeof value === 'boolean' ? value : fallback;
+}
+
+export function normalizeZhVariantOptions(options = {}) {
+    return {
+        tw: normalizeBoolean(options?.tw, true),
+        hk: normalizeBoolean(options?.hk, true),
+    };
+}
+
+export function normalizeZhVariantSettings(settings = getSettings()) {
+    if (!settings || typeof settings !== 'object') return settings;
+    settings.zhVariantCompatEnabled = settings.zhVariantCompatEnabled === true;
+    settings.zhVariantCompatOptions = normalizeZhVariantOptions(settings.zhVariantCompatOptions);
+    if (!settings.zhVariantDictionary || typeof settings.zhVariantDictionary !== 'object') {
+        settings.zhVariantDictionary = {};
+    }
+    settings.zhVariantDictionary = {
+        status: ['missing', 'verified', 'failed'].includes(settings.zhVariantDictionary.status)
+            ? settings.zhVariantDictionary.status
+            : 'missing',
+        packageVersion: String(settings.zhVariantDictionary.packageVersion || ''),
+        verifiedAt: Number(settings.zhVariantDictionary.verifiedAt) || 0,
+        bytes: Number(settings.zhVariantDictionary.bytes) || 0,
+        entries: Number(settings.zhVariantDictionary.entries) || 0,
+        fileCount: Number(settings.zhVariantDictionary.fileCount) || 0,
+        digest: String(settings.zhVariantDictionary.digest || ''),
+        lastError: String(settings.zhVariantDictionary.lastError || ''),
+    };
+    return settings;
+}
+
+export function getZhVariantCompatOptions(settings = getSettings()) {
+    return normalizeZhVariantOptions(settings?.zhVariantCompatOptions);
+}
+
+function getStorage() {
+    try {
+        return window?.localStorage || null;
+    } catch (e) {
+        logger.warn('无法访问 localStorage，增强简繁词典不可缓存', e);
+        return null;
+    }
+}
+
+function readCachedPackage() {
+    const storage = getStorage();
+    if (!storage) return null;
+    try {
+        const raw = storage.getItem(CACHE_KEY);
+        if (!raw) return null;
+        const parsed = JSON.parse(raw);
+        if (!parsed || parsed.packageVersion !== ZH_DICTIONARY_PACKAGE_VERSION) return null;
+        if (!parsed.files || typeof parsed.files !== 'object') return null;
+        return parsed;
+    } catch (e) {
+        logger.warn('读取增强简繁词典缓存失败', e);
+        return null;
+    }
+}
+
+function writeCachedPackage(packagePayload) {
+    const storage = getStorage();
+    if (!storage) throw new Error('无法访问浏览器本地缓存，词典包不能持久保存。');
+    storage.setItem(CACHE_KEY, JSON.stringify(packagePayload));
+}
+
+function updateSettingsDictionaryMeta(meta, status = 'verified', error = '', targetSettings = getSettings()) {
+    const settings = targetSettings;
+    normalizeZhVariantSettings(settings);
+    const currentMeta = settings.zhVariantDictionary || {};
+    settings.zhVariantDictionary = {
+        status,
+        packageVersion: status === 'verified' ? ZH_DICTIONARY_PACKAGE_VERSION : '',
+        verifiedAt: status === 'verified'
+            ? Number(meta?.verifiedAt || currentMeta.verifiedAt) || Date.now()
+            : 0,
+        bytes: status === 'verified' ? EXPECTED_TOTAL_BYTES : 0,
+        entries: status === 'verified' ? EXPECTED_TOTAL_ENTRIES : 0,
+        fileCount: status === 'verified' ? DICTIONARY_FILES.length : 0,
+        digest: status === 'verified' ? meta?.digest || '' : '',
+        lastError: error,
+    };
+}
 
 function uniqueValues(values) {
     const seen = new Set();
@@ -192,6 +123,195 @@ function uniqueValues(values) {
         result.push(normalized);
     });
     return result;
+}
+
+function addMapValue(map, key, value) {
+    const source = String(key ?? '').trim();
+    const target = String(value ?? '').trim();
+    if (!source || !target || source === target) return;
+    if (!map.has(source)) map.set(source, new Set());
+    map.get(source).add(target);
+}
+
+function addBidirectionalVariant(bucket, source, target) {
+    const isCharVariant = Array.from(source).length === 1 && Array.from(target).length === 1;
+    addMapValue(isCharVariant ? bucket.charVariants : bucket.phraseVariants, source, target);
+    addMapValue(isCharVariant ? bucket.charVariants : bucket.phraseVariants, target, source);
+}
+
+function parseDictionaryEntries(text) {
+    const entries = [];
+    String(text || '').split(/\r?\n/).forEach((line) => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return;
+        const [sourceColumn, ...targetColumns] = trimmed.split(/\t+/);
+        const source = String(sourceColumn || '').trim();
+        const targets = targetColumns.join(' ').trim().split(/\s+/).map((target) => target.trim()).filter(Boolean);
+        if (!source || targets.length === 0) return;
+        entries.push({ source, targets });
+    });
+    return entries;
+}
+
+function createEmptyIndex() {
+    return {
+        buckets: {
+            base: { charVariants: new Map(), phraseVariants: new Map() },
+            tw: { charVariants: new Map(), phraseVariants: new Map() },
+            hk: { charVariants: new Map(), phraseVariants: new Map() },
+        },
+        groups: {
+            s2t: [],
+            t2s: [],
+            tw: [],
+            hk: [],
+        },
+    };
+}
+
+function sortConversionEntries(entries) {
+    return entries.sort((a, b) => b.source.length - a.source.length || a.source.localeCompare(b.source));
+}
+
+function bucketConversionEntries(entries) {
+    const byFirstChar = new Map();
+    entries.forEach((entry) => {
+        const firstChar = entry.source[0] || '';
+        if (!firstChar) return;
+        if (!byFirstChar.has(firstChar)) byFirstChar.set(firstChar, []);
+        byFirstChar.get(firstChar).push(entry);
+    });
+    return { entries, byFirstChar };
+}
+
+function buildDictionaryIndex(files) {
+    const index = createEmptyIndex();
+
+    DICTIONARY_FILES.forEach((fileDef) => {
+        const text = files[fileDef.name];
+        const entries = parseDictionaryEntries(text);
+        const bucket = index.buckets[fileDef.bucket];
+        entries.forEach((entry) => {
+            const cleanTargets = uniqueValues(entry.targets);
+            cleanTargets.forEach((target) => addBidirectionalVariant(bucket, entry.source, target));
+            index.groups[fileDef.group].push({ source: entry.source, targets: cleanTargets });
+        });
+    });
+
+    Object.keys(index.groups).forEach((groupKey) => {
+        index.groups[groupKey] = bucketConversionEntries(sortConversionEntries(index.groups[groupKey]));
+    });
+
+    return index;
+}
+
+function setRuntimeDictionary(packagePayload) {
+    const index = buildDictionaryIndex(packagePayload.files);
+    runtimeState.zhVariantDictionary = {
+        ready: true,
+        packageVersion: ZH_DICTIONARY_PACKAGE_VERSION,
+        commit: OPENCC_DICTIONARY_COMMIT,
+        verifiedAt: packagePayload.verifiedAt || Date.now(),
+        digest: packagePayload.digest || '',
+        index,
+    };
+}
+
+export function restoreZhDictionaryPackageFromCache(settings = getSettings()) {
+    normalizeZhVariantSettings(settings);
+    if (runtimeState.zhVariantDictionary?.ready === true
+        && runtimeState.zhVariantDictionary.packageVersion === ZH_DICTIONARY_PACKAGE_VERSION) {
+        updateSettingsDictionaryMeta({
+            digest: runtimeState.zhVariantDictionary.digest || '',
+            verifiedAt: runtimeState.zhVariantDictionary.verifiedAt,
+        }, 'verified', '', settings);
+        return true;
+    }
+
+    const cached = readCachedPackage();
+    if (!cached || cached.status !== 'verified') return false;
+
+    try {
+        setRuntimeDictionary(cached);
+        updateSettingsDictionaryMeta({
+            digest: cached.digest || '',
+            verifiedAt: cached.verifiedAt,
+        }, 'verified', '', settings);
+        return true;
+    } catch (e) {
+        logger.warn('增强简繁词典缓存无法加载，需要重新下载', e);
+        runtimeState.zhVariantDictionary = null;
+        settings.zhVariantDictionary = {
+            status: 'failed',
+            packageVersion: '',
+            verifiedAt: 0,
+            bytes: 0,
+            entries: 0,
+            fileCount: 0,
+            digest: '',
+            lastError: e?.message || '缓存无法加载',
+        };
+        settings.zhVariantCompatEnabled = false;
+        return false;
+    }
+}
+
+export function isZhDictionaryReady(settings = getSettings()) {
+    if (runtimeState.zhVariantDictionary?.ready === true
+        && runtimeState.zhVariantDictionary.packageVersion === ZH_DICTIONARY_PACKAGE_VERSION) {
+        normalizeZhVariantSettings(settings);
+        updateSettingsDictionaryMeta({
+            digest: runtimeState.zhVariantDictionary.digest || '',
+            verifiedAt: runtimeState.zhVariantDictionary.verifiedAt,
+        }, 'verified', '', settings);
+        return true;
+    }
+    return restoreZhDictionaryPackageFromCache(settings);
+}
+
+export function hasVerifiedZhDictionaryPackageMeta(settings = getSettings()) {
+    normalizeZhVariantSettings(settings);
+    if (runtimeState.zhVariantDictionary?.ready === true
+        && runtimeState.zhVariantDictionary.packageVersion === ZH_DICTIONARY_PACKAGE_VERSION) {
+        return true;
+    }
+    const meta = settings?.zhVariantDictionary || {};
+    return meta.status === 'verified'
+        && meta.packageVersion === ZH_DICTIONARY_PACKAGE_VERSION
+        && Number(meta.bytes) === EXPECTED_TOTAL_BYTES
+        && Number(meta.entries) === EXPECTED_TOTAL_ENTRIES
+        && Number(meta.fileCount) === DICTIONARY_FILES.length
+        && Boolean(meta.digest);
+}
+
+export function getZhDictionaryPackageStatus(settings = getSettings(), options = {}) {
+    normalizeZhVariantSettings(settings);
+    const shouldHydrate = options?.hydrate === true;
+    const ready = shouldHydrate
+        ? isZhDictionaryReady(settings)
+        : hasVerifiedZhDictionaryPackageMeta(settings);
+    const meta = settings?.zhVariantDictionary || {};
+    return {
+        ready,
+        status: ready ? 'verified' : meta.status || 'missing',
+        packageVersion: ready ? ZH_DICTIONARY_PACKAGE_VERSION : meta.packageVersion || '',
+        bytes: EXPECTED_TOTAL_BYTES,
+        entries: EXPECTED_TOTAL_ENTRIES,
+        fileCount: DICTIONARY_FILES.length,
+        commit: OPENCC_DICTIONARY_COMMIT,
+        lastError: meta.lastError || '',
+        options: getZhVariantCompatOptions(settings),
+    };
+}
+
+export function getZhDictionaryPackageStats() {
+    return {
+        packageVersion: ZH_DICTIONARY_PACKAGE_VERSION,
+        commit: OPENCC_DICTIONARY_COMMIT,
+        bytes: EXPECTED_TOTAL_BYTES,
+        entries: EXPECTED_TOTAL_ENTRIES,
+        fileCount: DICTIONARY_FILES.length,
+    };
 }
 
 function escapeRegExpLiteral(value) {
@@ -206,50 +326,138 @@ function escapeRegExpCharClassValue(value) {
         .replace(/-/g, '\\-');
 }
 
-export function getChineseCharVariants(char) {
+function getActiveBuckets(options = {}) {
+    const normalized = normalizeZhVariantOptions(options);
+    const dictionary = runtimeState.zhVariantDictionary;
+    if (!dictionary?.ready) return [];
+    const buckets = [dictionary.index.buckets.base];
+    if (normalized.tw) buckets.push(dictionary.index.buckets.tw);
+    if (normalized.hk) buckets.push(dictionary.index.buckets.hk);
+    return buckets;
+}
+
+function getActiveGroupEntries(options = {}) {
+    const normalized = normalizeZhVariantOptions(options);
+    const dictionary = runtimeState.zhVariantDictionary;
+    if (!dictionary?.ready) return [];
+    const groups = [
+        dictionary.index.groups.s2t,
+        dictionary.index.groups.t2s,
+    ];
+    if (normalized.tw) groups.push(dictionary.index.groups.tw);
+    if (normalized.hk) groups.push(dictionary.index.groups.hk);
+    return groups;
+}
+
+function getMapVariants(mapName, value, options = {}) {
+    const source = String(value ?? '');
+    const variants = [];
+    getActiveBuckets(options).forEach((bucket) => {
+        const mapped = bucket?.[mapName]?.get(source);
+        if (!mapped) return;
+        mapped.forEach((item) => variants.push(item));
+    });
+    return uniqueValues(variants);
+}
+
+export function getChineseCharVariants(char, options = {}) {
     const source = String(char ?? '');
     if (!source) return [];
-    return uniqueValues([
-        source,
-        S2T_CHARS[source],
-        T2S_CHARS[source],
-    ]);
+    return uniqueValues([source, ...getMapVariants('charVariants', source, options)]);
 }
 
-export function buildChineseVariantPattern(value) {
-    return Array.from(String(value ?? '')).map((char) => {
-        const variants = getChineseCharVariants(char);
-        if (variants.length <= 1) return escapeRegExpLiteral(char);
-        return `[${variants.map(escapeRegExpCharClassValue).join('')}]`;
-    }).join('');
+function getChinesePhraseVariants(value, options = {}) {
+    const source = String(value ?? '');
+    if (!source) return [];
+    return getMapVariants('phraseVariants', source, options);
 }
 
-export function convertChineseText(value, direction) {
-    if (typeof value !== 'string' || value.length === 0) return value;
-    const phraseEntries = direction === 't2s' ? T2S_PHRASE_ENTRIES : S2T_PHRASE_ENTRIES;
-    const charMap = direction === 't2s' ? T2S_CHARS : S2T_CHARS;
+function convertByEntries(value, entries = []) {
+    const source = String(value ?? '');
+    const entryList = Array.isArray(entries) ? entries : entries?.entries;
+    if (!source || !Array.isArray(entryList) || entryList.length === 0) return source;
     let output = '';
     let cursor = 0;
 
-    while (cursor < value.length) {
+    while (cursor < source.length) {
         let matched = null;
-        for (const entry of phraseEntries) {
-            if (value.startsWith(entry[0], cursor)) {
+        const candidates = entries?.byFirstChar?.get(source[cursor]) || entryList;
+        for (const entry of candidates) {
+            if (source.startsWith(entry.source, cursor)) {
                 matched = entry;
                 break;
             }
         }
         if (matched) {
-            output += matched[1];
-            cursor += matched[0].length;
+            output += matched.targets[0] || matched.source;
+            cursor += matched.source.length;
             continue;
         }
-        const char = value[cursor];
-        output += charMap[char] || char;
+        output += source[cursor];
         cursor++;
     }
 
     return output;
+}
+
+export function getChineseTextVariants(value, options = {}) {
+    const source = String(value ?? '');
+    if (!source || !runtimeState.zhVariantDictionary?.ready) return source ? [source] : [];
+
+    const seen = new Set([source]);
+    const queue = [{ value: source, depth: 0 }];
+    const groupEntries = getActiveGroupEntries(options);
+
+    while (queue.length > 0 && seen.size < MAX_VARIANTS_PER_TARGET) {
+        const current = queue.shift();
+        const addVariant = (candidate) => {
+            const normalized = String(candidate ?? '');
+            if (!normalized || seen.has(normalized) || seen.size >= MAX_VARIANTS_PER_TARGET) return;
+            seen.add(normalized);
+            queue.push({ value: normalized, depth: current.depth + 1 });
+        };
+
+        getChinesePhraseVariants(current.value, options).forEach(addVariant);
+
+        if (current.depth >= 2) continue;
+        groupEntries.forEach((entries) => addVariant(convertByEntries(current.value, entries)));
+    }
+
+    return [...seen].sort((a, b) => b.length - a.length || a.localeCompare(b));
+}
+
+function buildCharVariantPattern(value, options = {}) {
+    return Array.from(String(value ?? '')).map((char) => {
+        const variants = getChineseCharVariants(char, options).sort((a, b) => a.localeCompare(b));
+        if (variants.length <= 1) return escapeRegExpLiteral(char);
+        return `[${variants.map(escapeRegExpCharClassValue).join('')}]`;
+    }).join('');
+}
+
+export function buildChineseVariantPattern(value, options = {}) {
+    const source = String(value ?? '');
+    if (!source) return '';
+    if (!runtimeState.zhVariantDictionary?.ready) return escapeRegExpLiteral(source);
+
+    const variantPatterns = uniqueValues(
+        getChineseTextVariants(source, options).map((variant) => buildCharVariantPattern(variant, options))
+    );
+    if (variantPatterns.length <= 1) return variantPatterns[0] || escapeRegExpLiteral(source);
+    return `(?:${variantPatterns.join('|')})`;
+}
+
+export function getChineseTextVariantLengths(value, options = {}) {
+    return uniqueValues(getChineseTextVariants(value, options).map((variant) => String(variant).length));
+}
+
+export function convertChineseText(value, direction) {
+    const source = String(value ?? '');
+    if (!source || !runtimeState.zhVariantDictionary?.ready) return value;
+    const dictionary = runtimeState.zhVariantDictionary;
+    const entries = direction === 't2s'
+        ? dictionary.index.groups.t2s
+        : dictionary.index.groups.s2t;
+    return convertByEntries(source, entries);
 }
 
 function convertStringArray(values, direction) {
@@ -272,4 +480,143 @@ export function convertRuleListChinese(rules, direction) {
         }));
         return nextRule;
     });
+}
+
+async function sha256Hex(text) {
+    if (!window?.crypto?.subtle) throw new Error('当前浏览器不支持 SHA-256 校验。');
+    const bytes = new TextEncoder().encode(String(text ?? ''));
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', bytes);
+    return [...new Uint8Array(hashBuffer)].map((byte) => byte.toString(16).padStart(2, '0')).join('');
+}
+
+async function packageDigestHex() {
+    return sha256Hex(EXPECTED_PACKAGE_DIGEST_SOURCE);
+}
+
+async function fetchDictionaryFile(fileDef, signal, onChunkProgress = () => {}) {
+    const response = await fetch(`${OPENCC_DICTIONARY_BASE_URL}/${fileDef.name}`, { cache: 'no-store', signal });
+    if (!response.ok) throw new Error(`${fileDef.name} 下载失败：HTTP ${response.status}`);
+
+    const total = Number(response.headers.get('content-length')) || fileDef.bytes;
+    if (!response.body?.getReader) {
+        const text = await response.text();
+        onChunkProgress(1, fileDef.name);
+        return text;
+    }
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let received = 0;
+    let text = '';
+
+    while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        received += value.byteLength;
+        text += decoder.decode(value, { stream: true });
+        onChunkProgress(total > 0 ? Math.min(received / total, 1) : 0, fileDef.name);
+    }
+    text += decoder.decode();
+    onChunkProgress(1, fileDef.name);
+    return text;
+}
+
+async function verifyDownloadedFiles(files, onProgress = () => {}) {
+    let verifiedEntries = 0;
+
+    for (let index = 0; index < DICTIONARY_FILES.length; index++) {
+        const fileDef = DICTIONARY_FILES[index];
+        const text = files[fileDef.name];
+        if (typeof text !== 'string' || text.length === 0) throw new Error(`${fileDef.name} 内容为空。`);
+
+        const bytes = new TextEncoder().encode(text).length;
+        if (bytes !== fileDef.bytes) throw new Error(`${fileDef.name} 大小异常：${bytes}/${fileDef.bytes}`);
+
+        const hash = await sha256Hex(text);
+        if (hash !== fileDef.sha256) throw new Error(`${fileDef.name} 校验失败。`);
+
+        const entries = parseDictionaryEntries(text).length;
+        if (entries !== fileDef.entries) throw new Error(`${fileDef.name} 条目异常：${entries}/${fileDef.entries}`);
+
+        verifiedEntries += entries;
+        onProgress((index + 1) / DICTIONARY_FILES.length, `正在校验词典完整性：${index + 1}/${DICTIONARY_FILES.length}`);
+    }
+
+    if (verifiedEntries !== EXPECTED_TOTAL_ENTRIES) {
+        throw new Error(`词典条目合计异常：${verifiedEntries}/${EXPECTED_TOTAL_ENTRIES}`);
+    }
+}
+
+export async function downloadZhDictionaryPackage(options = {}) {
+    const {
+        signal,
+        onProgress = () => {},
+    } = options;
+
+    runtimeState.zhDictionaryInstallCancelRequested = false;
+    onProgress({ ratio: 0.02, statusText: '正在连接 GitHub 词典源。' });
+
+    const files = {};
+    let completedBytes = 0;
+    const downloadedFileBytes = new Map();
+
+    for (let index = 0; index < DICTIONARY_FILES.length; index++) {
+        const fileDef = DICTIONARY_FILES[index];
+        const baseProgress = index / DICTIONARY_FILES.length;
+        const text = await fetchDictionaryFile(fileDef, signal, (fileRatio) => {
+            const previous = downloadedFileBytes.get(fileDef.name) || 0;
+            const current = Math.round(fileDef.bytes * fileRatio);
+            completedBytes += Math.max(0, current - previous);
+            downloadedFileBytes.set(fileDef.name, current);
+            const ratio = 0.05 + (0.62 * (baseProgress + fileRatio / DICTIONARY_FILES.length));
+            onProgress({
+                ratio,
+                statusText: `正在下载增强简繁词典：${fileDef.name} (${Math.round(Math.min(completedBytes / EXPECTED_TOTAL_BYTES, 1) * 100)}%)`,
+            });
+        });
+        files[fileDef.name] = text;
+    }
+
+    onProgress({ ratio: 0.72, statusText: '下载完成，正在校验文件完整性。' });
+    await verifyDownloadedFiles(files, (ratio, statusText) => {
+        onProgress({ ratio: 0.72 + ratio * 0.13, statusText });
+    });
+
+    onProgress({ ratio: 0.88, statusText: '完整性通过，正在建立匹配索引。' });
+    const digest = await packageDigestHex();
+    const packagePayload = {
+        status: 'verified',
+        packageVersion: ZH_DICTIONARY_PACKAGE_VERSION,
+        commit: OPENCC_DICTIONARY_COMMIT,
+        verifiedAt: Date.now(),
+        bytes: EXPECTED_TOTAL_BYTES,
+        entries: EXPECTED_TOTAL_ENTRIES,
+        fileCount: DICTIONARY_FILES.length,
+        digest,
+        files,
+    };
+
+    setRuntimeDictionary(packagePayload);
+    onProgress({ ratio: 0.94, statusText: '正在写入本地缓存。' });
+    writeCachedPackage(packagePayload);
+    updateSettingsDictionaryMeta({ digest, verifiedAt: packagePayload.verifiedAt }, 'verified');
+    onProgress({ ratio: 1, statusText: '增强简繁词典已验证并启用。' });
+
+    return {
+        packageVersion: ZH_DICTIONARY_PACKAGE_VERSION,
+        commit: OPENCC_DICTIONARY_COMMIT,
+        bytes: EXPECTED_TOTAL_BYTES,
+        entries: EXPECTED_TOTAL_ENTRIES,
+        fileCount: DICTIONARY_FILES.length,
+        digest,
+    };
+}
+
+export function markZhDictionaryInstallFailed(error) {
+    const message = error?.name === 'AbortError'
+        ? '用户取消下载'
+        : String(error?.message || error || '下载失败');
+    updateSettingsDictionaryMeta(null, 'failed', message);
+    runtimeState.zhVariantDictionary = null;
+    return message;
 }

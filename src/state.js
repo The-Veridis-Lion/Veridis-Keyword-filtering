@@ -25,6 +25,16 @@ export const defaultSettings = {
     logLevel: 2,  // 0=off, 1=error, 2=warn(default), 3=info, 4=debug
     skipUserMessages: false,
     zhVariantCompatEnabled: false,
+    zhVariantCompatOptions: { tw: true, hk: true },
+    zhVariantDictionary: {
+        status: "missing",
+        packageVersion: "",
+        verifiedAt: 0,
+        bytes: 0,
+        entries: 0,
+        fileCount: 0,
+        digest: "",
+    },
     protectPersonaDescription: false,
 };
 
@@ -67,6 +77,8 @@ export const runtimeState = {
     currentTransferRuleIndexes: [],
     importPresetDraft: null,
     deepCleanCancelRequested: false,
+    zhDictionaryInstallCancelRequested: false,
+    zhVariantDictionary: null,
     globalCleanseJob: null,
 };
 
