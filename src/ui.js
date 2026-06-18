@@ -307,6 +307,37 @@ export function setupUI() {
     `);
 
     $('body').append(`
+        <div id="bl-zh-dictionary-modal" class="bl-modal-shell">
+            <div class="bl-modal-card bl-zh-dict-card">
+                <div class="bl-zh-dict-header">
+                    <h3 class="bl-zh-dict-title"><i class="fas fa-language"></i> 增强简繁词典</h3>
+                    <button id="bl-zh-dict-close" type="button" class="bl-icon-btn" title="关闭"><i class="fas fa-times"></i></button>
+                </div>
+                <p class="bl-zh-dict-text">
+                    简繁兼容需要先从 GitHub 下载 OpenCC 词典包。若无法连接 GitHub，请开启代理或 VPN 后重试；下载完成并通过完整性校验后，之后会直接使用本地缓存。
+                </p>
+                <div id="bl-zh-dict-stats" class="bl-zh-dict-stats"></div>
+                <div class="bl-zh-dict-options">
+                    <label class="bl-checkbox-label" title="匹配台湾常用异体词，例如 仿佛 / 彷彿、软件 / 軟體">
+                        <input type="checkbox" id="bl-zh-dict-tw" checked>
+                        <span class="bl-custom-checkbox bl-square"></span>
+                        <span>台湾异体</span>
+                    </label>
+                    <label class="bl-checkbox-label" title="匹配香港常用异体词，例如 软件 / 軟件、网络 / 網絡">
+                        <input type="checkbox" id="bl-zh-dict-hk" checked>
+                        <span class="bl-custom-checkbox bl-square"></span>
+                        <span>香港异体</span>
+                    </label>
+                </div>
+                <div class="bl-modal-actions bl-zh-dict-actions">
+                    <button id="bl-zh-dict-cancel" type="button" class="bl-secondary-btn">取消</button>
+                    <button id="bl-zh-dict-download" type="button" class="bl-primary-btn"><i class="fas fa-download"></i> 下载并启用</button>
+                </div>
+            </div>
+        </div>
+    `);
+
+    $('body').append(`
         <div id="bl-rule-transfer-modal" style="display:none;">
             <div class="bl-transfer-content">
                 <h3 class="bl-edit-modal-title bl-transfer-title"><i class="fas fa-copy"></i> 复制 / 转移规则合集</h3>
@@ -864,30 +895,85 @@ export function focusLatestRuleCard() {
     }, 1600);
 }
 
-export function showDeepCleanOverlay() {
+function showProgressOverlay({ title, statusText, cancelText = '停止', onCancel = null }) {
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
-    runtimeState.deepCleanCancelRequested = false;
+    $('#bl-loading-overlay').remove();
     $('body').append(`
         <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}">
             <div class="bl-loading-panel" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
                 <div class="bl-loading-head">
-                    <h2 id="bl-loading-title" class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> 正在执行全方位深度清理</h2>
-                    <button id="bl-loading-cancel" type="button" class="bl-loading-cancel" title="停止深度清理">停止</button>
+                    <h2 id="bl-loading-title" class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> ${title}</h2>
+                    <button id="bl-loading-cancel" type="button" class="bl-loading-cancel" title="${cancelText}">${cancelText}</button>
                 </div>
-                <p id="bl-loading-status">正在初始化清理任务，请稍候。</p>
+                <p id="bl-loading-status">${statusText}</p>
                 <div class="bl-progress-track"><div id="bl-progress-fill" class="bl-progress-fill"></div></div>
                 <p id="bl-progress-percent" class="bl-progress-percent">0%</p>
             </div>
         </div>
     `);
-    $('#bl-loading-cancel').off('click').on('click', () => {
-        runtimeState.deepCleanCancelRequested = true;
-        $('#bl-loading-cancel')
-            .prop('disabled', true)
-            .addClass('is-disabled')
-            .text('停止中');
-        $('#bl-loading-status').text('正在停止深度清理，请等待当前批次收尾。');
+    if (typeof onCancel === 'function') {
+        $('#bl-loading-cancel').off('click').on('click', onCancel);
+    }
+}
+
+export function showDeepCleanOverlay() {
+    runtimeState.deepCleanCancelRequested = false;
+    showProgressOverlay({
+        title: '正在执行全方位深度清理',
+        statusText: '正在初始化清理任务，请稍候。',
+        cancelText: '停止',
+        onCancel: () => {
+            runtimeState.deepCleanCancelRequested = true;
+            $('#bl-loading-cancel')
+                .prop('disabled', true)
+                .addClass('is-disabled')
+                .text('停止中');
+            $('#bl-loading-status').text('正在停止深度清理，请等待当前批次收尾。');
+        },
     });
+}
+
+export function showZhDictionaryInstallOverlay(onCancel) {
+    runtimeState.zhDictionaryInstallCancelRequested = false;
+    showProgressOverlay({
+        title: '正在安装增强简繁词典',
+        statusText: '正在初始化下载任务。',
+        cancelText: '取消',
+        onCancel: () => {
+            runtimeState.zhDictionaryInstallCancelRequested = true;
+            $('#bl-loading-cancel')
+                .prop('disabled', true)
+                .addClass('is-disabled')
+                .text('取消中');
+            $('#bl-loading-status').text('正在取消下载，请等待当前请求结束。');
+            if (typeof onCancel === 'function') onCancel();
+        },
+    });
+}
+
+export function closeLoadingOverlay() {
+    $('#bl-loading-overlay').remove();
+}
+
+export function updateZhDictionaryInstallOverlay(progressRatio, statusText) {
+    updateDeepCleanOverlay(progressRatio, statusText);
+}
+
+export function openZhDictionaryModal(stats = {}, options = {}) {
+    const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
+    const bytes = Number(stats.bytes) || 0;
+    const mb = bytes > 0 ? (bytes / 1024 / 1024).toFixed(2) : '1.20';
+    const entries = Number(stats.entries) || 0;
+    $('#bl-zh-dictionary-modal')
+        .attr('data-bl-theme', themeMode)
+        .css('display', 'flex');
+    $('#bl-zh-dict-stats').text(`词典包约 ${mb} MB，包含 ${entries.toLocaleString('zh-CN')} 条字词与异体映射。`);
+    $('#bl-zh-dict-tw').prop('checked', options.tw !== false);
+    $('#bl-zh-dict-hk').prop('checked', options.hk !== false);
+}
+
+export function closeZhDictionaryModal() {
+    $('#bl-zh-dictionary-modal').fadeOut(120);
 }
 
 export function updateDeepCleanOverlay(progressRatio, statusText) {
