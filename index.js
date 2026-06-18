@@ -9,7 +9,7 @@ import { setupUI, updateToolbarUI, applyCharacterPresetBinding, cleanupInvalidPr
 import { restoreDiffStateFromChatMetadata, injectDiffButtons } from './src/diff.js';
 import { performGlobalCleanse } from './src/core.js';
 import { mergeScopeTagsWithBuiltins, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList } from './src/utils.js';
-import { isBaiBaiToolkitInstalled, isTauriTavernHost, waitForTauriTavernReady } from './src/platform.js';
+import { isBaiBaiToolkitInstalled, isLoreFrameInstalled, isTauriTavernHost, waitForTauriTavernReady } from './src/platform.js';
 
 const { extension_settings, getContext: getSillyTavernContext } = extensionsModule;
 
@@ -123,6 +123,7 @@ jQuery(() => {
         logger.info('[屏蔽词净化助手] 启动初始化开始...');
         if (isTauriTavernHost()) logger.info('[屏蔽词净化助手] 已启用 TauriTavern 兼容层');
         if (isBaiBaiToolkitInstalled()) logger.info('[屏蔽词净化助手] 已启用柏宝箱兼容层');
+        if (isLoreFrameInstalled()) logger.info('[屏蔽词净化助手] 已启用 LoreFrame 兼容层');
         setupUI();
         bindEvents();
         initRealtimeInterceptor();
