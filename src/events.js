@@ -251,15 +251,10 @@ export function initRealtimeInterceptor() {
         return index;
     };
 
-    const streamingVisualPurifyNodes = new Set();
     const streamingVisualPurifyTextCache = new WeakMap();
-    const streamingVisualPurifyBaseDelay = 80;
-    const streamingVisualPurifySlowDelay = 220;
-    const streamingVisualPurifySlowThreshold = 40;
-    let streamingVisualPurifyTimer = null;
-    let streamingVisualPurifyDelay = streamingVisualPurifyBaseDelay;
 
-    const now = () => (typeof performance !== 'undefined' && typeof performance.now === 'function' ? performance.now() : Date.now());
+    const hasStreamingUnsafeRegexProcessors = () => runtimeState.activeProcessors
+        .some((proc) => proc.kind === 'regex' && proc.domSafe === false);
 
     const getLatestStreamingAssistantIndex = () => {
         const { chat } = getAppContext();
@@ -270,64 +265,32 @@ export function initRealtimeInterceptor() {
         return -1;
     };
 
-    const scheduleStreamingMessageVisualPurify = (messageNodes) => {
-        if (!runtimeState.isStreamingGeneration) return;
-        messageNodes.forEach((node) => {
-            if (node && node.nodeType === 1 && isTrackableMessageDomNode(node)) {
-                streamingVisualPurifyNodes.add(node);
-            }
-        });
-        if (streamingVisualPurifyNodes.size === 0 || streamingVisualPurifyTimer) return;
-        streamingVisualPurifyTimer = setTimeout(flushStreamingMessageVisualPurify, streamingVisualPurifyDelay);
-    };
-
-    function flushStreamingMessageVisualPurify() {
-        streamingVisualPurifyTimer = null;
-        if (!runtimeState.isStreamingGeneration) {
-            streamingVisualPurifyNodes.clear();
-            return;
-        }
-
-        const pendingNodes = [...streamingVisualPurifyNodes];
-        streamingVisualPurifyNodes.clear();
-        if (pendingNodes.length === 0) return;
+    const purifyStreamingMessageVisualNow = (messageNodes, touchedMessageIndices) => {
+        if (!runtimeState.isStreamingGeneration || messageNodes.size === 0) return;
+        if (!hasStreamingUnsafeRegexProcessors()) return;
 
         const latestIndex = getLatestStreamingAssistantIndex();
         if (latestIndex < 0) return;
 
-        const touchedMessageIndices = new Set();
-        const startTime = now();
-        isPurifying = true;
-        try {
-            pendingNodes.forEach((mesNode) => {
-                if (!mesNode?.isConnected || isRevertedMessageDomNode(mesNode)) return;
+        messageNodes.forEach((mesNode) => {
+            if (!mesNode?.isConnected || isRevertedMessageDomNode(mesNode)) return;
 
-                const index = resolveNodeMessageIndex(mesNode);
-                if (index !== latestIndex) return;
+            const index = resolveNodeMessageIndex(mesNode);
+            if (index !== latestIndex) return;
 
-                const textRoot = mesNode.querySelector?.('.mes_text') || mesNode;
-                const currentText = textRoot?.textContent || '';
-                if (!currentText || streamingVisualPurifyTextCache.get(mesNode) === currentText) return;
+            const textRoot = mesNode.querySelector?.('.mes_text') || mesNode;
+            const currentText = textRoot?.textContent || '';
+            if (!currentText || streamingVisualPurifyTextCache.get(mesNode) === currentText) return;
 
-                streamingVisualPurifyTextCache.set(mesNode, currentText);
-                if (!purifyStreamingMessageDom(mesNode, { unsafeRegexOnly: true })) return;
+            streamingVisualPurifyTextCache.set(mesNode, currentText);
+            if (!purifyStreamingMessageDom(mesNode, { unsafeRegexOnly: true })) return;
 
-                const nextTextRoot = mesNode.querySelector?.('.mes_text') || mesNode;
-                streamingVisualPurifyTextCache.set(mesNode, nextTextRoot?.textContent || '');
-                const touchedIndex = primePendingComparisonForNode(mesNode, { skipPersist: true });
-                if (touchedIndex >= 0) touchedMessageIndices.add(touchedIndex);
-            });
-        } finally {
-            chatObserver.takeRecords();
-            injectDiffButtonsStreamingSafe([...touchedMessageIndices]);
-            isPurifying = false;
-        }
-
-        const elapsed = now() - startTime;
-        streamingVisualPurifyDelay = elapsed > streamingVisualPurifySlowThreshold
-            ? streamingVisualPurifySlowDelay
-            : streamingVisualPurifyBaseDelay;
-    }
+            const nextTextRoot = mesNode.querySelector?.('.mes_text') || mesNode;
+            streamingVisualPurifyTextCache.set(mesNode, nextTextRoot?.textContent || '');
+            const touchedIndex = primePendingComparisonForNode(mesNode, { skipPersist: true });
+            if (touchedIndex >= 0) touchedMessageIndices.add(touchedIndex);
+        });
+    };
 
     const chatObserver = new MutationObserver((mutations) => {
     if (isPurifying) return;
@@ -385,7 +348,7 @@ export function initRealtimeInterceptor() {
                     const index = primePendingComparisonForNode(mesNode, { skipPersist: true });
                     if (index >= 0) touchedMessageIndices.add(index);
                 });
-                scheduleStreamingMessageVisualPurify(streamingMessageNodes);
+                purifyStreamingMessageVisualNow(streamingMessageNodes, touchedMessageIndices);
             }
         } finally {
             chatObserver.takeRecords();
@@ -412,11 +375,6 @@ export function initRealtimeInterceptor() {
         }
     }, 800);
     window.addEventListener('beforeunload', () => clearInterval(theaterIntervalId), { once: true });
-    window.addEventListener('beforeunload', () => {
-        if (streamingVisualPurifyTimer) clearTimeout(streamingVisualPurifyTimer);
-        streamingVisualPurifyTimer = null;
-        streamingVisualPurifyNodes.clear();
-    }, { once: true });
 
     document.addEventListener('input', (e) => {
         const el = e.target;

@@ -1,5 +1,5 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
-import { applyScopedReplacements, applyVisualMask, buildProcessors } from './core.js';
+import { applyScopedReplacements, applyVisualMask, buildProcessors, resolveRegexProcessorReplacement } from './core.js';
 import { isCotScopeSkippingEnabled } from './utils.js';
 import { loreFrameDomSelector } from './platform.js';
 
@@ -176,6 +176,103 @@ function projectTextAcrossNodes(textNodes, nextText) {
     }
 }
 
+function getLineBreakSignature(text = '') {
+    return String(text).match(/\r\n|\r|\n/g)?.join('|') || '';
+}
+
+function getReplaceCallbackMatchOffset(args) {
+    const hasNamedGroups = typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null;
+    return Number(args[hasNamedGroups ? args.length - 3 : args.length - 2]);
+}
+
+function buildTextNodeRanges(textNodes) {
+    const ranges = [];
+    let offset = 0;
+    textNodes.forEach((node, index) => {
+        const value = String(node.nodeValue || '');
+        ranges.push({
+            node,
+            index,
+            start: offset,
+            end: offset + value.length,
+        });
+        offset += value.length;
+    });
+    return ranges;
+}
+
+function findRangeForPosition(ranges, position) {
+    return ranges.find((range) => position >= range.start && position < range.end) || null;
+}
+
+function applyUnsafeRegexEdit(edit, ranges) {
+    const startRange = ranges[edit.startRangeIndex];
+    const endRange = ranges[edit.endRangeIndex];
+    if (!startRange || !endRange) return false;
+
+    const startNode = startRange.node;
+    const endNode = endRange.node;
+    const startValue = String(startNode.nodeValue || '');
+    const endValue = String(endNode.nodeValue || '');
+    const localStart = edit.start - startRange.start;
+    const localEnd = edit.end - endRange.start;
+
+    if (startRange.index === endRange.index) {
+        startNode.nodeValue = startValue.slice(0, localStart) + edit.replacement + startValue.slice(localEnd);
+        return true;
+    }
+
+    startNode.nodeValue = startValue.slice(0, localStart) + edit.replacement;
+    for (let i = startRange.index + 1; i < endRange.index; i++) {
+        ranges[i].node.nodeValue = '';
+    }
+    endNode.nodeValue = endValue.slice(localEnd);
+    return true;
+}
+
+function applyUnsafeRegexWithinTextNodes(textNodes) {
+    let changed = false;
+
+    runtimeState.activeProcessors.forEach((proc, procIndex) => {
+        if (proc.kind !== 'regex' || proc.domSafe !== false) return;
+
+        const ranges = buildTextNodeRanges(textNodes);
+        const originalText = ranges.map((range) => range.node.nodeValue || '').join('');
+        if (!originalText.trim()) return;
+
+        const edits = [];
+        proc.regex.lastIndex = 0;
+        originalText.replace(proc.regex, (match, ...args) => {
+            const start = getReplaceCallbackMatchOffset(args);
+            const end = start + String(match).length;
+            if (!Number.isInteger(start) || end <= start) return match;
+
+            const replacement = resolveRegexProcessorReplacement(proc, procIndex, match, args, true);
+            if (/[\r\n]/.test(String(match)) || /[\r\n]/.test(String(replacement))) return match;
+
+            const startRange = findRangeForPosition(ranges, start);
+            const endRange = findRangeForPosition(ranges, end - 1);
+            if (!startRange || !endRange) return match;
+
+            edits.push({
+                start,
+                end,
+                replacement,
+                startRangeIndex: startRange.index,
+                endRangeIndex: endRange.index,
+            });
+            return match;
+        });
+
+        edits.sort((a, b) => b.start - a.start);
+        edits.forEach((edit) => {
+            if (applyUnsafeRegexEdit(edit, ranges)) changed = true;
+        });
+    });
+
+    return changed;
+}
+
 /**
  * 对指定 DOM 子树执行净化替换。
  * @param {Node} rootNode 待净化根节点。
@@ -225,10 +322,11 @@ export function purifyStreamingMessageDom(messageNode, options = {}) {
     const originalText = textNodes.map((node) => node.nodeValue || '').join('');
     if (!originalText.trim()) return false;
 
-    const nextText = unsafeRegexOnly
-        ? applyVisualMask(originalText, { unsafeRegexOnly: true })
-        : applyVisualMask(originalText, { domSafeOnly: options.domSafeOnly !== false });
+    if (unsafeRegexOnly) return applyUnsafeRegexWithinTextNodes(textNodes);
+
+    const nextText = applyVisualMask(originalText, { domSafeOnly: options.domSafeOnly !== false });
     if (originalText === nextText) return false;
+    if (getLineBreakSignature(originalText) !== getLineBreakSignature(nextText)) return false;
 
     projectTextAcrossNodes(textNodes, nextText);
     return true;
