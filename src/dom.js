@@ -1,6 +1,17 @@
 import { extensionName, getAppContext, runtimeState } from './state.js';
 import { applyScopedReplacements, applyVisualMask, buildProcessors } from './core.js';
 import { isCotScopeSkippingEnabled } from './utils.js';
+import { loreFrameDomSelector } from './platform.js';
+
+const knownPluginContainerSelector = [
+    '#tavern_helper',
+    '#regex_editor_template',
+    '#qr--settings',
+    '#completion_prompt_manager_popup',
+    '#xiaobai_template_editor',
+    '#task_editor',
+    loreFrameDomSelector,
+].join(', ');
 
 function isPersonaDescriptionProtectionEnabled() {
     return getAppContext().extension_settings?.[extensionName]?.protectPersonaDescription === true;
@@ -31,7 +42,7 @@ function isScriptEditorDialogNode(node) {
  */
 function isKnownPluginContainerNode(node) {
     if (!node || !node.closest) return false;
-    return Boolean(node.closest('#tavern_helper, #regex_editor_template, #qr--settings, #completion_prompt_manager_popup, #xiaobai_template_editor, #task_editor')); //酒馆助手，正则弹窗，qr，预设，小白角色模板
+    return Boolean(node.closest(knownPluginContainerSelector)); //酒馆助手，正则弹窗，qr，预设，小白角色模板，LoreFrame
 } 
 
 function isPersonaDescriptionNode(node) {

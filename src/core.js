@@ -6,7 +6,7 @@ import { deepCleanObjectSync } from './cleanse.js';
 import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 import { clearMessageDiffMeta, getMessageDiffBranchKey, getMessageDiffMeta, isMessageFinalizedForCurrentBranch, setCurrentSwipeText, writeMessageDiffMeta } from './messageMeta.js';
-import { getMaxHostChatSaveDefers, getRecommendedChatSaveDelay, getSillyTavernContextSnapshot, isBaiBaiToolkitInstalled, isTauriTavernHost, markHostChatDirtyFromIndex, runPreferredSaveChat, shouldDelayChatSaveForHost } from './platform.js';
+import { getMaxHostChatSaveDefers, getRecommendedChatSaveDelay, getSillyTavernContextSnapshot, isBaiBaiToolkitInstalled, isLoreFrameInstalled, isTauriTavernHost, markHostChatDirtyFromIndex, runPreferredSaveChat, shouldDelayChatSaveForHost } from './platform.js';
 
 const chatChangedSyncMessageLimit = 80;
 const chatChangedBackgroundChunkSize = 25;
@@ -675,10 +675,13 @@ export function refreshMessageDisplay(index, options = {}) {
             const shouldEmitRenderedEvent = options.emitRenderedEvent === true
                 || (options.emitRenderedEvent === 'auto' && looksLikeTemplateRenderedContent(index, message));
             const needsHostSettle = isTauriTavernHost() || isBaiBaiToolkitInstalled();
-            if (needsHostSettle) suppressOwnRenderedEventCleanse(index);
+            const shouldNotifyHostPlugins = needsHostSettle || isLoreFrameInstalled();
+            if (shouldNotifyHostPlugins) suppressOwnRenderedEventCleanse(index);
             if (shouldEmitRenderedEvent || needsHostSettle) scheduleRenderedEvent(index, message, stContext);
-            if (needsHostSettle) {
+            if (shouldNotifyHostPlugins) {
                 scheduleMessageUpdatedEvent(index, stContext);
+            }
+            if (needsHostSettle) {
                 schedulePostRefreshDomSettle(index);
             }
             return true;
