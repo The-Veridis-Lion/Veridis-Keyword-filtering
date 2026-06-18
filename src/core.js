@@ -51,6 +51,11 @@ function buildSimpleTargetPattern(target = '', useZhVariantCompat = false, zhVar
             continue;
         }
 
+        if (char === '?') {
+            pattern += '?';
+            continue;
+        }
+
         if (char === '{') {
             const closeIndex = source.indexOf('}', index + 1);
             if (closeIndex > index) {
