@@ -273,6 +273,14 @@ function renderRegexReplacementTemplate(template, captures) {
     return output;
 }
 
+export function resolveRegexProcessorReplacement(proc, procIndex, match, args = [], deterministic = false) {
+    const reps = proc?.replacements;
+    if (!reps || reps.length === 0) return '';
+    const repKey = deterministic ? `${procIndex}|${match}` : '';
+    const rep = pickReplacement(reps, repKey);
+    return renderRegexReplacementTemplate(rep, extractRegexCaptures(args));
+}
+
 /**
  * 对文本应用规则替换。
  * @param {string} originalText 原始文本。
@@ -290,11 +298,7 @@ export function applyReplacements(originalText, options = {}) {
         if (options.domSafeOnly === true && proc.domSafe === false) return;
         text = text.replace(proc.regex, (match, ...args) => {
             if (proc.kind === 'regex') {
-                const reps = proc.replacements;
-                if (!reps || reps.length === 0) return '';
-                const repKey = deterministic ? `${procIndex}|${match}` : '';
-                const rep = pickReplacement(reps, repKey);
-                return renderRegexReplacementTemplate(rep, extractRegexCaptures(args));
+                return resolveRegexProcessorReplacement(proc, procIndex, match, args, deterministic);
             }
 
             if (proc.kind === 'simple') {
