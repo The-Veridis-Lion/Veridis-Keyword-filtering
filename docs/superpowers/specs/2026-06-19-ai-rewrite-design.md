@@ -53,14 +53,14 @@ Because the namespace changes, the AI edition should offer a one-time migration 
 Each sub-rule gains a processing mode:
 
 - `程序替换`: current behavior. The rule is compiled into the local replacement processors and runs synchronously.
-- `AI 改写`: the rule detects matching text but does not perform local replacement. After generation ends, matching fragments are sent to the configured OpenAI-compatible API for localized rewriting.
+- `AI 改写`: the rule does not perform local data replacement after generation ends. It may still participate in the existing streaming visual mask as a temporary rough preview, then matching fragments are sent to the configured OpenAI-compatible API for localized rewriting after generation ends.
 
-The sub-rule replacement field keeps its editor but changes meaning in AI mode:
+The sub-rule replacement field keeps the existing editor and must remain compatible with the current program-replacement meaning:
 
 - In program mode, replacements remain literal replacement candidates.
-- In AI mode, replacements become rewrite hints or directions, such as "改得自然一点" or "避免夸张副词".
+- In AI mode, replacements are local rough replacement candidates for the existing streaming visual mask. They are also included in the API prompt as local fallback candidates or rewrite direction, but they are not written to message data by the AI-mode rule itself.
 
-The user can also edit one global prompt template. The template receives variables for the full original message, rewrite items, and rewrite hints.
+The user can also edit one global prompt template. The template receives variables for the full original message, rewrite items, and local fallback candidates from the existing replacement rows.
 
 ## Settings
 
@@ -77,6 +77,7 @@ aiRewrite: {
   maxItemsPerRequest: 8,
   maxContextChars: 12000,
   maxRewriteCharsPerItem: 2000,
+  streamingRoughPreview: true,
   promptTemplate: "..."
 }
 ```
@@ -114,9 +115,19 @@ Suggested responsibilities:
 - apply accepted rewrites by recorded positions
 - guard against stale messages, branch changes, retries, and recursion
 
-Existing `program` rules continue through `buildProcessors()` and `applyScopedReplacements()`. AI rewrite rules must not enter those processors.
+Existing `program` rules continue through `buildProcessors()` and `applyScopedReplacements()`. AI rewrite rules must not enter the processors that write message data.
 
 The AI scanner should share helper code with the existing rule compiler where practical. If helper extraction is needed, it should be small and covered by checks so regex validation, simple wildcard behavior, and Chinese variant matching do not diverge between program rules and AI rules.
+
+Streaming rough preview must reuse the existing visual purification path rather than implement a second DOM-rewrite system:
+
+- keep `MutationObserver`, `applyVisualMask()`, `purifyDOM()`, and `purifyStreamingMessageDom()` as the visual entry points
+- extend processor construction so streaming visual processors can include AI-mode sub-rules when `aiRewrite.streamingRoughPreview !== false`
+- continue excluding AI-mode sub-rules from non-streaming data cleanse processors
+- preserve the existing `domSafeOnly`, `unsafeRegexOnly`, cross-text-node projection, line-break signature, protected-node, reverted-message, and skip-user-message safeguards
+- do not write rough preview text to `chat[index].mes`, swipes, chat metadata, or saves
+
+This means the AI edition connects to the current streaming replacement feature. It does not create a new rough replacement feature beside it.
 
 ## Trigger Flow
 
@@ -136,9 +147,15 @@ AI rewrite only runs after the assistant message has finished generating.
 
 The flow never writes during streaming. It does not call `saveChat()` directly.
 
+During streaming, if `streamingRoughPreview` is enabled, AI-mode sub-rules can visually mask the active assistant message through the same `applyVisualMask()` path used by current program rules. This gives the user an immediate rough cleanup while the message streams. The raw message data remains unmodified, so the post-generation AI rewrite still sees the real final text.
+
+After generation ends and before the API returns, the displayed message may continue to show the rough preview via a visual-only DOM pass. That pass must still reuse existing DOM purification helpers and must be reversible by normal message refresh because the rough text is not persisted.
+
 If a new generation starts while an AI rewrite request is in flight, the pending request should be aborted or its result discarded. AI rewrite should not compete with the next message's streaming or save cycle.
 
 Program and AI rules are intentionally separated. Program rules run first, then AI rules scan the resulting final assistant text. If a program rule removes text that an AI rule would otherwise match, the AI rule will not trigger for that removed text; users should not configure duplicate program and AI sub-rules for the same trigger unless they want that ordering.
+
+Streaming rough preview ordering follows the existing program replacement order. It is only a visual projection, so it must not change the source text used for API match extraction or diff metadata.
 
 ## Match Extraction
 
@@ -155,7 +172,7 @@ It records every match with:
 - target or regex that matched
 - matched text
 - start and end offsets
-- rewrite hints from the sub-rule replacements
+- local rough replacement candidates from the sub-rule replacements
 
 Fragment extraction uses the match offsets:
 
@@ -174,7 +191,7 @@ Scope and safety rules:
 - Unclosed tags follow the same behavior as current scoped replacement.
 - AI scanning must skip rules that would create empty-string matches.
 - Invalid regex targets are ignored and surfaced through the same validation path as current regex rules.
-- Regex AI rules do not use `$1` replacement templates; in AI mode replacement rows are plain rewrite hints.
+- Regex AI rules may use the existing `$1` replacement-template behavior for streaming rough preview, because that is part of the current program replacement feature. For the API prompt, those replacement rows are passed as local fallback candidates or hints; the API is not required to apply them literally.
 - Fenced code blocks and inline code should not be selected as rewrite items in the first version, because localized prose rewriting can corrupt code-like content.
 
 ## API Request
@@ -203,7 +220,7 @@ The rendered prompt includes:
 
 - the full assistant message as style reference
 - a JSON array of rewrite items
-- each item id, text, matched terms, rule names, and hints
+- each item id, text, matched terms, rule names, and local rough replacement candidates
 - strict output instructions
 
 Prompt rendering must JSON-serialize rewrite item data rather than hand-build JSON strings. Protected scope bodies should be redacted from the style reference in `protect` mode. If the message exceeds `maxContextChars`, the style reference should be clipped around the rewrite items with clear omission markers instead of sending an unbounded prompt.
@@ -302,6 +319,7 @@ UI additions:
 
 - Main panel AI rewrite settings section:
   - enable switch
+  - streaming rough preview switch
   - base URL input
   - API key password input with a reveal/clear affordance
   - model input
@@ -315,7 +333,7 @@ UI additions:
 - Sub-rule editor processing mode control:
   - `程序替换`
   - `AI 改写`
-- In AI mode, replacement field label changes to "改写提示/方向".
+- In AI mode, replacement field label should make the dual role clear, for example "流式临时替换 / API 参考候选". It must not imply that these rows are only free-form prompt instructions.
 - Rule cards show a compact `AI 改写` badge for AI-mode sub-rules.
 - If the AI edition detects legacy stable-plugin settings during first setup, expose a clear "copy legacy presets/settings" action or perform one-time copy with a visible confirmation toast.
 
@@ -337,6 +355,10 @@ Implementation should verify:
 - AI-mode sub-rules do not perform local replacement
 - program and AI sub-rules can coexist in the same group
 - duplicate program and AI triggers follow the documented program-first ordering
+- AI-mode sub-rules can participate in existing streaming visual masking when rough preview is enabled
+- streaming rough preview uses the existing `applyVisualMask()` / `purifyStreamingMessageDom()` path, not a separate DOM rewrite engine
+- streaming rough preview never writes message data, swipes, diff metadata, or saves
+- disabling `streamingRoughPreview` prevents AI-mode sub-rules from visual masking during streaming
 - multiple matching sentences produce one API request
 - repeated identical sentences are replaced by position, not by string search
 - protected scope tag bodies are not scanned or sent in `protect` mode
@@ -369,6 +391,8 @@ git diff --check
 Manual checks should include:
 
 - normal SillyTavern generation end
+- streaming response with AI-mode rough preview enabled
+- streaming response with AI-mode rough preview disabled
 - long reply with several AI-rule matches
 - identical repeated matching sentence
 - swipe switch before API returns
