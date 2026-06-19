@@ -59,6 +59,7 @@ The sub-rule replacement field keeps the existing editor and must remain compati
 
 - In program mode, replacements remain literal replacement candidates.
 - In AI mode, replacements are local rough replacement candidates for the existing streaming visual mask. They are also included in the API prompt as local fallback candidates or rewrite direction, but they are not written to message data by the AI-mode rule itself.
+- In AI mode, an empty replacement list keeps the existing plugin semantics for streaming rough preview: a visual match is temporarily deleted. This only affects the visual projection; the raw message data remains unchanged for the post-generation API pass.
 
 The user can also edit one global prompt template. The template receives variables for the full original message, rewrite items, and local fallback candidates from the existing replacement rows.
 
@@ -114,6 +115,7 @@ Suggested responsibilities:
 - parse and validate JSON responses
 - apply accepted rewrites by recorded positions
 - guard against stale messages, branch changes, retries, and recursion
+- deduplicate requests across repeated host events for the same message source
 
 Existing `program` rules continue through `buildProcessors()` and `applyScopedReplacements()`. AI rewrite rules must not enter the processors that write message data.
 
@@ -125,6 +127,7 @@ Streaming rough preview must reuse the existing visual purification path rather 
 - extend processor construction so streaming visual processors can include AI-mode sub-rules when `aiRewrite.streamingRoughPreview !== false`
 - continue excluding AI-mode sub-rules from non-streaming data cleanse processors
 - preserve the existing `domSafeOnly`, `unsafeRegexOnly`, cross-text-node projection, line-break signature, protected-node, reverted-message, and skip-user-message safeguards
+- preserve the current replacement semantics, including random deterministic choice and empty replacement list meaning direct deletion
 - do not write rough preview text to `chat[index].mes`, swipes, chat metadata, or saves
 
 This means the AI edition connects to the current streaming replacement feature. It does not create a new rough replacement feature beside it.
@@ -142,8 +145,9 @@ AI rewrite only runs after the assistant message has finished generating.
    - at least one enabled AI sub-rule matches
 3. Matching fragments are batched into one API request.
 4. If valid rewrite results return, the plugin applies local replacements from back to front by recorded positions.
-5. The plugin refreshes the message display and saves through the existing incremental save queue.
-6. Diff state records the earliest available generation source as source and the final local text as cleaned text. If the earliest source is unavailable, fall back to the API-rewrite-before text. This keeps "revert purification" and visual diff semantics aligned with the existing plugin.
+5. After applying API rewrites, the plugin runs one deterministic program-only cleanse pass over the resulting full message. This catches any normal program-rule terms reintroduced by the API without triggering a second AI rewrite.
+6. The plugin refreshes the message display and saves through the existing incremental save queue.
+7. Diff state records the earliest available generation source as source and the final local text as cleaned text. If the earliest source is unavailable, fall back to the API-rewrite-before text. This keeps "revert purification" and visual diff semantics aligned with the existing plugin.
 
 The flow never writes during streaming. It does not call `saveChat()` directly.
 
@@ -156,6 +160,8 @@ If a new generation starts while an AI rewrite request is in flight, the pending
 Program and AI rules are intentionally separated. Program rules run first, then AI rules scan the resulting final assistant text. If a program rule removes text that an AI rule would otherwise match, the AI rule will not trigger for that removed text; users should not configure duplicate program and AI sub-rules for the same trigger unless they want that ordering.
 
 Streaming rough preview ordering follows the existing program replacement order. It is only a visual projection, so it must not change the source text used for API match extraction or diff metadata.
+
+Repeated host events must not create repeated API calls for the same source. The AI rewrite queue should deduplicate by message index, branch key, source signature, active preset, and a rules/settings version token. If a later event has the same dedupe key while a request is pending or already applied, it should not send another request.
 
 ## Match Extraction
 
@@ -183,6 +189,15 @@ Fragment extraction uses the match offsets:
 - The number of rewrite items is capped by `maxItemsPerRequest`; excess items are skipped for that request rather than split into multiple automatic calls.
 
 Recorded offsets, not returned strings, are the source of truth for local replacement. This prevents replacing the wrong repeated sentence.
+
+Sentence and paragraph extraction should be conservative:
+
+- Chinese and English sentence endings both count, including `。！？!?;；`.
+- Closing quotes and brackets after a sentence ending stay with the same fragment.
+- A list item or standalone line should usually stay within that line unless the match clearly spans lines.
+- A colon-led dialogue or label line should not automatically consume the following paragraph.
+- URL-like text, inline code, fenced code blocks, and tag bodies excluded by scope rules must not be split into rewrite fragments.
+- When uncertain, expand to the smallest containing paragraph rather than crossing unrelated paragraphs.
 
 Scope and safety rules:
 
@@ -227,6 +242,14 @@ Prompt rendering must JSON-serialize rewrite item data rather than hand-build JS
 
 The external API receives message text. The UI should make that clear near the enable/API key controls.
 
+The editable prompt template is not the entire safety envelope. The implementation must always wrap or append a non-editable output guard that requires the JSON response shape and forbids explanations, markdown prose, whole-message rewrites, and unrelated edits. Users can customize style instructions, but they should not be able to remove the structural JSON contract accidentally.
+
+API URL safety:
+
+- `https://` is expected for remote API endpoints.
+- `http://localhost`, `http://127.0.0.1`, and similar local proxy URLs are allowed.
+- non-local `http://` URLs should show a clear warning before saving or enabling AI rewrite.
+
 Default prompt intent:
 
 ```text
@@ -260,7 +283,8 @@ The API must return JSON:
 
 Validation rules:
 
-- Response must parse as JSON.
+- Response must parse as JSON. The parser may strip one outer markdown fenced-code wrapper such as ```json ... ``` before parsing, because some compatible gateways add it despite instructions.
+- Responses with extra prose outside the JSON object, multiple JSON objects, or unrelated text are rejected.
 - `rewrites` must be an array.
 - Each item must reference a known local id.
 - `rewritten` must be a non-empty string.
@@ -292,6 +316,8 @@ Discard the result if:
 This prevents late API responses from writing into the wrong branch or overwriting user edits.
 
 In-flight state belongs in `runtimeState`, not chat metadata. Chat metadata should only store the finalized diff state needed for refresh recovery.
+
+The dedupe/applied state should also live in runtime state and be pruned when chats change, rules change, or the tracked message falls outside the diff/message tracking window.
 
 ## Error Handling and Status
 
@@ -330,6 +356,7 @@ UI additions:
   - max rewritten item length input
   - editable prompt template textarea
   - short notice that matched assistant text is sent to the configured external API
+  - warning state for non-local `http://` base URLs
 - Sub-rule editor processing mode control:
   - `程序替换`
   - `AI 改写`
@@ -359,7 +386,9 @@ Implementation should verify:
 - streaming rough preview uses the existing `applyVisualMask()` / `purifyStreamingMessageDom()` path, not a separate DOM rewrite engine
 - streaming rough preview never writes message data, swipes, diff metadata, or saves
 - disabling `streamingRoughPreview` prevents AI-mode sub-rules from visual masking during streaming
+- AI-mode empty replacements visually delete matches during streaming rough preview but do not persist that deletion
 - multiple matching sentences produce one API request
+- repeated generation-end/update events for the same source do not create duplicate API calls
 - repeated identical sentences are replaced by position, not by string search
 - protected scope tag bodies are not scanned or sent in `protect` mode
 - `cleanse-inside` only scans enabled tag bodies
@@ -368,11 +397,14 @@ Implementation should verify:
 - fenced code and inline code are not selected as AI rewrite fragments
 - overlong messages are clipped by `maxContextChars`
 - overlong rewritten items are rejected
+- API output wrapped in a single `json` fenced block is accepted after stripping the wrapper
+- API output with prose around JSON is rejected
 - invalid API JSON leaves the message unchanged
 - non-2xx API responses leave the message unchanged
 - partial API failures apply only valid items
 - stale API responses are discarded
 - rule or preset changes while a request is pending discard the result
+- final AI output receives one program-only deterministic cleanse pass and does not trigger another AI pass
 - successful AI rewrite updates message data, current swipe, DOM, diff, and save queue
 - visual diff shows earliest available generation source to final AI-rewritten text
 - streaming still only performs visual masking and never writes data
@@ -394,6 +426,8 @@ Manual checks should include:
 - streaming response with AI-mode rough preview enabled
 - streaming response with AI-mode rough preview disabled
 - long reply with several AI-rule matches
+- several host completion/update events for the same reply
+- API result that reintroduces a program-rule target
 - identical repeated matching sentence
 - swipe switch before API returns
 - user edit before API returns
