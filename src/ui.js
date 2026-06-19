@@ -40,6 +40,17 @@ function getRuleSearchMenuKey(ruleIndex, subRuleIndex) {
     return `${ruleIndex}:${subRuleIndex}`;
 }
 
+function applyTauriMobileSurface(selector, surface) {
+    $(selector).attr('data-tt-mobile-surface', surface);
+}
+
+function annotateTauriMobileSurfaces() {
+    applyTauriMobileSurface('#bl-purifier-popup', 'fullscreen-window');
+    applyTauriMobileSurface('.bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, #bl-loading-overlay', 'backdrop');
+    applyTauriMobileSurface('.bl-modal-card, .bl-transfer-content, .bl-diff-modal-card, .bl-loading-panel, .bl-scope-tag-editor-card, .bl-scope-group-manager-card', 'fullscreen-window');
+    applyTauriMobileSurface('.bl-toast', 'free-window');
+}
+
 function buildRuleSearchHaystack(sub = {}) {
     const mode = sub.mode || 'text';
     const targets = Array.isArray(sub.targets) ? sub.targets.join(mode === 'text' ? ' ' : '\n') : '';
@@ -158,7 +169,7 @@ export function showToast(message) {
     $('.bl-toast').remove();
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     // 替换为 100% 兼容的 fas fa-exclamation-circle 图标
-    const $toast = $(`<div class="bl-toast" data-bl-theme="${themeMode}" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>`);
+    const $toast = $(`<div class="bl-toast" data-bl-theme="${themeMode}" data-tt-mobile-surface="free-window" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>`);
     $toast.find('.bl-toast-text').text(String(message || ''));
     $('body').append($toast);
     setTimeout(() => $toast.addClass('bl-show'), 10);
@@ -597,6 +608,7 @@ export function setupUI() {
 
     markRulesUiDirty(true);
     markPresetsUiDirty(true);
+    annotateTauriMobileSurfaces();
 } 
 
 export function clearRuleSearchEditFlow() {
@@ -899,8 +911,8 @@ function showProgressOverlay({ title, statusText, cancelText = '停止', onCance
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     $('#bl-loading-overlay').remove();
     $('body').append(`
-        <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}">
-            <div class="bl-loading-panel" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
+        <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}" data-tt-mobile-surface="backdrop">
+            <div class="bl-loading-panel" data-tt-mobile-surface="fullscreen-window" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
                 <div class="bl-loading-head">
                     <h2 id="bl-loading-title" class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> ${title}</h2>
                     <button id="bl-loading-cancel" type="button" class="bl-loading-cancel" title="${cancelText}">${cancelText}</button>
@@ -911,6 +923,7 @@ function showProgressOverlay({ title, statusText, cancelText = '停止', onCance
             </div>
         </div>
     `);
+    annotateTauriMobileSurfaces();
     if (typeof onCancel === 'function') {
         $('#bl-loading-cancel').off('click').on('click', onCancel);
     }
