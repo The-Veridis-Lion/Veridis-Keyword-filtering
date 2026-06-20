@@ -34,6 +34,7 @@ function ensureSettingsShape() {
     if (settings.activePreset === undefined) settings.activePreset = "";
     if (settings.defaultPreset === undefined) settings.defaultPreset = "";
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    if (!settings.chatCompletionPresetBindings || typeof settings.chatCompletionPresetBindings !== 'object') settings.chatCompletionPresetBindings = {};
     settings.scopeTagGroups = normalizeScopeTagGroupList(settings.scopeTagGroups);
     settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, settings.scopeTagGroups);
     settings.scopeTagBuiltinDismissed = normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed);
