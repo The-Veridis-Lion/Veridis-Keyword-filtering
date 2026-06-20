@@ -1,6 +1,6 @@
 import * as extensionsModule from "../../../extensions.js";
 import * as scriptModule from "../../../../script.js";
-import { saveSettingsDebounced, eventSource, event_types, saveChat as importedSaveChat, chat_metadata, chat } from "../../../../script.js";
+import { saveSettingsDebounced, eventSource, event_types, chat_metadata, chat } from "../../../../script.js";
 
 import { defaultSettings, extensionName, initAppContext, runtimeState, markRulesDataDirty, normalizeDiffTrackedMessageLimit } from './src/state.js';
 import { logger } from './src/log.js';
@@ -19,7 +19,7 @@ initAppContext({
     saveSettingsDebounced,
     eventSource,
     event_types,
-    saveChat: importedSaveChat,
+    saveChat: scriptModule.saveChat,
     chat_metadata,
     chat,
     getSillyTavernContext,
@@ -34,6 +34,7 @@ function ensureSettingsShape() {
     if (settings.activePreset === undefined) settings.activePreset = "";
     if (settings.defaultPreset === undefined) settings.defaultPreset = "";
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') settings.characterBindings = {};
+    if (!settings.chatCompletionPresetBindings || typeof settings.chatCompletionPresetBindings !== 'object') settings.chatCompletionPresetBindings = {};
     settings.scopeTagGroups = normalizeScopeTagGroupList(settings.scopeTagGroups);
     settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, settings.scopeTagGroups);
     settings.scopeTagBuiltinDismissed = normalizeScopeTagBuiltinDismissedList(settings.scopeTagBuiltinDismissed);

@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty, minTrackedDiffMessages, maxTrackedDiffMessages, normalizeDiffTrackedMessageLimit } from './state.js';
 import { logger } from './log.js';
-import { DEFAULT_SCOPE_TAG_GROUP_ID, createScopeTagGroupId, createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
+import { DEFAULT_SCOPE_TAG_GROUP_ID, createScopeTagGroupId, createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, getCurrentChatCompletionPresetName, getCurrentCharacterContext, getPresetBindingUsage, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, validateRegexTargetInput } from './utils.js';
 import {
     applyPresetByName,
     closeScopeTagsModal,
@@ -40,7 +40,6 @@ import {
     buildProcessors,
     performGlobalCleanse,
     applyScopedReplacements,
-    applyVisualMask,
     performIncrementalCleanse,
     getMessageIndexFromEvent,
     getLatestMessageIndex,
@@ -49,7 +48,7 @@ import {
     refreshMessageDisplay,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
+import { applyStreamingVisualMask, getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
@@ -70,6 +69,18 @@ let streamingPendingDiffIndices = [];
 const ruleObjectIdMap = new WeakMap();
 let nextRuleObjectId = 1;
 let zhDictionaryInstallAbortController = null;
+
+function removeBindingEntriesForPreset(bindingMap, presetName) {
+    if (!bindingMap || typeof bindingMap !== 'object' || !presetName) return 0;
+    let count = 0;
+    Object.keys(bindingMap).forEach((key) => {
+        if (bindingMap[key] === presetName) {
+            delete bindingMap[key];
+            count += 1;
+        }
+    });
+    return count;
+}
 
 function ensureRuleObjectId(rule) {
     if (!rule || typeof rule !== 'object') return '';
@@ -313,7 +324,7 @@ export function initRealtimeInterceptor() {
                         if (node.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming
-                            ? applyVisualMask(original, { domSafeOnly: true })
+                            ? applyStreamingVisualMask(original, { domSafeOnly: true })
                             : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                         if (original !== nextValue) node.nodeValue = nextValue;
                         if (isStreaming) collectClosestTrackableMessageNode(node, streamingMessageNodes);
@@ -335,7 +346,7 @@ export function initRealtimeInterceptor() {
                     if (m.target.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming
-                        ? applyVisualMask(original, { domSafeOnly: true })
+                        ? applyStreamingVisualMask(original, { domSafeOnly: true })
                         : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                     if (original !== nextValue) m.target.nodeValue = nextValue;
                     if (isStreaming) collectClosestTrackableMessageNode(m.target, streamingMessageNodes);
@@ -930,8 +941,22 @@ export function bindEvents() {
 
     const applyThemeMode = (mode) => {
         const normalized = ['auto', 'light', 'dark'].includes(mode) ? mode : 'auto';
+        const labels = {
+            auto: '跟随酒馆',
+            light: '白色主题',
+            dark: '暗色主题',
+        };
+        const icons = {
+            auto: 'fa-circle-half-stroke',
+            light: 'fa-sun',
+            dark: 'fa-moon',
+        };
         settings.themeMode = normalized;
-        $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay').attr('data-bl-theme', normalized);
+        $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay, #bl-scope-tag-editor-modal, #bl-scope-group-manager-modal').attr('data-bl-theme', normalized);
+        $('#bl-theme-toggle')
+            .attr('title', `当前主题：${labels[normalized]}，点击切换`)
+            .attr('aria-label', `当前主题：${labels[normalized]}，点击切换`);
+        $('#bl-theme-toggle i').attr('class', `fas ${icons[normalized]}`);
     };
     const syncZhCompatToggle = () => {
         const packageStatus = getZhDictionaryPackageStatus(settings);
@@ -1012,10 +1037,21 @@ export function bindEvents() {
     applyThemeMode(settings.themeMode || 'auto');
     syncZhCompatToggle();
 
-    $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function() {
-        const current = settings.themeMode || 'auto';
-        applyThemeMode(current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto');
+    $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const modes = ['auto', 'light', 'dark'];
+        const current = String(settings.themeMode || 'auto');
+        const nextMode = modes[(Math.max(0, modes.indexOf(current)) + 1) % modes.length];
+        applyThemeMode(nextMode);
         saveSettingsDebounced();
+        showToast(`已切换主题：${nextMode === 'auto' ? '跟随酒馆' : nextMode === 'light' ? '白色主题' : '暗色主题'}`);
+    });
+
+    $(document).off('click.blBindMenu').on('click.blBindMenu', function(e) {
+        if ($(e.target).closest('.bl-bind-menu-wrap').length > 0) return;
+        $('#bl-bind-menu').prop('hidden', true);
+        $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
     });
 
     $(document).off('click', '#bl-zh-compat-toggle').on('click', '#bl-zh-compat-toggle', function(e) {
@@ -1141,7 +1177,8 @@ export function bindEvents() {
 
     $(document).off('click', '.bl-scope-tag-group-head').on('click', '.bl-scope-tag-group-head', function(e) {
         e.preventDefault();
-        const groupId = String($(this).attr('data-group-id') || '');
+        if ($(e.target).closest('.bl-scope-tag-group-toggle').length > 0) return;
+        const groupId = String($(this).closest('.bl-scope-tag-group').attr('data-group-id') || '');
         if (!groupId) return;
         const groups = getScopeTagGroups();
         const collapsed = new Set(normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, groups));
@@ -1150,6 +1187,25 @@ export function bindEvents() {
         settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList([...collapsed], groups);
         saveSettingsDebounced();
         renderScopeTagsModal();
+    });
+
+    $(document).off('click', '.bl-scope-tag-group-toggle').on('click', '.bl-scope-tag-group-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const groupId = String($(this).attr('data-group-id') || '');
+        if (!groupId || $(this).prop('disabled')) return;
+        const nextEnabled = $(this).attr('aria-pressed') !== 'true';
+        const currentScopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+        let changed = false;
+        const scopeTags = currentScopeTags.map((tag) => {
+            if (resolveScopeTagGroupId(tag.groupId) !== groupId) return tag;
+            if ((tag.enabled !== false) === nextEnabled) return tag;
+            changed = true;
+            return { ...tag, enabled: nextEnabled };
+        });
+        if (!changed) return;
+        persistScopeTags(scopeTags);
+        showToast(nextEnabled ? '已启用该分组' : '已关闭该分组');
     });
 
     $(document).off('click', '#bl-scope-group-add').on('click', '#bl-scope-group-add', () => {
@@ -2077,33 +2133,114 @@ export function bindEvents() {
         refreshCharacterBindingUI();
     });
 
+    $(document).off('change.bl-purifier-chat-preset-binding', '#settings_preset_openai').on('change.bl-purifier-chat-preset-binding', '#settings_preset_openai', function() {
+        setTimeout(() => {
+            applyCharacterPresetBinding(true, { skipCleanse: true });
+            refreshCharacterBindingUI();
+        }, 0);
+    });
+
     $(document).off('click', '#bl-default-toggle').on('click', '#bl-default-toggle', function() {
         const settings = extension_settings[extensionName];
         const activePreset = String(settings.activePreset || '');
-        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
-        settings.defaultPreset = settings.defaultPreset === activePreset ? "" : activePreset;
+        if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
+        const isDefaultActive = settings.defaultPreset === activePreset;
+        settings.defaultPreset = isDefaultActive ? "" : activePreset;
         saveSettingsDebounced();
+        refreshCharacterBindingUI();
+        showToast(isDefaultActive ? '已取消全局默认' : `已设为全局默认：${activePreset}`);
+    });
+
+    $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $menu = $('#bl-bind-menu');
+        const shouldOpen = $menu.prop('hidden');
+        $menu.prop('hidden', !shouldOpen);
+        $(this).attr('aria-expanded', String(shouldOpen));
         refreshCharacterBindingUI();
     });
 
-    $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function() {
+    $(document).off('click', '.bl-bind-menu-item').on('click', '.bl-bind-menu-item', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if ($(this).prop('disabled')) return;
         const settings = extension_settings[extensionName];
+        const action = String($(this).attr('data-bind-action') || '');
         const activePreset = String(settings.activePreset || '');
-        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
         const context = getCurrentCharacterContext();
-        if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
+        const chatCompletionPresetName = getCurrentChatCompletionPresetName();
+        const activeUsage = getPresetBindingUsage(activePreset);
 
-        if (!settings.characterBindings) settings.characterBindings = {};
-        const isCurrentlyBound = settings.characterBindings[context.key] === activePreset;
-        if (isCurrentlyBound) delete settings.characterBindings[context.key];
-        else settings.characterBindings[context.key] = activePreset;
+        if (action === 'character') {
+            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
+            if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
+            if (activeUsage.hasChatCompletionPresetBindings && settings.characterBindings?.[context.key] !== activePreset) {
+                const shouldSwitch = confirm(`净化预设「${activePreset}」当前是对话补全预设绑定。是否切换为角色绑定？\n这会移除它已有的 ${activeUsage.chatCompletionPresetNames.length} 个对话补全预设绑定。`);
+                if (!shouldSwitch) {
+                    refreshCharacterBindingUI();
+                    return;
+                }
+                removeBindingEntriesForPreset(settings.chatCompletionPresetBindings, activePreset);
+            }
+            if (!settings.characterBindings) settings.characterBindings = {};
+            settings.characterBindings[context.key] = activePreset;
+            runtimeState.lastCharacterContextKey = context.key;
+            runtimeState.lastPresetBindingSignature = "";
+            applyPresetByName(activePreset, { skipRender: true });
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(`已绑定：${context.name} → ${activePreset}`);
+            return;
+        }
 
-        runtimeState.lastCharacterContextKey = context.key;
-        if (!isCurrentlyBound) applyPresetByName(activePreset, { skipRender: true });
-        else applyCharacterPresetBinding(true);
+        if (action === 'chat-preset') {
+            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
+            if (!chatCompletionPresetName) { alert('当前没有识别到 ST 对话补全预设。'); refreshCharacterBindingUI(); return; }
+            if (activeUsage.hasCharacterBindings && settings.chatCompletionPresetBindings?.[chatCompletionPresetName] !== activePreset) {
+                const shouldSwitch = confirm(`净化预设「${activePreset}」当前是角色绑定。是否切换为对话补全预设绑定？\n这会移除它已有的 ${activeUsage.characterKeys.length} 个角色绑定。`);
+                if (!shouldSwitch) {
+                    refreshCharacterBindingUI();
+                    return;
+                }
+                removeBindingEntriesForPreset(settings.characterBindings, activePreset);
+            }
+            if (!settings.chatCompletionPresetBindings || typeof settings.chatCompletionPresetBindings !== 'object') settings.chatCompletionPresetBindings = {};
+            settings.chatCompletionPresetBindings[chatCompletionPresetName] = activePreset;
+            runtimeState.lastPresetBindingSignature = "";
+            applyPresetByName(activePreset, { skipRender: true });
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(`已绑定：对话补全预设 ${chatCompletionPresetName} → ${activePreset}`);
+            return;
+        }
 
-        saveSettingsDebounced();
-        refreshCharacterBindingUI();
+        if (action === 'unbind-character') {
+            const removedRolePreset = context.key ? settings.characterBindings?.[context.key] : '';
+            const removedChatPreset = chatCompletionPresetName ? settings.chatCompletionPresetBindings?.[chatCompletionPresetName] : '';
+            if (removedRolePreset) {
+                delete settings.characterBindings[context.key];
+            } else if (removedChatPreset) {
+                delete settings.chatCompletionPresetBindings[chatCompletionPresetName];
+            } else {
+                refreshCharacterBindingUI();
+                return;
+            }
+            runtimeState.lastCharacterContextKey = "";
+            runtimeState.lastPresetBindingSignature = "";
+            applyCharacterPresetBinding(true);
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(removedRolePreset ? '已取消当前角色绑定，改为跟随全局默认' : '已取消当前对话补全预设绑定，改为跟随全局默认');
+            return;
+        }
+
     });
 
     $(document).off('click', '#bl-preset-rename').on('click', '#bl-preset-rename', function() {
@@ -2118,6 +2255,9 @@ export function bindEvents() {
         if (settings.defaultPreset === oldName) settings.defaultPreset = newName;
         Object.keys(settings.characterBindings || {}).forEach((key) => {
             if (settings.characterBindings[key] === oldName) settings.characterBindings[key] = newName;
+        });
+        Object.keys(settings.chatCompletionPresetBindings || {}).forEach((name) => {
+            if (settings.chatCompletionPresetBindings[name] === oldName) settings.chatCompletionPresetBindings[name] = newName;
         });
         settings.activePreset = newName;
         markPresetsUiDirty(true);
@@ -2134,6 +2274,9 @@ export function bindEvents() {
             if (settings.defaultPreset === name) settings.defaultPreset = "";
             Object.keys(settings.characterBindings || {}).forEach((key) => {
                 if (settings.characterBindings[key] === name) delete settings.characterBindings[key];
+            });
+            Object.keys(settings.chatCompletionPresetBindings || {}).forEach((presetName) => {
+                if (settings.chatCompletionPresetBindings[presetName] === name) delete settings.chatCompletionPresetBindings[presetName];
             });
             settings.activePreset = "";
             settings.rules = [];
@@ -2308,6 +2451,12 @@ export function bindEvents() {
     if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => delayedIncrementalCleanse(payload));
     if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => delayedIncrementalCleanse(payload));
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => delayedIncrementalCleanse(payload));
+    if (event_types.PRESET_CHANGED) {
+        eventSource.on(event_types.PRESET_CHANGED, (payload) => {
+            if (payload && payload.apiId && payload.apiId !== 'openai') return;
+            setTimeout(() => applyCharacterPresetBinding(true, { skipCleanse: true }), 0);
+        });
+    }
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
             resetDiffRuntimeState();
