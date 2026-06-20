@@ -244,13 +244,6 @@ export function setupUI() {
                                     <span class="bl-bind-menu-note">改为跟随全局默认</span>
                                 </span>
                             </button>
-                            <button type="button" id="bl-bind-default-preset" class="bl-bind-menu-item" data-bind-action="default" role="menuitem">
-                                <i class="fas fa-star"></i>
-                                <span class="bl-bind-menu-copy">
-                                    <span class="bl-bind-menu-label">设为全局默认</span>
-                                    <span class="bl-bind-menu-note">无绑定命中时使用</span>
-                                </span>
-                            </button>
                         </div>
                     </div>
                     <button id="bl-preset-import" title="导入存档"><i class="fas fa-file-import"></i></button>
@@ -1142,7 +1135,6 @@ export function refreshCharacterBindingUI() {
     const $bindCurrentItem = $('#bl-bind-current-character');
     const $bindChatPresetItem = $('#bl-bind-current-chat-preset');
     const $unbindItem = $('#bl-unbind-current-character');
-    const $defaultItem = $('#bl-bind-default-preset');
     const currentBound = context.key ? (settings.characterBindings?.[context.key] || '') : '';
     const currentChatBound = chatCompletionPresetName ? (settings.chatCompletionPresetBindings?.[chatCompletionPresetName] || '') : '';
     const activeUsage = getPresetBindingUsage(activePreset);
@@ -1208,12 +1200,6 @@ export function refreshCharacterBindingUI() {
             : currentChatBound
                 ? `当前对话预设：${currentChatBound}`
                 : '当前没有绑定');
-
-        $defaultItem
-            .prop('disabled', !activePreset)
-            .toggleClass('is-active', isDefaultActive);
-        $defaultItem.find('.bl-bind-menu-label').text(isDefaultActive ? '取消全局默认' : '设为全局默认');
-        $defaultItem.find('.bl-bind-menu-note').text(activePreset ? `净化预设：${activePreset}` : '请先选择净化预设');
     }
 }
 

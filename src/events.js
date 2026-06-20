@@ -2242,16 +2242,6 @@ export function bindEvents() {
             return;
         }
 
-        if (action === 'default') {
-            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
-            const isDefaultActive = settings.defaultPreset === activePreset;
-            settings.defaultPreset = isDefaultActive ? "" : activePreset;
-            saveSettingsDebounced();
-            refreshCharacterBindingUI();
-            $('#bl-bind-menu').prop('hidden', true);
-            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-            showToast(isDefaultActive ? '已取消全局默认' : `已设为全局默认：${activePreset}`);
-        }
     });
 
     $(document).off('click', '#bl-preset-rename').on('click', '#bl-preset-rename', function() {
