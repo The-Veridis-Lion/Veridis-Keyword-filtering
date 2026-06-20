@@ -3,6 +3,10 @@ import { applyScopedReplacements, applyVisualMask, buildProcessors, resolveRegex
 import { isCotScopeSkippingEnabled } from './utils.js';
 import { loreFrameDomSelector } from './platform.js';
 
+const streamingTailMaxChars = 1600;
+const streamingTailContextChars = 180;
+const streamingTailSegmentCount = 2;
+
 const knownPluginContainerSelector = [
     '#tavern_helper',
     '#regex_editor_template',
@@ -180,6 +184,62 @@ function getLineBreakSignature(text = '') {
     return String(text).match(/\r\n|\r|\n/g)?.join('|') || '';
 }
 
+function getStreamingTailStart(text = '') {
+    const value = String(text || '');
+    if (value.length <= streamingTailMaxChars) return 0;
+
+    const searchStart = Math.max(0, value.length - streamingTailMaxChars - streamingTailContextChars);
+    const searchText = value.slice(searchStart);
+    const segmentStarts = [searchStart];
+    const lineBreakRegex = /\r\n|\r|\n/g;
+    let match;
+
+    while ((match = lineBreakRegex.exec(searchText)) !== null) {
+        segmentStarts.push(searchStart + match.index + match[0].length);
+    }
+
+    if (segmentStarts.length > streamingTailSegmentCount) {
+        const start = segmentStarts[segmentStarts.length - streamingTailSegmentCount];
+        return Math.max(0, start - streamingTailContextChars);
+    }
+
+    return Math.max(0, value.length - streamingTailMaxChars - streamingTailContextChars);
+}
+
+function selectStreamingTailTextNodes(textNodes) {
+    if (!Array.isArray(textNodes) || textNodes.length <= 1) return textNodes || [];
+
+    const selected = [];
+    let totalLength = 0;
+    let segmentBreaks = 0;
+    const targetLength = streamingTailMaxChars + streamingTailContextChars;
+
+    for (let i = textNodes.length - 1; i >= 0; i--) {
+        const node = textNodes[i];
+        const value = String(node?.nodeValue || '');
+        selected.unshift(node);
+        totalLength += value.length;
+        segmentBreaks += (value.match(/\r\n|\r|\n/g) || []).length;
+
+        if (totalLength >= targetLength && segmentBreaks >= streamingTailSegmentCount - 1) break;
+        if (totalLength >= targetLength + streamingTailMaxChars) break;
+    }
+
+    return selected;
+}
+
+export function applyStreamingVisualMask(originalText, options = {}) {
+    if (typeof originalText !== 'string' || !originalText) return originalText;
+
+    const tailStart = getStreamingTailStart(originalText);
+    if (tailStart <= 0) return applyVisualMask(originalText, options);
+
+    const prefix = originalText.slice(0, tailStart);
+    const tail = originalText.slice(tailStart);
+    const nextTail = applyVisualMask(tail, options);
+    return prefix + nextTail;
+}
+
 function getReplaceCallbackMatchOffset(args) {
     const hasNamedGroups = typeof args[args.length - 1] === 'object' && args[args.length - 1] !== null;
     return Number(args[hasNamedGroups ? args.length - 3 : args.length - 2]);
@@ -294,14 +354,14 @@ let node;
         if (original.trim() === '') continue;
 
         const nextValue = runtimeState.isStreamingGeneration
-            ? applyVisualMask(original, { domSafeOnly: true })
+            ? applyStreamingVisualMask(original, { domSafeOnly: true })
             : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
         if (original !== nextValue) node.nodeValue = nextValue;
     }
 }
 
 /**
- * 流式输出时按整条消息做视觉净化，兼容移动端文本节点碎裂导致的跨节点漏命中。
+ * 流式输出时按尾部窗口做视觉净化，兼容移动端文本节点碎裂导致的跨节点漏命中。
  * 该函数只改 DOM 显示，不写入 chat 数据；生成结束后仍由数据净化流程落盘。
  * @param {Element} messageNode 消息 DOM 节点。
  * @param {{domSafeOnly?: boolean, unsafeRegexOnly?: boolean}} [options={}] 净化选项。
@@ -318,17 +378,18 @@ export function purifyStreamingMessageDom(messageNode, options = {}) {
     const textNodes = collectPurifiableTextNodes(rootNode);
     const unsafeRegexOnly = options.unsafeRegexOnly === true;
     if (textNodes.length === 0 || (!unsafeRegexOnly && textNodes.length <= 1)) return false;
+    const scanTextNodes = selectStreamingTailTextNodes(textNodes);
 
-    const originalText = textNodes.map((node) => node.nodeValue || '').join('');
+    const originalText = scanTextNodes.map((node) => node.nodeValue || '').join('');
     if (!originalText.trim()) return false;
 
-    if (unsafeRegexOnly) return applyUnsafeRegexWithinTextNodes(textNodes);
+    if (unsafeRegexOnly) return applyUnsafeRegexWithinTextNodes(scanTextNodes);
 
-    const nextText = applyVisualMask(originalText, { domSafeOnly: options.domSafeOnly !== false });
+    const nextText = applyStreamingVisualMask(originalText, { domSafeOnly: options.domSafeOnly !== false });
     if (originalText === nextText) return false;
     if (getLineBreakSignature(originalText) !== getLineBreakSignature(nextText)) return false;
 
-    projectTextAcrossNodes(textNodes, nextText);
+    projectTextAcrossNodes(scanTextNodes, nextText);
     return true;
 }
 
