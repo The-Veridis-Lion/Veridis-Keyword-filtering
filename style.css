@@ -5,6 +5,8 @@
 /* --- 1. 局部变量与主题声明 --- */
 #bl-purifier-popup,
 .bl-modal-shell,
+#bl-scope-tag-editor-modal,
+#bl-scope-group-manager-modal,
 #bl-rule-transfer-modal,
 #bl-diff-modal,
 .bl-toast,
@@ -60,6 +62,8 @@
 
 #bl-purifier-popup[data-bl-theme="light"],
 .bl-modal-shell[data-bl-theme="light"],
+#bl-scope-tag-editor-modal[data-bl-theme="light"],
+#bl-scope-group-manager-modal[data-bl-theme="light"],
 #bl-rule-transfer-modal[data-bl-theme="light"],
 #bl-diff-modal[data-bl-theme="light"],
 .bl-toast[data-bl-theme="light"],
@@ -77,6 +81,8 @@
 
 #bl-purifier-popup[data-bl-theme="dark"],
 .bl-modal-shell[data-bl-theme="dark"],
+#bl-scope-tag-editor-modal[data-bl-theme="dark"],
+#bl-scope-group-manager-modal[data-bl-theme="dark"],
 #bl-rule-transfer-modal[data-bl-theme="dark"],
 #bl-diff-modal[data-bl-theme="dark"],
 .bl-toast[data-bl-theme="dark"],
@@ -181,6 +187,57 @@
 #bl-purifier-popup .bl-header .bl-icon-group { gap: var(--bl-control-gap) !important; }
 .bl-icon-group button:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
 #bl-purifier-popup .bl-header .bl-icon-group button:hover { background: transparent !important; transform: scale(1.15); color: var(--bl-accent-color) !important; }
+
+.bl-theme-menu-wrap {
+    position: relative !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
+.bl-theme-menu {
+    position: absolute !important;
+    top: calc(100% + 8px) !important;
+    right: 0 !important;
+    width: 132px !important;
+    padding: 5px !important;
+    border: 1px solid var(--bl-border-color) !important;
+    border-radius: 9px !important;
+    background: var(--bl-background-popup) !important;
+    box-shadow: 0 14px 32px color-mix(in srgb, black 22%, transparent) !important;
+    z-index: 10000007 !important;
+}
+.bl-theme-menu[hidden] {
+    display: none !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-theme-option {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: 34px !important;
+    min-height: 34px !important;
+    display: flex !important;
+    align-items: center !important;
+    justify-content: flex-start !important;
+    gap: 8px !important;
+    padding: 0 9px !important;
+    border-radius: 7px !important;
+    color: var(--bl-text-primary) !important;
+    font-size: 12px !important;
+    font-weight: 720 !important;
+    line-height: 1.2 !important;
+    white-space: nowrap !important;
+    transform: none !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-theme-option:hover,
+#bl-purifier-popup .bl-header .bl-icon-group .bl-theme-option.is-active {
+    background: var(--bl-background-secondary) !important;
+    color: var(--bl-accent-color) !important;
+    transform: none !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-theme-option i {
+    width: 14px !important;
+    min-width: 14px !important;
+    text-align: center !important;
+}
 
 /* 绑定状态按钮 */
 .bl-bind-toggle { color: var(--bl-icon-color) !important; }
@@ -2833,18 +2890,38 @@
     width: 100% !important;
     min-height: 30px !important;
     display: grid !important;
+    grid-template-columns: minmax(0, 1fr) auto !important;
+    align-items: center !important;
+    gap: 8px !important;
+    padding: 3px 2px 4px !important;
+    border: none !important;
+    background: transparent !important;
+    color: var(--bl-text-primary) !important;
+    text-align: left !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-collapse {
+    min-width: 0 !important;
+    min-height: 28px !important;
+    display: grid !important;
     grid-template-columns: 18px minmax(0, 1fr) auto !important;
     align-items: center !important;
     gap: 6px !important;
-    padding: 3px 2px 4px !important;
+    padding: 0 !important;
     border: none !important;
     background: transparent !important;
     color: var(--bl-text-primary) !important;
     cursor: pointer !important;
     text-align: left !important;
+    font: inherit !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group-caret {
+    width: 18px !important;
+    height: 18px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
     font-size: 12px !important;
+    line-height: 1 !important;
     color: var(--bl-text-secondary) !important;
     transition: transform 0.18s ease !important;
 }
@@ -2872,6 +2949,57 @@
     font-size: 11px !important;
     font-weight: 760 !important;
     line-height: 1 !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle {
+    width: 31px !important;
+    min-width: 31px !important;
+    height: 20px !important;
+    min-height: 20px !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    padding: 0 !important;
+    border: none !important;
+    border-radius: 999px !important;
+    background: transparent !important;
+    color: inherit !important;
+    cursor: pointer !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle:disabled {
+    opacity: 0.45 !important;
+    cursor: not-allowed !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle-track {
+    position: relative !important;
+    width: 28px !important;
+    height: 16px !important;
+    border-radius: 999px !important;
+    background: var(--bl-background-tertiary) !important;
+    border: 1px solid color-mix(in srgb, var(--bl-border-color) 85%, var(--bl-text-secondary) 15%) !important;
+    box-sizing: border-box !important;
+    transition: background 0.18s ease, border-color 0.18s ease !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle-knob {
+    position: absolute !important;
+    top: 2px !important;
+    left: 2px !important;
+    width: 10px !important;
+    height: 10px !important;
+    border-radius: 50% !important;
+    background: var(--bl-background-popup) !important;
+    box-shadow: 0 1px 3px color-mix(in srgb, black 25%, transparent) !important;
+    transition: transform 0.18s ease, background 0.18s ease !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle.is-on .bl-scope-tag-group-toggle-track {
+    background: color-mix(in srgb, var(--bl-accent-color) 82%, var(--bl-background-tertiary) 18%) !important;
+    border-color: color-mix(in srgb, var(--bl-accent-color) 88%, var(--bl-border-color) 12%) !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle.is-on .bl-scope-tag-group-toggle-knob {
+    transform: translateX(12px) !important;
+    background: var(--bl-chip-text) !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-group-toggle.is-partial .bl-scope-tag-group-toggle-track {
+    background: color-mix(in srgb, var(--bl-accent-color) 58%, var(--bl-background-tertiary) 42%) !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group-body {
     display: grid !important;
@@ -3044,5 +3172,51 @@
         min-width: 74px !important;
         min-height: 38px !important;
         font-size: 13px !important;
+    }
+}
+
+/* 净化模式最终微调：主题菜单、分组开关和缩进分割线保持在原组件体系内 */
+#bl-scope-tags-modal .bl-scope-tag-group-inner {
+    gap: 0 !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-chip {
+    position: relative !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-chip + .bl-scope-tag-chip {
+    border-top: none !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-chip:not(:last-child)::after {
+    content: "" !important;
+    position: absolute !important;
+    left: 52px !important;
+    right: 8px !important;
+    bottom: 0 !important;
+    height: 1px !important;
+    background: color-mix(in srgb, var(--bl-border-color) 78%, transparent) !important;
+    pointer-events: none !important;
+}
+#bl-scope-tags-modal .bl-scope-tag-chip:hover:not(:last-child)::after {
+    background: color-mix(in srgb, var(--bl-border-color) 92%, var(--bl-text-secondary) 8%) !important;
+}
+
+@media screen and (min-width: 601px) and (max-width: 1024px) {
+    #bl-scope-tags-modal .bl-scope-tag-chip:not(:last-child)::after {
+        left: 45px !important;
+        right: 9px !important;
+    }
+}
+
+@media screen and (max-width: 600px) {
+    #bl-scope-tags-modal .bl-scope-tag-chip:not(:last-child)::after {
+        left: 44px !important;
+        right: 8px !important;
+    }
+    #bl-scope-tags-modal .bl-scope-tag-group-head {
+        min-height: 28px !important;
+        gap: 6px !important;
+    }
+    #bl-scope-tags-modal .bl-scope-tag-group-toggle {
+        width: 30px !important;
+        min-width: 30px !important;
     }
 }
