@@ -2776,19 +2776,6 @@
     min-height: 24px !important;
     font-size: 13px !important;
 }
-#bl-scope-tags-modal .bl-scope-tag-chip-main {
-    gap: 14px !important;
-}
-#bl-scope-tags-modal .bl-scope-tag-chip-title {
-    flex: 1 1 auto !important;
-    min-width: 6em !important;
-    max-width: none !important;
-}
-#bl-scope-tags-modal .bl-scope-tag-chip-text {
-    flex: 0 1 42% !important;
-    min-width: 0 !important;
-}
-
 @media screen and (min-width: 601px) and (max-width: 1024px) {
     #bl-scope-tags-modal .bl-scope-tags-list {
         gap: 6px !important;
@@ -2810,10 +2797,14 @@
         font-size: 14px !important;
     }
     #bl-scope-tags-modal .bl-scope-tag-chip-main {
-        gap: 12px !important;
+        flex-direction: column !important;
+        align-items: flex-start !important;
+        gap: 1px !important;
     }
     #bl-scope-tags-modal .bl-scope-tag-chip-text {
-        flex-basis: 38% !important;
+        display: block !important;
+        width: 100% !important;
+        flex-basis: auto !important;
     }
 }
 
@@ -3203,6 +3194,7 @@
     }
     #bl-scope-tags-modal .bl-scope-tag-chip {
         grid-template-columns: 26px minmax(0, 1fr) auto !important;
+        min-height: 54px !important;
     }
     #bl-scope-tags-modal .bl-scope-tag-row-divider {
         display: none !important;
@@ -3211,7 +3203,15 @@
         font-size: 13px !important;
     }
     #bl-scope-tags-modal .bl-scope-tag-chip-text {
+        display: block !important;
+        width: 100% !important;
+        min-width: 0 !important;
+        max-width: 100% !important;
+        overflow: hidden !important;
+        text-overflow: ellipsis !important;
+        white-space: nowrap !important;
         font-size: 11px !important;
+        line-height: 1.25 !important;
     }
     #bl-scope-group-manager-modal .bl-scope-group-manager-card {
         width: min(420px, calc(100vw - 24px)) !important;
