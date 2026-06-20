@@ -930,8 +930,22 @@ export function bindEvents() {
 
     const applyThemeMode = (mode) => {
         const normalized = ['auto', 'light', 'dark'].includes(mode) ? mode : 'auto';
+        const labels = {
+            auto: '跟随酒馆',
+            light: '白色主题',
+            dark: '暗色主题',
+        };
         settings.themeMode = normalized;
-        $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay').attr('data-bl-theme', normalized);
+        $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay, #bl-scope-tag-editor-modal, #bl-scope-group-manager-modal').attr('data-bl-theme', normalized);
+        $('#bl-theme-toggle')
+            .attr('title', `当前主题：${labels[normalized]}，点击切换`)
+            .attr('aria-label', `当前主题：${labels[normalized]}`)
+            .attr('aria-expanded', 'false');
+        $('#bl-theme-menu').prop('hidden', true);
+        $('#bl-theme-menu .bl-theme-option').each(function() {
+            const isActive = String($(this).attr('data-theme-mode') || 'auto') === normalized;
+            $(this).toggleClass('is-active', isActive).attr('aria-checked', String(isActive));
+        });
     };
     const syncZhCompatToggle = () => {
         const packageStatus = getZhDictionaryPackageStatus(settings);
@@ -1012,10 +1026,26 @@ export function bindEvents() {
     applyThemeMode(settings.themeMode || 'auto');
     syncZhCompatToggle();
 
-    $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function() {
-        const current = settings.themeMode || 'auto';
-        applyThemeMode(current === 'auto' ? 'light' : current === 'light' ? 'dark' : 'auto');
+    $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $menu = $('#bl-theme-menu');
+        const shouldOpen = $menu.prop('hidden');
+        $menu.prop('hidden', !shouldOpen);
+        $(this).attr('aria-expanded', String(shouldOpen));
+    });
+
+    $(document).off('click', '.bl-theme-option').on('click', '.bl-theme-option', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        applyThemeMode(String($(this).attr('data-theme-mode') || 'auto'));
         saveSettingsDebounced();
+    });
+
+    $(document).off('click.blThemeMenu').on('click.blThemeMenu', function(e) {
+        if ($(e.target).closest('.bl-theme-menu-wrap').length > 0) return;
+        $('#bl-theme-menu').prop('hidden', true);
+        $('#bl-theme-toggle').attr('aria-expanded', 'false');
     });
 
     $(document).off('click', '#bl-zh-compat-toggle').on('click', '#bl-zh-compat-toggle', function(e) {
@@ -1139,7 +1169,7 @@ export function bindEvents() {
         renderScopeTagsModal();
     });
 
-    $(document).off('click', '.bl-scope-tag-group-head').on('click', '.bl-scope-tag-group-head', function(e) {
+    $(document).off('click', '.bl-scope-tag-group-collapse').on('click', '.bl-scope-tag-group-collapse', function(e) {
         e.preventDefault();
         const groupId = String($(this).attr('data-group-id') || '');
         if (!groupId) return;
@@ -1150,6 +1180,25 @@ export function bindEvents() {
         settings.scopeTagCollapsedGroups = normalizeScopeTagCollapsedGroupList([...collapsed], groups);
         saveSettingsDebounced();
         renderScopeTagsModal();
+    });
+
+    $(document).off('click', '.bl-scope-tag-group-toggle').on('click', '.bl-scope-tag-group-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const groupId = String($(this).attr('data-group-id') || '');
+        if (!groupId || $(this).prop('disabled')) return;
+        const nextEnabled = $(this).attr('aria-pressed') !== 'true';
+        const currentScopeTags = mergeScopeTagsWithBuiltins(settings.scopeTags, settings.scopeTagBuiltinDismissed);
+        let changed = false;
+        const scopeTags = currentScopeTags.map((tag) => {
+            if (resolveScopeTagGroupId(tag.groupId) !== groupId) return tag;
+            if ((tag.enabled !== false) === nextEnabled) return tag;
+            changed = true;
+            return { ...tag, enabled: nextEnabled };
+        });
+        if (!changed) return;
+        persistScopeTags(scopeTags);
+        showToast(nextEnabled ? '已启用该分组' : '已关闭该分组');
     });
 
     $(document).off('click', '#bl-scope-group-add').on('click', '#bl-scope-group-add', () => {

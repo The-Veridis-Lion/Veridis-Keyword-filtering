@@ -218,7 +218,20 @@ export function setupUI() {
                     全局映射预设
                 </div>
                 <div class="bl-icon-group">
-                    <button id="bl-theme-toggle" title="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
+                    <div class="bl-theme-menu-wrap">
+                        <button id="bl-theme-toggle" type="button" title="切换主题" aria-label="切换主题" aria-haspopup="true" aria-expanded="false"><i class="fas fa-circle-half-stroke"></i></button>
+                        <div id="bl-theme-menu" class="bl-theme-menu" role="menu" hidden>
+                            <button type="button" class="bl-theme-option" data-theme-mode="auto" role="menuitemradio" aria-checked="true">
+                                <i class="fas fa-circle-half-stroke"></i><span>跟随酒馆</span>
+                            </button>
+                            <button type="button" class="bl-theme-option" data-theme-mode="light" role="menuitemradio" aria-checked="false">
+                                <i class="fas fa-sun"></i><span>白色主题</span>
+                            </button>
+                            <button type="button" class="bl-theme-option" data-theme-mode="dark" role="menuitemradio" aria-checked="false">
+                                <i class="fas fa-moon"></i><span>暗色主题</span>
+                            </button>
+                        </div>
+                    </div>
                     <button id="bl-default-toggle" title="设为默认预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
                     <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
                     <button id="bl-preset-import" title="导入存档"><i class="fas fa-file-import"></i></button>
@@ -833,16 +846,36 @@ export function renderScopeTagsModal() {
     const html = grouped.map((group) => {
         const isCollapsed = collapsedGroups.has(group.id);
         const groupTitle = safeHtml(group.name || DEFAULT_SCOPE_TAG_GROUP_NAME);
+        const activeCount = group.tags.filter((scopeTag) => scopeTag.enabled !== false).length;
+        const hasTags = group.tags.length > 0;
+        const isGroupEnabled = activeCount > 0;
+        const isGroupPartial = activeCount > 0 && activeCount < group.tags.length;
+        const groupToggleClass = [
+            'bl-scope-tag-group-toggle',
+            isGroupEnabled ? 'is-on' : '',
+            isGroupPartial ? 'is-partial' : '',
+        ].filter(Boolean).join(' ');
+        const groupToggleTitle = hasTags
+            ? (isGroupEnabled ? '关闭该分组内全部标签' : '启用该分组内全部标签')
+            : '此分组暂无标签';
+        const groupToggleDisabled = hasTags ? '' : 'disabled';
         const tagsHtml = group.tags.length > 0
             ? group.tags.map((scopeTag) => buildScopeTagChipHtml(scopeTag, editId)).join('')
             : `<div class="bl-scope-tag-group-empty">${isCleanseInsideMode ? '此分组暂无标签。' : '此分组暂无标签。'}</div>`;
         return `
             <div class="bl-scope-tag-group ${isCollapsed ? 'is-collapsed' : ''}" data-group-id="${safeHtml(group.id)}">
-                <button type="button" class="bl-scope-tag-group-head" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
-                    <i class="fas fa-chevron-down bl-scope-tag-group-caret"></i>
-                    <span class="bl-scope-tag-group-title">${groupTitle}</span>
-                    <span class="bl-scope-tag-group-count">${group.tags.length}</span>
-                </button>
+                <div class="bl-scope-tag-group-head">
+                    <button type="button" class="bl-scope-tag-group-collapse" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
+                        <i class="fas fa-chevron-down bl-scope-tag-group-caret"></i>
+                        <span class="bl-scope-tag-group-title">${groupTitle}</span>
+                        <span class="bl-scope-tag-group-count">${group.tags.length}</span>
+                    </button>
+                    <button type="button" class="${groupToggleClass}" data-group-id="${safeHtml(group.id)}" aria-pressed="${String(isGroupEnabled)}" title="${safeHtml(groupToggleTitle)}" ${groupToggleDisabled}>
+                        <span class="bl-scope-tag-group-toggle-track" aria-hidden="true">
+                            <span class="bl-scope-tag-group-toggle-knob"></span>
+                        </span>
+                    </button>
+                </div>
                 <div class="bl-scope-tag-group-body">
                     <div class="bl-scope-tag-group-inner">
                         ${tagsHtml}
