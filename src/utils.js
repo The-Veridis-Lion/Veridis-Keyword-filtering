@@ -82,14 +82,68 @@ export function getCurrentCharacterContext() {
     return { key: "", name: "未检测到角色（可先发送一条消息后再试）" };
 }
 
-export function getPresetForCharacter(characterKey) {
+export function getCurrentChatCompletionPresetName() {
+    const select = document.querySelector('#settings_preset_openai');
+    if (!select || !(select instanceof HTMLSelectElement)) return "";
+    const option = select.options[select.selectedIndex];
+    return String(option?.textContent || '').trim();
+}
+
+export function getPresetBindingUsage(presetName) {
     const { extension_settings } = getAppContext();
     const settings = extension_settings[extensionName];
-    if (!settings) return "";
-    const special = settings.characterBindings?.[characterKey];
-    if (special && settings.presets?.[special]) return special;
-    if (settings.defaultPreset && settings.presets?.[settings.defaultPreset]) return settings.defaultPreset;
-    return "";
+    const target = String(presetName || '');
+    const usage = {
+        characterKeys: [],
+        chatCompletionPresetNames: [],
+        hasCharacterBindings: false,
+        hasChatCompletionPresetBindings: false,
+    };
+    if (!settings || !target) return usage;
+
+    Object.entries(settings.characterBindings || {}).forEach(([key, preset]) => {
+        if (preset === target) usage.characterKeys.push(key);
+    });
+    Object.entries(settings.chatCompletionPresetBindings || {}).forEach(([name, preset]) => {
+        if (preset === target) usage.chatCompletionPresetNames.push(name);
+    });
+
+    usage.hasCharacterBindings = usage.characterKeys.length > 0;
+    usage.hasChatCompletionPresetBindings = usage.chatCompletionPresetNames.length > 0;
+    return usage;
+}
+
+export function getPresetBindingResolution(characterKey = "", options = {}) {
+    const { extension_settings } = getAppContext();
+    const settings = extension_settings[extensionName];
+    const presets = settings?.presets || {};
+    if (!settings) {
+        return { presetName: "", source: "", chatCompletionPresetName: "", characterPreset: "", chatCompletionPreset: "" };
+    }
+
+    const chatCompletionPresetName = options.chatCompletionPresetName !== undefined
+        ? String(options.chatCompletionPresetName || '').trim()
+        : getCurrentChatCompletionPresetName();
+    const characterPreset = characterKey ? String(settings.characterBindings?.[characterKey] || '') : '';
+    const chatCompletionPreset = chatCompletionPresetName
+        ? String(settings.chatCompletionPresetBindings?.[chatCompletionPresetName] || '')
+        : '';
+    const defaultPreset = String(settings.defaultPreset || '');
+
+    if (characterPreset && presets[characterPreset]) {
+        return { presetName: characterPreset, source: "character", chatCompletionPresetName, characterPreset, chatCompletionPreset };
+    }
+    if (chatCompletionPreset && presets[chatCompletionPreset]) {
+        return { presetName: chatCompletionPreset, source: "chatCompletionPreset", chatCompletionPresetName, characterPreset, chatCompletionPreset };
+    }
+    if (defaultPreset && presets[defaultPreset]) {
+        return { presetName: defaultPreset, source: "default", chatCompletionPresetName, characterPreset, chatCompletionPreset };
+    }
+    return { presetName: "", source: "", chatCompletionPresetName, characterPreset, chatCompletionPreset };
+}
+
+export function getPresetForCharacter(characterKey, options = {}) {
+    return getPresetBindingResolution(characterKey, options).presetName;
 }
 
 function findLastUnescapedSlash(text) {

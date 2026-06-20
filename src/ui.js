@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markRulesUiDirty, markPresetsUiDirty } from './state.js';
 import { logger } from './log.js';
-import { COT_SCOPE_TAG_DISPLAY_TEXT, DEFAULT_SCOPE_TAG_GROUP_ID, DEFAULT_SCOPE_TAG_GROUP_NAME, deepClone, getCurrentCharacterContext, getPresetForCharacter, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, parseInputToWords } from './utils.js';
+import { COT_SCOPE_TAG_DISPLAY_TEXT, DEFAULT_SCOPE_TAG_GROUP_ID, DEFAULT_SCOPE_TAG_GROUP_NAME, deepClone, getCurrentCharacterContext, getCurrentChatCompletionPresetName, getPresetBindingResolution, getPresetBindingUsage, getPresetForCharacter, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, parseInputToWords } from './utils.js';
 import { performGlobalCleanse } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 
@@ -38,6 +38,17 @@ function getRuleSourcePreviewText(sub = {}) {
 
 function getRuleSearchMenuKey(ruleIndex, subRuleIndex) {
     return `${ruleIndex}:${subRuleIndex}`;
+}
+
+function applyTauriMobileSurface(selector, surface) {
+    $(selector).attr('data-tt-mobile-surface', surface);
+}
+
+function annotateTauriMobileSurfaces() {
+    applyTauriMobileSurface('#bl-purifier-popup', 'fullscreen-window');
+    applyTauriMobileSurface('.bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, #bl-loading-overlay', 'backdrop');
+    applyTauriMobileSurface('.bl-modal-card, .bl-transfer-content, .bl-diff-modal-card, .bl-loading-panel, .bl-scope-tag-editor-card, .bl-scope-group-manager-card', 'fullscreen-window');
+    applyTauriMobileSurface('.bl-toast', 'free-window');
 }
 
 function buildRuleSearchHaystack(sub = {}) {
@@ -158,7 +169,7 @@ export function showToast(message) {
     $('.bl-toast').remove();
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     // 替换为 100% 兼容的 fas fa-exclamation-circle 图标
-    const $toast = $(`<div class="bl-toast" data-bl-theme="${themeMode}" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>`);
+    const $toast = $(`<div class="bl-toast" data-bl-theme="${themeMode}" data-tt-mobile-surface="free-window" role="status" aria-live="polite"><i class="fas fa-exclamation-circle" style="margin-right: 6px; font-size: 15px;"></i><span class="bl-toast-text"></span></div>`);
     $toast.find('.bl-toast-text').text(String(message || ''));
     $('body').append($toast);
     setTimeout(() => $toast.addClass('bl-show'), 10);
@@ -207,9 +218,34 @@ export function setupUI() {
                     全局映射预设
                 </div>
                 <div class="bl-icon-group">
-                    <button id="bl-theme-toggle" title="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
-                    <button id="bl-default-toggle" title="设为默认预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
-                    <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
+                    <button id="bl-theme-toggle" type="button" title="切换主题" aria-label="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
+                    <button id="bl-default-toggle" title="设为全局默认净化预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
+                    <div class="bl-bind-menu-wrap">
+                        <button id="bl-character-bind-toggle" type="button" title="绑定管理" class="bl-bind-toggle" aria-label="绑定管理" aria-haspopup="true" aria-expanded="false"><i class="fas fa-link"></i></button>
+                        <div id="bl-bind-menu" class="bl-bind-menu" role="menu" hidden>
+                            <button type="button" id="bl-bind-current-character" class="bl-bind-menu-item" data-bind-action="character" role="menuitem">
+                                <i class="fas fa-user-tag"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">绑定当前角色</span>
+                                    <span class="bl-bind-menu-note">使用当前净化预设</span>
+                                </span>
+                            </button>
+                            <button type="button" id="bl-bind-current-chat-preset" class="bl-bind-menu-item" data-bind-action="chat-preset" role="menuitem">
+                                <i class="fas fa-comments"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">绑定当前对话补全预设</span>
+                                    <span class="bl-bind-menu-note">跟随 ST 当前对话补全预设</span>
+                                </span>
+                            </button>
+                            <button type="button" id="bl-unbind-current-character" class="bl-bind-menu-item" data-bind-action="unbind-character" role="menuitem">
+                                <i class="fas fa-rotate-left"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">取消当前绑定</span>
+                                    <span class="bl-bind-menu-note">改为跟随全局默认</span>
+                                </span>
+                            </button>
+                        </div>
+                    </div>
                     <button id="bl-preset-import" title="导入存档"><i class="fas fa-file-import"></i></button>
                     <button id="bl-preset-export" title="导出存档"><i class="fas fa-file-export"></i></button>
                     <button id="bl-close-btn" title="关闭"><i class="fas fa-times"></i></button>
@@ -597,6 +633,7 @@ export function setupUI() {
 
     markRulesUiDirty(true);
     markPresetsUiDirty(true);
+    annotateTauriMobileSurfaces();
 } 
 
 export function clearRuleSearchEditFlow() {
@@ -821,16 +858,38 @@ export function renderScopeTagsModal() {
     const html = grouped.map((group) => {
         const isCollapsed = collapsedGroups.has(group.id);
         const groupTitle = safeHtml(group.name || DEFAULT_SCOPE_TAG_GROUP_NAME);
+        const activeCount = group.tags.filter((scopeTag) => scopeTag.enabled !== false).length;
+        const hasTags = group.tags.length > 0;
+        const isGroupEnabled = activeCount > 0;
+        const isGroupPartial = activeCount > 0 && activeCount < group.tags.length;
+        const groupToggleClass = [
+            'bl-scope-tag-group-toggle',
+            isGroupEnabled ? 'is-on' : '',
+            isGroupPartial ? 'is-partial' : '',
+        ].filter(Boolean).join(' ');
+        const groupToggleTitle = hasTags
+            ? (isGroupEnabled ? '关闭该分组内全部标签' : '启用该分组内全部标签')
+            : '此分组暂无标签';
+        const groupToggleDisabled = hasTags ? '' : 'disabled';
         const tagsHtml = group.tags.length > 0
             ? group.tags.map((scopeTag) => buildScopeTagChipHtml(scopeTag, editId)).join('')
             : `<div class="bl-scope-tag-group-empty">${isCleanseInsideMode ? '此分组暂无标签。' : '此分组暂无标签。'}</div>`;
         return `
             <div class="bl-scope-tag-group ${isCollapsed ? 'is-collapsed' : ''}" data-group-id="${safeHtml(group.id)}">
-                <button type="button" class="bl-scope-tag-group-head" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
-                    <i class="fas fa-chevron-down bl-scope-tag-group-caret"></i>
-                    <span class="bl-scope-tag-group-title">${groupTitle}</span>
+                <div class="bl-scope-tag-group-head">
+                    <button type="button" class="bl-scope-tag-group-collapse" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
+                        <svg class="bl-scope-tag-group-caret" viewBox="0 0 24 24" aria-hidden="true">
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                        <span class="bl-scope-tag-group-title">${groupTitle}</span>
+                    </button>
                     <span class="bl-scope-tag-group-count">${group.tags.length}</span>
-                </button>
+                    <button type="button" class="${groupToggleClass}" data-group-id="${safeHtml(group.id)}" aria-pressed="${String(isGroupEnabled)}" title="${safeHtml(groupToggleTitle)}" ${groupToggleDisabled}>
+                        <span class="bl-scope-tag-group-toggle-track" aria-hidden="true">
+                            <span class="bl-scope-tag-group-toggle-knob"></span>
+                        </span>
+                    </button>
+                </div>
                 <div class="bl-scope-tag-group-body">
                     <div class="bl-scope-tag-group-inner">
                         ${tagsHtml}
@@ -899,8 +958,8 @@ function showProgressOverlay({ title, statusText, cancelText = '停止', onCance
     const themeMode = String($('#bl-purifier-popup').attr('data-bl-theme') || 'auto');
     $('#bl-loading-overlay').remove();
     $('body').append(`
-        <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}">
-            <div class="bl-loading-panel" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
+        <div id="bl-loading-overlay" class="bl-loading-overlay" data-bl-theme="${themeMode}" data-tt-mobile-surface="backdrop">
+            <div class="bl-loading-panel" data-tt-mobile-surface="fullscreen-window" role="dialog" aria-modal="true" aria-labelledby="bl-loading-title">
                 <div class="bl-loading-head">
                     <h2 id="bl-loading-title" class="bl-loading-title"><i class="fas fa-spinner fa-spin"></i> ${title}</h2>
                     <button id="bl-loading-cancel" type="button" class="bl-loading-cancel" title="${cancelText}">${cancelText}</button>
@@ -911,6 +970,7 @@ function showProgressOverlay({ title, statusText, cancelText = '停止', onCance
             </div>
         </div>
     `);
+    annotateTauriMobileSurfaces();
     if (typeof onCancel === 'function') {
         $('#bl-loading-cancel').off('click').on('click', onCancel);
     }
@@ -1044,12 +1104,23 @@ export function cleanupInvalidPresetBindings() {
     if (settings.defaultPreset && !presets[settings.defaultPreset]) settings.defaultPreset = "";
     if (!settings.characterBindings || typeof settings.characterBindings !== 'object') {
         settings.characterBindings = {};
-        return;
     }
+    if (!settings.chatCompletionPresetBindings || typeof settings.chatCompletionPresetBindings !== 'object') settings.chatCompletionPresetBindings = {};
+
     Object.keys(settings.characterBindings).forEach((key) => {
         const preset = settings.characterBindings[key];
         if (!preset || !presets[preset]) delete settings.characterBindings[key];
     });
+    Object.keys(settings.chatCompletionPresetBindings).forEach((name) => {
+        const preset = settings.chatCompletionPresetBindings[name];
+        if (!preset || !presets[preset]) delete settings.chatCompletionPresetBindings[name];
+    });
+}
+
+function formatBindingList(names = []) {
+    if (!names.length) return '';
+    const shown = names.slice(0, 2).join('、');
+    return names.length > 2 ? `${shown} 等 ${names.length} 个` : shown;
 }
 
 export function refreshCharacterBindingUI() {
@@ -1057,38 +1128,92 @@ export function refreshCharacterBindingUI() {
     const settings = extension_settings[extensionName];
     const context = getCurrentCharacterContext();
     const activePreset = String(settings.activePreset || '');
+    const chatCompletionPresetName = getCurrentChatCompletionPresetName();
+    const bindingResolution = getPresetBindingResolution(context.key, { chatCompletionPresetName });
     const $defaultBtn = $('#bl-default-toggle');
     const $bindBtn = $('#bl-character-bind-toggle');
+    const $bindCurrentItem = $('#bl-bind-current-character');
+    const $bindChatPresetItem = $('#bl-bind-current-chat-preset');
+    const $unbindItem = $('#bl-unbind-current-character');
     const currentBound = context.key ? (settings.characterBindings?.[context.key] || '') : '';
+    const currentChatBound = chatCompletionPresetName ? (settings.chatCompletionPresetBindings?.[chatCompletionPresetName] || '') : '';
+    const activeUsage = getPresetBindingUsage(activePreset);
 
     if ($defaultBtn.length && $bindBtn.length) {
         const isDefaultActive = !!(activePreset && settings.defaultPreset === activePreset);
         $defaultBtn.toggleClass('bl-bind-active', isDefaultActive);
         $defaultBtn.prop('disabled', !activePreset);
-        $defaultBtn.attr('title', activePreset ? (isDefaultActive ? `已设为默认预设：${activePreset}（点击取消）` : `将当前预设设为默认：${activePreset}`) : '请先选择一个预设');
+        $defaultBtn.attr('aria-pressed', String(isDefaultActive));
+        $defaultBtn.attr('title', activePreset ? (isDefaultActive ? `已设为全局默认：${activePreset}（点击取消）` : `将当前净化预设设为全局默认：${activePreset}`) : '请先选择一个净化预设');
 
         const isCharacterBound = !!(context.key && activePreset && currentBound === activePreset);
-        $bindBtn.toggleClass('bl-bind-active', isCharacterBound);
-        $bindBtn.prop('disabled', !activePreset || !context.key);
-        $bindBtn.find('i').removeClass('fa-link fa-link-slash').addClass(isCharacterBound ? 'fa-link' : 'fa-link-slash');
-        $bindBtn.attr('title', !activePreset ? '请先选择一个预设' : !context.key ? '未检测到当前角色，无法绑定' : (isCharacterBound ? `已绑定：${context.name} → ${activePreset}（点击解除）` : `绑定当前角色：${context.name} → ${activePreset}`));
+        const isChatPresetBound = !!(chatCompletionPresetName && activePreset && currentChatBound === activePreset);
+        const hasCurrentBinding = !!((context.key && currentBound) || (chatCompletionPresetName && currentChatBound));
+        const roleBindingWillSwitchFromChatPreset = !!(activePreset && activeUsage.hasChatCompletionPresetBindings && !isCharacterBound);
+        const chatPresetBindingWillSwitchFromRole = !!(activePreset && activeUsage.hasCharacterBindings && !isChatPresetBound);
+        $bindBtn.toggleClass('bl-bind-active', hasCurrentBinding);
+        $bindBtn.prop('disabled', false);
+        $bindBtn.attr('aria-pressed', String(hasCurrentBinding));
+        $bindBtn.find('i').removeClass('fa-link-slash').addClass('fa-link');
+        $bindBtn.attr('title', !context.key
+            ? (currentChatBound ? `绑定管理：当前对话预设已绑定 ${currentChatBound}` : '绑定管理：未检测到当前角色')
+            : currentBound
+                ? `绑定管理：${context.name} 已绑定 ${currentBound}`
+                : currentChatBound
+                    ? `绑定管理：对话预设 ${chatCompletionPresetName} 已绑定 ${currentChatBound}`
+                    : `绑定管理：当前跟随${bindingResolution.source === 'default' ? '全局默认' : '未绑定状态'}`);
+
+        $bindCurrentItem
+            .prop('disabled', !activePreset || !context.key || isCharacterBound)
+            .toggleClass('is-active', isCharacterBound);
+        $bindCurrentItem.find('.bl-bind-menu-label').text(isCharacterBound ? '已绑定当前角色' : '绑定当前角色');
+        $bindCurrentItem.find('.bl-bind-menu-note').text(!activePreset
+            ? '请先选择净化预设'
+            : !context.key
+                ? '未检测到角色'
+                : roleBindingWillSwitchFromChatPreset
+                    ? `切换为角色绑定，会移除：${formatBindingList(activeUsage.chatCompletionPresetNames)}`
+                    : currentBound && currentBound !== activePreset
+                        ? `当前角色已绑定 ${currentBound}，点击改绑`
+                        : `使用净化预设：${activePreset}`);
+
+        $bindChatPresetItem
+            .prop('disabled', !activePreset || !chatCompletionPresetName || isChatPresetBound)
+            .toggleClass('is-active', isChatPresetBound);
+        $bindChatPresetItem.find('.bl-bind-menu-label').text(isChatPresetBound ? '已绑定当前对话补全预设' : '绑定当前对话补全预设');
+        $bindChatPresetItem.find('.bl-bind-menu-note').text(!activePreset
+            ? '请先选择净化预设'
+            : !chatCompletionPresetName
+                ? '未检测到 ST 对话补全预设'
+                : chatPresetBindingWillSwitchFromRole
+                    ? `切换为对话补全预设绑定，会移除角色绑定：${activeUsage.characterKeys.length} 个`
+                    : currentChatBound && currentChatBound !== activePreset
+                        ? `当前对话预设已绑定 ${currentChatBound}，点击改绑`
+                        : `跟随对话预设：${chatCompletionPresetName}`);
+
+        $unbindItem
+            .prop('disabled', !currentBound && !currentChatBound)
+            .toggleClass('is-active', !!(currentBound || currentChatBound));
+        $unbindItem.find('.bl-bind-menu-label').text(currentBound ? '取消角色绑定' : currentChatBound ? '取消对话预设绑定' : '取消当前绑定');
+        $unbindItem.find('.bl-bind-menu-note').text(currentBound
+            ? `当前角色：${currentBound}`
+            : currentChatBound
+                ? `当前对话预设：${currentChatBound}`
+                : '当前没有绑定');
     }
 }
 
 export function applyCharacterPresetBinding(force = false, options = {}) {
     const { extension_settings } = getAppContext();
     const context = getCurrentCharacterContext();
-    if (!context.key) {
-        runtimeState.lastCharacterContextKey = "";
-        refreshCharacterBindingUI();
-        return;
-    }
-
-    const characterChanged = context.key !== runtimeState.lastCharacterContextKey;
-    if (!force && !characterChanged) return;
+    const chatCompletionPresetName = getCurrentChatCompletionPresetName();
+    const bindingSignature = `${context.key || ''}\n${chatCompletionPresetName || ''}`;
+    const bindingContextChanged = bindingSignature !== runtimeState.lastPresetBindingSignature;
+    if (!force && !bindingContextChanged) return;
     runtimeState.lastCharacterContextKey = context.key;
+    runtimeState.lastPresetBindingSignature = bindingSignature;
 
-    const presetName = getPresetForCharacter(context.key);
+    const presetName = getPresetForCharacter(context.key, { chatCompletionPresetName });
     if (presetName && presetName !== extension_settings[extensionName].activePreset) {
         applyPresetByName(presetName, { skipRender: true, skipCleanse: options.skipCleanse === true });
     }
