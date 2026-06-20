@@ -40,7 +40,6 @@ import {
     buildProcessors,
     performGlobalCleanse,
     applyScopedReplacements,
-    applyVisualMask,
     performIncrementalCleanse,
     getMessageIndexFromEvent,
     getLatestMessageIndex,
@@ -49,7 +48,7 @@ import {
     refreshMessageDisplay,
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
-import { getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
+import { applyStreamingVisualMask, getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
 import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
@@ -325,7 +324,7 @@ export function initRealtimeInterceptor() {
                         if (node.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(node.parentNode)) continue;
                         const original = node.nodeValue;
                         const nextValue = isStreaming
-                            ? applyVisualMask(original, { domSafeOnly: true })
+                            ? applyStreamingVisualMask(original, { domSafeOnly: true })
                             : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                         if (original !== nextValue) node.nodeValue = nextValue;
                         if (isStreaming) collectClosestTrackableMessageNode(node, streamingMessageNodes);
@@ -347,7 +346,7 @@ export function initRealtimeInterceptor() {
                     if (m.target.parentNode && getAppContext().extension_settings?.[extensionName]?.skipUserMessages && isUserMessageDomNode(m.target.parentNode)) continue;
                     const original = m.target.nodeValue;
                     const nextValue = isStreaming
-                        ? applyVisualMask(original, { domSafeOnly: true })
+                        ? applyStreamingVisualMask(original, { domSafeOnly: true })
                         : applyScopedReplacements(original, { deterministic: true, domSafeOnly: true });
                     if (original !== nextValue) m.target.nodeValue = nextValue;
                     if (isStreaming) collectClosestTrackableMessageNode(m.target, streamingMessageNodes);
