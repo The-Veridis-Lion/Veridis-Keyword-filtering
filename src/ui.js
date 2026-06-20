@@ -233,7 +233,32 @@ export function setupUI() {
                         </div>
                     </div>
                     <button id="bl-default-toggle" title="设为默认预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
-                    <button id="bl-character-bind-toggle" title="将当前角色绑定到当前预设" class="bl-bind-toggle"><i class="fas fa-link-slash"></i></button>
+                    <div class="bl-bind-menu-wrap">
+                        <button id="bl-character-bind-toggle" type="button" title="绑定管理" class="bl-bind-toggle" aria-label="绑定管理" aria-haspopup="true" aria-expanded="false"><i class="fas fa-link"></i></button>
+                        <div id="bl-bind-menu" class="bl-bind-menu" role="menu" hidden>
+                            <button type="button" id="bl-bind-current-character" class="bl-bind-menu-item" data-bind-action="character" role="menuitem">
+                                <i class="fas fa-user-tag"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">绑定当前角色</span>
+                                    <span class="bl-bind-menu-note">使用当前预设</span>
+                                </span>
+                            </button>
+                            <button type="button" id="bl-unbind-current-character" class="bl-bind-menu-item" data-bind-action="unbind-character" role="menuitem">
+                                <i class="fas fa-rotate-left"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">取消角色绑定</span>
+                                    <span class="bl-bind-menu-note">改为跟随默认</span>
+                                </span>
+                            </button>
+                            <button type="button" id="bl-bind-default-preset" class="bl-bind-menu-item" data-bind-action="default" role="menuitem">
+                                <i class="fas fa-star"></i>
+                                <span class="bl-bind-menu-copy">
+                                    <span class="bl-bind-menu-label">设为默认预设</span>
+                                    <span class="bl-bind-menu-note">无角色绑定时使用</span>
+                                </span>
+                            </button>
+                        </div>
+                    </div>
                     <button id="bl-preset-import" title="导入存档"><i class="fas fa-file-import"></i></button>
                     <button id="bl-preset-export" title="导出存档"><i class="fas fa-file-export"></i></button>
                     <button id="bl-close-btn" title="关闭"><i class="fas fa-times"></i></button>
@@ -868,8 +893,8 @@ export function renderScopeTagsModal() {
                     <button type="button" class="bl-scope-tag-group-collapse" data-group-id="${safeHtml(group.id)}" aria-expanded="${String(!isCollapsed)}">
                         <i class="fas fa-chevron-down bl-scope-tag-group-caret"></i>
                         <span class="bl-scope-tag-group-title">${groupTitle}</span>
-                        <span class="bl-scope-tag-group-count">${group.tags.length}</span>
                     </button>
+                    <span class="bl-scope-tag-group-count">${group.tags.length}</span>
                     <button type="button" class="${groupToggleClass}" data-group-id="${safeHtml(group.id)}" aria-pressed="${String(isGroupEnabled)}" title="${safeHtml(groupToggleTitle)}" ${groupToggleDisabled}>
                         <span class="bl-scope-tag-group-toggle-track" aria-hidden="true">
                             <span class="bl-scope-tag-group-toggle-knob"></span>
@@ -1105,6 +1130,9 @@ export function refreshCharacterBindingUI() {
     const activePreset = String(settings.activePreset || '');
     const $defaultBtn = $('#bl-default-toggle');
     const $bindBtn = $('#bl-character-bind-toggle');
+    const $bindCurrentItem = $('#bl-bind-current-character');
+    const $unbindItem = $('#bl-unbind-current-character');
+    const $defaultItem = $('#bl-bind-default-preset');
     const currentBound = context.key ? (settings.characterBindings?.[context.key] || '') : '';
 
     if ($defaultBtn.length && $bindBtn.length) {
@@ -1114,10 +1142,36 @@ export function refreshCharacterBindingUI() {
         $defaultBtn.attr('title', activePreset ? (isDefaultActive ? `已设为默认预设：${activePreset}（点击取消）` : `将当前预设设为默认：${activePreset}`) : '请先选择一个预设');
 
         const isCharacterBound = !!(context.key && activePreset && currentBound === activePreset);
-        $bindBtn.toggleClass('bl-bind-active', isCharacterBound);
-        $bindBtn.prop('disabled', !activePreset || !context.key);
-        $bindBtn.find('i').removeClass('fa-link fa-link-slash').addClass(isCharacterBound ? 'fa-link' : 'fa-link-slash');
-        $bindBtn.attr('title', !activePreset ? '请先选择一个预设' : !context.key ? '未检测到当前角色，无法绑定' : (isCharacterBound ? `已绑定：${context.name} → ${activePreset}（点击解除）` : `绑定当前角色：${context.name} → ${activePreset}`));
+        const hasCharacterBinding = !!(context.key && currentBound);
+        $bindBtn.toggleClass('bl-bind-active', hasCharacterBinding);
+        $bindBtn.prop('disabled', false);
+        $bindBtn.find('i').removeClass('fa-link-slash').addClass('fa-link');
+        $bindBtn.attr('title', !context.key
+            ? '绑定管理：未检测到当前角色'
+            : hasCharacterBinding
+                ? `绑定管理：${context.name} 已绑定 ${currentBound}`
+                : `绑定管理：${context.name} 当前跟随默认预设`);
+
+        $bindCurrentItem
+            .prop('disabled', !activePreset || !context.key || isCharacterBound)
+            .toggleClass('is-active', isCharacterBound);
+        $bindCurrentItem.find('.bl-bind-menu-label').text(isCharacterBound ? '已绑定当前预设' : '绑定当前角色');
+        $bindCurrentItem.find('.bl-bind-menu-note').text(!activePreset
+            ? '请先选择预设'
+            : !context.key
+                ? '未检测到角色'
+                : `使用 ${activePreset}`);
+
+        $unbindItem
+            .prop('disabled', !context.key || !currentBound)
+            .toggleClass('is-active', !!currentBound);
+        $unbindItem.find('.bl-bind-menu-note').text(currentBound ? `当前为 ${currentBound}` : '当前未绑定角色');
+
+        $defaultItem
+            .prop('disabled', !activePreset)
+            .toggleClass('is-active', isDefaultActive);
+        $defaultItem.find('.bl-bind-menu-label').text(isDefaultActive ? '取消默认预设' : '设为默认预设');
+        $defaultItem.find('.bl-bind-menu-note').text(activePreset ? `当前预设：${activePreset}` : '请先选择预设');
     }
 }
 

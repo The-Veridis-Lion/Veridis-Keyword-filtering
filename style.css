@@ -194,6 +194,12 @@
     align-items: center !important;
     justify-content: center !important;
 }
+.bl-bind-menu-wrap {
+    position: relative !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+}
 .bl-theme-menu {
     position: absolute !important;
     top: calc(100% + 8px) !important;
@@ -207,6 +213,21 @@
     z-index: 10000007 !important;
 }
 .bl-theme-menu[hidden] {
+    display: none !important;
+}
+.bl-bind-menu {
+    position: absolute !important;
+    top: calc(100% + 8px) !important;
+    right: 0 !important;
+    width: min(224px, calc(100vw - 36px)) !important;
+    padding: 6px !important;
+    border: 1px solid var(--bl-border-color) !important;
+    border-radius: 10px !important;
+    background: var(--bl-background-popup) !important;
+    box-shadow: 0 14px 32px color-mix(in srgb, black 22%, transparent) !important;
+    z-index: 10000007 !important;
+}
+.bl-bind-menu[hidden] {
     display: none !important;
 }
 #bl-purifier-popup .bl-header .bl-icon-group .bl-theme-option {
@@ -237,6 +258,65 @@
     width: 14px !important;
     min-width: 14px !important;
     text-align: center !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item {
+    width: 100% !important;
+    min-width: 0 !important;
+    height: auto !important;
+    min-height: 46px !important;
+    display: grid !important;
+    grid-template-columns: 18px minmax(0, 1fr) !important;
+    align-items: center !important;
+    gap: 9px !important;
+    padding: 8px 9px !important;
+    border-radius: 8px !important;
+    color: var(--bl-text-primary) !important;
+    font-size: 12px !important;
+    font-weight: 720 !important;
+    line-height: 1.25 !important;
+    text-align: left !important;
+    white-space: normal !important;
+    transform: none !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item:hover,
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item.is-active {
+    background: var(--bl-background-secondary) !important;
+    color: var(--bl-accent-color) !important;
+    transform: none !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item:disabled {
+    opacity: 0.48 !important;
+    cursor: not-allowed !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item:disabled:hover {
+    background: transparent !important;
+    color: var(--bl-text-primary) !important;
+}
+#bl-purifier-popup .bl-header .bl-icon-group .bl-bind-menu-item i {
+    width: 18px !important;
+    min-width: 18px !important;
+    text-align: center !important;
+}
+.bl-bind-menu-copy {
+    min-width: 0 !important;
+    display: flex !important;
+    flex-direction: column !important;
+    gap: 2px !important;
+}
+.bl-bind-menu-label,
+.bl-bind-menu-note {
+    min-width: 0 !important;
+    overflow: hidden !important;
+    text-overflow: ellipsis !important;
+    white-space: nowrap !important;
+}
+.bl-bind-menu-label {
+    color: inherit !important;
+}
+.bl-bind-menu-note {
+    color: var(--bl-text-secondary) !important;
+    font-size: 11px !important;
+    font-weight: 620 !important;
 }
 
 /* 绑定状态按钮 */
@@ -2888,22 +2968,23 @@
 }
 #bl-scope-tags-modal .bl-scope-tag-group-head {
     width: 100% !important;
-    min-height: 30px !important;
+    min-height: 28px !important;
     display: grid !important;
-    grid-template-columns: minmax(0, 1fr) auto !important;
+    grid-template-columns: minmax(0, 1fr) auto auto !important;
     align-items: center !important;
     gap: 8px !important;
-    padding: 3px 2px 4px !important;
+    padding: 2px 2px 4px !important;
     border: none !important;
     background: transparent !important;
     color: var(--bl-text-primary) !important;
     text-align: left !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group-collapse {
+    width: 100% !important;
     min-width: 0 !important;
     min-height: 28px !important;
     display: grid !important;
-    grid-template-columns: 18px minmax(0, 1fr) auto !important;
+    grid-template-columns: 18px minmax(0, 1fr) !important;
     align-items: center !important;
     gap: 6px !important;
     padding: 0 !important;
@@ -2913,6 +2994,7 @@
     cursor: pointer !important;
     text-align: left !important;
     font: inherit !important;
+    line-height: 1 !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group-caret {
     width: 18px !important;
@@ -2924,6 +3006,7 @@
     line-height: 1 !important;
     color: var(--bl-text-secondary) !important;
     transition: transform 0.18s ease !important;
+    transform-origin: center !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group.is-collapsed .bl-scope-tag-group-caret {
     transform: rotate(-90deg) !important;
@@ -2935,6 +3018,7 @@
     white-space: nowrap !important;
     font-size: 13px !important;
     font-weight: 760 !important;
+    line-height: 18px !important;
 }
 #bl-scope-tags-modal .bl-scope-tag-group-count {
     min-width: 20px !important;

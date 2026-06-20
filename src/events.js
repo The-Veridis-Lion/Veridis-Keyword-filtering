@@ -1031,6 +1031,8 @@ export function bindEvents() {
         e.stopPropagation();
         const $menu = $('#bl-theme-menu');
         const shouldOpen = $menu.prop('hidden');
+        $('#bl-bind-menu').prop('hidden', true);
+        $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
         $menu.prop('hidden', !shouldOpen);
         $(this).attr('aria-expanded', String(shouldOpen));
     });
@@ -1046,6 +1048,12 @@ export function bindEvents() {
         if ($(e.target).closest('.bl-theme-menu-wrap').length > 0) return;
         $('#bl-theme-menu').prop('hidden', true);
         $('#bl-theme-toggle').attr('aria-expanded', 'false');
+    });
+
+    $(document).off('click.blBindMenu').on('click.blBindMenu', function(e) {
+        if ($(e.target).closest('.bl-bind-menu-wrap').length > 0) return;
+        $('#bl-bind-menu').prop('hidden', true);
+        $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
     });
 
     $(document).off('click', '#bl-zh-compat-toggle').on('click', '#bl-zh-compat-toggle', function(e) {
@@ -2135,24 +2143,66 @@ export function bindEvents() {
         refreshCharacterBindingUI();
     });
 
-    $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function() {
-        const settings = extension_settings[extensionName];
-        const activePreset = String(settings.activePreset || '');
-        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
-        const context = getCurrentCharacterContext();
-        if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
-
-        if (!settings.characterBindings) settings.characterBindings = {};
-        const isCurrentlyBound = settings.characterBindings[context.key] === activePreset;
-        if (isCurrentlyBound) delete settings.characterBindings[context.key];
-        else settings.characterBindings[context.key] = activePreset;
-
-        runtimeState.lastCharacterContextKey = context.key;
-        if (!isCurrentlyBound) applyPresetByName(activePreset, { skipRender: true });
-        else applyCharacterPresetBinding(true);
-
-        saveSettingsDebounced();
+    $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        const $menu = $('#bl-bind-menu');
+        const shouldOpen = $menu.prop('hidden');
+        $('#bl-theme-menu').prop('hidden', true);
+        $('#bl-theme-toggle').attr('aria-expanded', 'false');
+        $menu.prop('hidden', !shouldOpen);
+        $(this).attr('aria-expanded', String(shouldOpen));
         refreshCharacterBindingUI();
+    });
+
+    $(document).off('click', '.bl-bind-menu-item').on('click', '.bl-bind-menu-item', function(e) {
+        e.preventDefault();
+        e.stopPropagation();
+        if ($(this).prop('disabled')) return;
+        const settings = extension_settings[extensionName];
+        const action = String($(this).attr('data-bind-action') || '');
+        const activePreset = String(settings.activePreset || '');
+        const context = getCurrentCharacterContext();
+
+        if (action === 'character') {
+            if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
+            if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
+            if (!settings.characterBindings) settings.characterBindings = {};
+            settings.characterBindings[context.key] = activePreset;
+            runtimeState.lastCharacterContextKey = context.key;
+            applyPresetByName(activePreset, { skipRender: true });
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(`已绑定：${context.name} → ${activePreset}`);
+            return;
+        }
+
+        if (action === 'unbind-character') {
+            if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
+            if (!settings.characterBindings?.[context.key]) { refreshCharacterBindingUI(); return; }
+            delete settings.characterBindings[context.key];
+            runtimeState.lastCharacterContextKey = "";
+            applyCharacterPresetBinding(true);
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast('已取消当前角色绑定，改为跟随默认预设');
+            return;
+        }
+
+        if (action === 'default') {
+            if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
+            const isDefaultActive = settings.defaultPreset === activePreset;
+            settings.defaultPreset = isDefaultActive ? "" : activePreset;
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(isDefaultActive ? '已取消默认预设' : `已设为默认预设：${activePreset}`);
+        }
     });
 
     $(document).off('click', '#bl-preset-rename').on('click', '#bl-preset-rename', function() {
