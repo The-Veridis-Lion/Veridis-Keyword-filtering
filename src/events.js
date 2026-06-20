@@ -1,6 +1,6 @@
 import { extensionName, getAppContext, runtimeState, markRulesDataDirty, markPresetsUiDirty, minTrackedDiffMessages, maxTrackedDiffMessages, normalizeDiffTrackedMessageLimit } from './state.js';
 import { logger } from './log.js';
-import { DEFAULT_SCOPE_TAG_GROUP_ID, createScopeTagGroupId, createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, getCurrentCharacterContext, validateRegexTargetInput } from './utils.js';
+import { DEFAULT_SCOPE_TAG_GROUP_ID, createScopeTagGroupId, createScopeTagId, deepClone, formatScopeTagInput, getBuiltinScopeTagKeyForStartTag, getCotScopeTagBuiltinKeys, getCurrentChatCompletionPresetName, getCurrentCharacterContext, getPresetBindingUsage, isCotScopeTagEntry, mergeScopeTagsWithBuiltins, normalizeImportedRulesPayload, normalizeScopeTagBuiltinDismissedList, normalizeScopeTagCollapsedGroupList, normalizeScopeTagGroupList, normalizeScopeTagList, parseInputToWords, parseScopeTagInput, validateRegexTargetInput } from './utils.js';
 import {
     applyPresetByName,
     closeScopeTagsModal,
@@ -70,6 +70,18 @@ let streamingPendingDiffIndices = [];
 const ruleObjectIdMap = new WeakMap();
 let nextRuleObjectId = 1;
 let zhDictionaryInstallAbortController = null;
+
+function removeBindingEntriesForPreset(bindingMap, presetName) {
+    if (!bindingMap || typeof bindingMap !== 'object' || !presetName) return 0;
+    let count = 0;
+    Object.keys(bindingMap).forEach((key) => {
+        if (bindingMap[key] === presetName) {
+            delete bindingMap[key];
+            count += 1;
+        }
+    });
+    return count;
+}
 
 function ensureRuleObjectId(rule) {
     if (!rule || typeof rule !== 'object') return '';
@@ -1177,9 +1189,10 @@ export function bindEvents() {
         renderScopeTagsModal();
     });
 
-    $(document).off('click', '.bl-scope-tag-group-collapse').on('click', '.bl-scope-tag-group-collapse', function(e) {
+    $(document).off('click', '.bl-scope-tag-group-head').on('click', '.bl-scope-tag-group-head', function(e) {
         e.preventDefault();
-        const groupId = String($(this).attr('data-group-id') || '');
+        if ($(e.target).closest('.bl-scope-tag-group-toggle').length > 0) return;
+        const groupId = String($(this).closest('.bl-scope-tag-group').attr('data-group-id') || '');
         if (!groupId) return;
         const groups = getScopeTagGroups();
         const collapsed = new Set(normalizeScopeTagCollapsedGroupList(settings.scopeTagCollapsedGroups, groups));
@@ -2134,10 +2147,17 @@ export function bindEvents() {
         refreshCharacterBindingUI();
     });
 
+    $(document).off('change.bl-purifier-chat-preset-binding', '#settings_preset_openai').on('change.bl-purifier-chat-preset-binding', '#settings_preset_openai', function() {
+        setTimeout(() => {
+            applyCharacterPresetBinding(true, { skipCleanse: true });
+            refreshCharacterBindingUI();
+        }, 0);
+    });
+
     $(document).off('click', '#bl-default-toggle').on('click', '#bl-default-toggle', function() {
         const settings = extension_settings[extensionName];
         const activePreset = String(settings.activePreset || '');
-        if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
+        if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
         settings.defaultPreset = settings.defaultPreset === activePreset ? "" : activePreset;
         saveSettingsDebounced();
         refreshCharacterBindingUI();
@@ -2163,13 +2183,24 @@ export function bindEvents() {
         const action = String($(this).attr('data-bind-action') || '');
         const activePreset = String(settings.activePreset || '');
         const context = getCurrentCharacterContext();
+        const chatCompletionPresetName = getCurrentChatCompletionPresetName();
+        const activeUsage = getPresetBindingUsage(activePreset);
 
         if (action === 'character') {
-            if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
+            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
             if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
+            if (activeUsage.hasChatCompletionPresetBindings && settings.characterBindings?.[context.key] !== activePreset) {
+                const shouldSwitch = confirm(`净化预设「${activePreset}」当前是对话补全预设绑定。是否切换为角色绑定？\n这会移除它已有的 ${activeUsage.chatCompletionPresetNames.length} 个对话补全预设绑定。`);
+                if (!shouldSwitch) {
+                    refreshCharacterBindingUI();
+                    return;
+                }
+                removeBindingEntriesForPreset(settings.chatCompletionPresetBindings, activePreset);
+            }
             if (!settings.characterBindings) settings.characterBindings = {};
             settings.characterBindings[context.key] = activePreset;
             runtimeState.lastCharacterContextKey = context.key;
+            runtimeState.lastPresetBindingSignature = "";
             applyPresetByName(activePreset, { skipRender: true });
             saveSettingsDebounced();
             refreshCharacterBindingUI();
@@ -2179,29 +2210,60 @@ export function bindEvents() {
             return;
         }
 
+        if (action === 'chat-preset') {
+            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
+            if (!chatCompletionPresetName) { alert('当前没有识别到 ST 对话补全预设。'); refreshCharacterBindingUI(); return; }
+            if (activeUsage.hasCharacterBindings && settings.chatCompletionPresetBindings?.[chatCompletionPresetName] !== activePreset) {
+                const shouldSwitch = confirm(`净化预设「${activePreset}」当前是角色绑定。是否切换为对话补全预设绑定？\n这会移除它已有的 ${activeUsage.characterKeys.length} 个角色绑定。`);
+                if (!shouldSwitch) {
+                    refreshCharacterBindingUI();
+                    return;
+                }
+                removeBindingEntriesForPreset(settings.characterBindings, activePreset);
+            }
+            if (!settings.chatCompletionPresetBindings || typeof settings.chatCompletionPresetBindings !== 'object') settings.chatCompletionPresetBindings = {};
+            settings.chatCompletionPresetBindings[chatCompletionPresetName] = activePreset;
+            runtimeState.lastPresetBindingSignature = "";
+            applyPresetByName(activePreset, { skipRender: true });
+            saveSettingsDebounced();
+            refreshCharacterBindingUI();
+            $('#bl-bind-menu').prop('hidden', true);
+            $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
+            showToast(`已绑定：对话预设 ${chatCompletionPresetName} → ${activePreset}`);
+            return;
+        }
+
         if (action === 'unbind-character') {
-            if (!context.key) { alert('当前页面未识别到可绑定角色。'); refreshCharacterBindingUI(); return; }
-            if (!settings.characterBindings?.[context.key]) { refreshCharacterBindingUI(); return; }
-            delete settings.characterBindings[context.key];
+            const removedRolePreset = context.key ? settings.characterBindings?.[context.key] : '';
+            const removedChatPreset = chatCompletionPresetName ? settings.chatCompletionPresetBindings?.[chatCompletionPresetName] : '';
+            if (removedRolePreset) {
+                delete settings.characterBindings[context.key];
+            } else if (removedChatPreset) {
+                delete settings.chatCompletionPresetBindings[chatCompletionPresetName];
+            } else {
+                refreshCharacterBindingUI();
+                return;
+            }
             runtimeState.lastCharacterContextKey = "";
+            runtimeState.lastPresetBindingSignature = "";
             applyCharacterPresetBinding(true);
             saveSettingsDebounced();
             refreshCharacterBindingUI();
             $('#bl-bind-menu').prop('hidden', true);
             $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-            showToast('已取消当前角色绑定，改为跟随默认预设');
+            showToast(removedRolePreset ? '已取消当前角色绑定，改为跟随全局默认' : '已取消当前对话预设绑定，改为跟随全局默认');
             return;
         }
 
         if (action === 'default') {
-            if (!activePreset) { alert('请先在下拉框中选择一个预设。'); return; }
+            if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
             const isDefaultActive = settings.defaultPreset === activePreset;
             settings.defaultPreset = isDefaultActive ? "" : activePreset;
             saveSettingsDebounced();
             refreshCharacterBindingUI();
             $('#bl-bind-menu').prop('hidden', true);
             $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-            showToast(isDefaultActive ? '已取消默认预设' : `已设为默认预设：${activePreset}`);
+            showToast(isDefaultActive ? '已取消全局默认' : `已设为全局默认：${activePreset}`);
         }
     });
 
@@ -2218,6 +2280,9 @@ export function bindEvents() {
         Object.keys(settings.characterBindings || {}).forEach((key) => {
             if (settings.characterBindings[key] === oldName) settings.characterBindings[key] = newName;
         });
+        Object.keys(settings.chatCompletionPresetBindings || {}).forEach((name) => {
+            if (settings.chatCompletionPresetBindings[name] === oldName) settings.chatCompletionPresetBindings[name] = newName;
+        });
         settings.activePreset = newName;
         markPresetsUiDirty(true);
         saveSettingsDebounced();
@@ -2233,6 +2298,9 @@ export function bindEvents() {
             if (settings.defaultPreset === name) settings.defaultPreset = "";
             Object.keys(settings.characterBindings || {}).forEach((key) => {
                 if (settings.characterBindings[key] === name) delete settings.characterBindings[key];
+            });
+            Object.keys(settings.chatCompletionPresetBindings || {}).forEach((presetName) => {
+                if (settings.chatCompletionPresetBindings[presetName] === name) delete settings.chatCompletionPresetBindings[presetName];
             });
             settings.activePreset = "";
             settings.rules = [];
@@ -2407,6 +2475,12 @@ export function bindEvents() {
     if (event_types.GENERATION_STOPPED) eventSource.on(event_types.GENERATION_STOPPED, (payload) => delayedIncrementalCleanse(payload));
     if (event_types.MESSAGE_RECEIVED) eventSource.on(event_types.MESSAGE_RECEIVED, (payload) => delayedIncrementalCleanse(payload));
     if (event_types.MESSAGE_SWIPED) eventSource.on(event_types.MESSAGE_SWIPED, (payload) => delayedIncrementalCleanse(payload));
+    if (event_types.PRESET_CHANGED) {
+        eventSource.on(event_types.PRESET_CHANGED, (payload) => {
+            if (payload && payload.apiId && payload.apiId !== 'openai') return;
+            setTimeout(() => applyCharacterPresetBinding(true, { skipCleanse: true }), 0);
+        });
+    }
     if (event_types.CHAT_CHANGED) {
         eventSource.on(event_types.CHAT_CHANGED, () => {
             resetDiffRuntimeState();
