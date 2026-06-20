@@ -218,20 +218,7 @@ export function setupUI() {
                     全局映射预设
                 </div>
                 <div class="bl-icon-group">
-                    <div class="bl-theme-menu-wrap">
-                        <button id="bl-theme-toggle" type="button" title="切换主题" aria-label="切换主题" aria-haspopup="true" aria-expanded="false"><i class="fas fa-circle-half-stroke"></i></button>
-                        <div id="bl-theme-menu" class="bl-theme-menu" role="menu" hidden>
-                            <button type="button" class="bl-theme-option" data-theme-mode="auto" role="menuitemradio" aria-checked="true">
-                                <i class="fas fa-circle-half-stroke"></i><span>跟随酒馆</span>
-                            </button>
-                            <button type="button" class="bl-theme-option" data-theme-mode="light" role="menuitemradio" aria-checked="false">
-                                <i class="fas fa-sun"></i><span>白色主题</span>
-                            </button>
-                            <button type="button" class="bl-theme-option" data-theme-mode="dark" role="menuitemradio" aria-checked="false">
-                                <i class="fas fa-moon"></i><span>暗色主题</span>
-                            </button>
-                        </div>
-                    </div>
+                    <button id="bl-theme-toggle" type="button" title="切换主题" aria-label="切换主题"><i class="fas fa-circle-half-stroke"></i></button>
                     <button id="bl-default-toggle" title="设为全局默认净化预设" class="bl-bind-toggle"><i class="fas fa-star"></i></button>
                     <div class="bl-bind-menu-wrap">
                         <button id="bl-character-bind-toggle" type="button" title="绑定管理" class="bl-bind-toggle" aria-label="绑定管理" aria-haspopup="true" aria-expanded="false"><i class="fas fa-link"></i></button>
@@ -246,8 +233,8 @@ export function setupUI() {
                             <button type="button" id="bl-bind-current-chat-preset" class="bl-bind-menu-item" data-bind-action="chat-preset" role="menuitem">
                                 <i class="fas fa-comments"></i>
                                 <span class="bl-bind-menu-copy">
-                                    <span class="bl-bind-menu-label">绑定当前对话预设</span>
-                                    <span class="bl-bind-menu-note">跟随 ST 对话补全预设</span>
+                                    <span class="bl-bind-menu-label">绑定当前对话补全预设</span>
+                                    <span class="bl-bind-menu-note">跟随 ST 当前对话补全预设</span>
                                 </span>
                             </button>
                             <button type="button" id="bl-unbind-current-character" class="bl-bind-menu-item" data-bind-action="unbind-character" role="menuitem">
@@ -1164,6 +1151,7 @@ export function refreshCharacterBindingUI() {
         const isDefaultActive = !!(activePreset && settings.defaultPreset === activePreset);
         $defaultBtn.toggleClass('bl-bind-active', isDefaultActive);
         $defaultBtn.prop('disabled', !activePreset);
+        $defaultBtn.attr('aria-pressed', String(isDefaultActive));
         $defaultBtn.attr('title', activePreset ? (isDefaultActive ? `已设为全局默认：${activePreset}（点击取消）` : `将当前净化预设设为全局默认：${activePreset}`) : '请先选择一个净化预设');
 
         const isCharacterBound = !!(context.key && activePreset && currentBound === activePreset);
@@ -1173,6 +1161,7 @@ export function refreshCharacterBindingUI() {
         const chatPresetBindingWillSwitchFromRole = !!(activePreset && activeUsage.hasCharacterBindings && !isChatPresetBound);
         $bindBtn.toggleClass('bl-bind-active', hasCurrentBinding);
         $bindBtn.prop('disabled', false);
+        $bindBtn.attr('aria-pressed', String(hasCurrentBinding));
         $bindBtn.find('i').removeClass('fa-link-slash').addClass('fa-link');
         $bindBtn.attr('title', !context.key
             ? (currentChatBound ? `绑定管理：当前对话预设已绑定 ${currentChatBound}` : '绑定管理：未检测到当前角色')
@@ -1199,13 +1188,13 @@ export function refreshCharacterBindingUI() {
         $bindChatPresetItem
             .prop('disabled', !activePreset || !chatCompletionPresetName || isChatPresetBound)
             .toggleClass('is-active', isChatPresetBound);
-        $bindChatPresetItem.find('.bl-bind-menu-label').text(isChatPresetBound ? '已绑定当前对话预设' : '绑定当前对话预设');
+        $bindChatPresetItem.find('.bl-bind-menu-label').text(isChatPresetBound ? '已绑定当前对话补全预设' : '绑定当前对话补全预设');
         $bindChatPresetItem.find('.bl-bind-menu-note').text(!activePreset
             ? '请先选择净化预设'
             : !chatCompletionPresetName
                 ? '未检测到 ST 对话补全预设'
                 : chatPresetBindingWillSwitchFromRole
-                    ? `切换为对话预设绑定，会移除角色绑定：${activeUsage.characterKeys.length} 个`
+                    ? `切换为对话补全预设绑定，会移除角色绑定：${activeUsage.characterKeys.length} 个`
                     : currentChatBound && currentChatBound !== activePreset
                         ? `当前对话预设已绑定 ${currentChatBound}，点击改绑`
                         : `跟随对话预设：${chatCompletionPresetName}`);
