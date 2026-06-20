@@ -21,7 +21,7 @@
 - 新增 UI 颜色优先使用 `style.css` 顶部的 `--bl-*` 变量。
 - 插件需要跟随 SillyTavern Smart Theme，优先引用 `--SmartTheme*`，再落到固定 fallback。
 - 不要在组件局部直接写大片固定色；危险、成功、强调色也应走 `--bl-danger-color`、`--bl-success-color`、`--bl-accent-color` 等变量。
-- 主题入口使用下拉菜单，不使用单纯循环按钮。选项固定为“跟随酒馆”、“白色主题”、“暗色主题”。
+- 主题入口使用单个图标按钮循环切换，不展开下拉。点击顺序固定为“跟随酒馆”、“白色主题”、“暗色主题”。
 - 主插件面板、净化模式弹窗、净化模式内的标签编辑/分组管理弹窗、diff/transfer/toast/loading 都需要带上或继承 `data-bl-theme`，避免深浅色主题不一致。
 
 ## 预设绑定入口

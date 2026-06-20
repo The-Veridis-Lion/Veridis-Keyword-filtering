@@ -947,17 +947,17 @@ export function bindEvents() {
             light: '白色主题',
             dark: '暗色主题',
         };
+        const icons = {
+            auto: 'fa-circle-half-stroke',
+            light: 'fa-sun',
+            dark: 'fa-moon',
+        };
         settings.themeMode = normalized;
         $('#bl-purifier-popup, .bl-modal-shell, #bl-rule-transfer-modal, #bl-diff-modal, .bl-toast, #bl-loading-overlay, #bl-scope-tag-editor-modal, #bl-scope-group-manager-modal').attr('data-bl-theme', normalized);
         $('#bl-theme-toggle')
             .attr('title', `当前主题：${labels[normalized]}，点击切换`)
-            .attr('aria-label', `当前主题：${labels[normalized]}`)
-            .attr('aria-expanded', 'false');
-        $('#bl-theme-menu').prop('hidden', true);
-        $('#bl-theme-menu .bl-theme-option').each(function() {
-            const isActive = String($(this).attr('data-theme-mode') || 'auto') === normalized;
-            $(this).toggleClass('is-active', isActive).attr('aria-checked', String(isActive));
-        });
+            .attr('aria-label', `当前主题：${labels[normalized]}，点击切换`);
+        $('#bl-theme-toggle i').attr('class', `fas ${icons[normalized]}`);
     };
     const syncZhCompatToggle = () => {
         const packageStatus = getZhDictionaryPackageStatus(settings);
@@ -1041,25 +1041,12 @@ export function bindEvents() {
     $(document).off('click', '#bl-theme-toggle').on('click', '#bl-theme-toggle', function(e) {
         e.preventDefault();
         e.stopPropagation();
-        const $menu = $('#bl-theme-menu');
-        const shouldOpen = $menu.prop('hidden');
-        $('#bl-bind-menu').prop('hidden', true);
-        $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-        $menu.prop('hidden', !shouldOpen);
-        $(this).attr('aria-expanded', String(shouldOpen));
-    });
-
-    $(document).off('click', '.bl-theme-option').on('click', '.bl-theme-option', function(e) {
-        e.preventDefault();
-        e.stopPropagation();
-        applyThemeMode(String($(this).attr('data-theme-mode') || 'auto'));
+        const modes = ['auto', 'light', 'dark'];
+        const current = String(settings.themeMode || 'auto');
+        const nextMode = modes[(Math.max(0, modes.indexOf(current)) + 1) % modes.length];
+        applyThemeMode(nextMode);
         saveSettingsDebounced();
-    });
-
-    $(document).off('click.blThemeMenu').on('click.blThemeMenu', function(e) {
-        if ($(e.target).closest('.bl-theme-menu-wrap').length > 0) return;
-        $('#bl-theme-menu').prop('hidden', true);
-        $('#bl-theme-toggle').attr('aria-expanded', 'false');
+        showToast(`已切换主题：${nextMode === 'auto' ? '跟随酒馆' : nextMode === 'light' ? '白色主题' : '暗色主题'}`);
     });
 
     $(document).off('click.blBindMenu').on('click.blBindMenu', function(e) {
@@ -2158,9 +2145,11 @@ export function bindEvents() {
         const settings = extension_settings[extensionName];
         const activePreset = String(settings.activePreset || '');
         if (!activePreset) { alert('请先在下拉框中选择一个净化预设。'); return; }
-        settings.defaultPreset = settings.defaultPreset === activePreset ? "" : activePreset;
+        const isDefaultActive = settings.defaultPreset === activePreset;
+        settings.defaultPreset = isDefaultActive ? "" : activePreset;
         saveSettingsDebounced();
         refreshCharacterBindingUI();
+        showToast(isDefaultActive ? '已取消全局默认' : `已设为全局默认：${activePreset}`);
     });
 
     $(document).off('click', '#bl-character-bind-toggle').on('click', '#bl-character-bind-toggle', function(e) {
@@ -2168,8 +2157,6 @@ export function bindEvents() {
         e.stopPropagation();
         const $menu = $('#bl-bind-menu');
         const shouldOpen = $menu.prop('hidden');
-        $('#bl-theme-menu').prop('hidden', true);
-        $('#bl-theme-toggle').attr('aria-expanded', 'false');
         $menu.prop('hidden', !shouldOpen);
         $(this).attr('aria-expanded', String(shouldOpen));
         refreshCharacterBindingUI();
@@ -2229,7 +2216,7 @@ export function bindEvents() {
             refreshCharacterBindingUI();
             $('#bl-bind-menu').prop('hidden', true);
             $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-            showToast(`已绑定：对话预设 ${chatCompletionPresetName} → ${activePreset}`);
+            showToast(`已绑定：对话补全预设 ${chatCompletionPresetName} → ${activePreset}`);
             return;
         }
 
@@ -2251,7 +2238,7 @@ export function bindEvents() {
             refreshCharacterBindingUI();
             $('#bl-bind-menu').prop('hidden', true);
             $('#bl-character-bind-toggle').attr('aria-expanded', 'false');
-            showToast(removedRolePreset ? '已取消当前角色绑定，改为跟随全局默认' : '已取消当前对话预设绑定，改为跟随全局默认');
+            showToast(removedRolePreset ? '已取消当前角色绑定，改为跟随全局默认' : '已取消当前对话补全预设绑定，改为跟随全局默认');
             return;
         }
 
