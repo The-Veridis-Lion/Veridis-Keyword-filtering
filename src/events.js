@@ -49,7 +49,7 @@ import {
 } from './core.js';
 import { performDeepCleanse } from './cleanse.js';
 import { applyStreamingVisualMask, getMessageDomNode, purifyDOM, purifyStreamingMessageDom, isProtectedNode, isUserMessageDomNode, isRevertedMessageDomNode, isTrackableMessageDomNode, syncPersonaDescriptionProtectionControl } from './dom.js';
-import { clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
+import { captureDiffRawSource, clearTrackedDiffEntry, computeMessageSignature, escapeHtml, getDiffComparisonForMessage, getDiffSnippetsForMessage, getDiffStateForMessage, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, refreshDiffCacheIfStale, resetDiffRuntimeState, restoreDiffStateFromChatMetadata, syncTrackedIndicesToLatestAssistantMessages } from './diff.js';
 import { getCurrentMessageOriginalMes, setCurrentSwipeText } from './messageMeta.js';
 import { findRelatedRulesForDiffChange } from './relatedRules.js';
 import { isBaiBaiToolkitInstalled, isTauriTavernHost } from './platform.js';
@@ -258,6 +258,7 @@ export function initRealtimeInterceptor() {
         const { chat } = getAppContext();
         const index = resolveNodeMessageIndex(messageNode);
         if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return -1;
+        captureDiffRawSource(index);
         markDiffComparisonPending(index, computeMessageSignature(chat[index]), options);
         return index;
     };
@@ -2390,6 +2391,7 @@ export function bindEvents() {
         let index = getMessageIndexFromEvent(payload);
         if (index < 0) index = getLatestMessageIndex();
         if (index < 0 || !Array.isArray(chat) || !isAssistantMessage(chat[index])) return;
+        captureDiffRawSource(index);
         markDiffComparisonPending(index, computeMessageSignature(chat[index]), options);
         if (options.skipInject !== true) injectDiffButtonsStreamingSafe([index]);
     };

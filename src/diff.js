@@ -1,6 +1,6 @@
 import { diffMetadataKey, extensionName, getAppContext, getDiffTrackedMessageLimit, runtimeState } from './state.js';
 import { logger } from './log.js';
-import { applyScopedReplacements, queueIncrementalChatSave } from './core.js';
+import { applyScopedReplacements, mergeProtectedScopeUpdatesIntoSource, queueIncrementalChatSave } from './core.js';
 import { getMessageDomNode, resolveMessageIndexFromDomNode, isTrackableMessageDomNode } from './dom.js';
 import { getMessageDiffBranchKey, getMessageDiffMeta } from './messageMeta.js';
 
@@ -100,15 +100,43 @@ export function captureDiffRawSource(index) {
     if (!rawMes) return false;
 
     const branchKey = getMessageDiffBranchKey(msg);
+    const cleanedMes = applyScopedReplacements(rawMes);
+    const hasDiff = cleanedMes !== rawMes;
     const existing = runtimeState.diffRawSourceCache.get(index);
-    if (existing?.branchKey === branchKey) return true;
+    if (!hasDiff) return !!(existing?.branchKey === branchKey);
+    if (existing?.branchKey === branchKey && existing?.mes === rawMes) return true;
 
     runtimeState.diffRawSourceCache.set(index, {
         branchKey,
         mes: rawMes,
+        cleanedMes,
         signature: computeMessageSignature(msg),
     });
     return true;
+}
+
+export function getCapturedDiffRawSource(index, msg = null) {
+    if (!Number.isInteger(index) || index < 0) return '';
+    const { chat } = getAppContext();
+    const message = msg || (Array.isArray(chat) ? chat[index] : null);
+    if (!isAssistantMessage(message)) return '';
+
+    const entry = runtimeState.diffRawSourceCache.get(index);
+    if (!entry || typeof entry !== 'object') return '';
+    if (entry.branchKey !== getMessageDiffBranchKey(message)) return '';
+
+    const rawMes = typeof entry.mes === 'string' ? entry.mes : '';
+    if (!rawMes) return '';
+
+    const currentMes = typeof message?.mes === 'string' ? message.mes : '';
+    if (rawMes === currentMes) return '';
+
+    const cleanedMes = typeof entry.cleanedMes === 'string'
+        ? entry.cleanedMes
+        : applyScopedReplacements(rawMes);
+    if (cleanedMes === rawMes) return '';
+
+    return rawMes;
 }
 
 function sanitizeCacheEntry(entry) {
@@ -840,6 +868,10 @@ function buildDiffResultFromPair(rawText, cleanedText) {
     };
 }
 
+export function buildDiffSnippetsFromPair(rawText, cleanedText) {
+    return buildDiffResultFromPair(rawText, cleanedText);
+}
+
 function buildDiffResultFromSource(rawText) {
     if (typeof rawText !== 'string') return { cleanedText: rawText, snippets: [], fullDiff: "" };
     return buildDiffResultFromPair(rawText, applyScopedReplacements(rawText));
@@ -847,8 +879,8 @@ function buildDiffResultFromSource(rawText) {
 
 function sourceHasCurrentDiff(sourceText = '') {
     if (typeof sourceText !== 'string') return false;
-    const displayText = extractDiffDisplayText(sourceText);
-    return applyScopedReplacements(displayText) !== displayText;
+    const cleanedText = applyScopedReplacements(sourceText);
+    return extractDiffDisplayText(sourceText) !== extractDiffDisplayText(cleanedText);
 }
 
 function buildNormalFullDiffBlocks(value = '') {
@@ -915,31 +947,61 @@ export function buildDiffSnippetsFromText(rawText) {
     return buildDiffResultFromSource(rawText);
 }
 
-function resolveDiffCacheSource(msg) {
+function resolveDiffCacheSource(index, msg) {
     const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
     const diffMeta = getMessageDiffMeta(msg);
     if (diffMeta?.lastCleanedMes && currentMes === diffMeta.lastCleanedMes) {
-        return diffMeta.originalMes;
+        const originalMes = typeof diffMeta.originalMes === 'string' ? diffMeta.originalMes : '';
+        const sourceWithScopeUpdates = mergeProtectedScopeUpdatesIntoSource(originalMes, applyScopedReplacements(originalMes), currentMes);
+        if (sourceWithScopeUpdates) return sourceWithScopeUpdates;
+        return originalMes;
     }
+    const capturedSource = getCapturedDiffRawSource(index, msg);
+    if (capturedSource) return capturedSource;
     return currentMes;
 }
 
-function resolveDiffCachePair(msg) {
+function resolveDiffCachePair(index, msg) {
     const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
     const diffMeta = getMessageDiffMeta(msg);
 
     if (diffMeta?.originalMes && diffMeta?.lastCleanedMes && diffMeta.originalMes !== diffMeta.lastCleanedMes) {
+        const sourceMes = mergeProtectedScopeUpdatesIntoSource(
+            diffMeta.originalMes,
+            applyScopedReplacements(diffMeta.originalMes),
+            diffMeta.lastCleanedMes
+        ) || diffMeta.originalMes;
         return {
-            sourceMes: diffMeta.originalMes,
+            sourceMes,
             cleanedMes: diffMeta.lastCleanedMes,
             hasStoredPair: true,
         };
     }
 
-    const sourceMes = resolveDiffCacheSource(msg);
+    let sourceMes = resolveDiffCacheSource(index, msg);
+    let cleanedMes = applyScopedReplacements(sourceMes);
+    const currentCleanedMes = applyScopedReplacements(currentMes);
+    const sourceWithScopeUpdates = mergeProtectedScopeUpdatesIntoSource(sourceMes, cleanedMes, currentCleanedMes);
+    if (sourceWithScopeUpdates) {
+        sourceMes = sourceWithScopeUpdates;
+        cleanedMes = currentCleanedMes === currentMes ? currentMes : applyScopedReplacements(sourceMes);
+        return {
+            sourceMes,
+            cleanedMes,
+            hasStoredPair: currentCleanedMes === currentMes,
+        };
+    }
+    if (currentMes && currentMes !== sourceMes && currentCleanedMes !== currentMes) {
+        return {
+            sourceMes: currentMes,
+            cleanedMes: currentCleanedMes,
+            hasStoredPair: false,
+        };
+    }
+
     return {
         sourceMes,
-        cleanedMes: currentMes && currentMes !== sourceMes ? currentMes : applyScopedReplacements(sourceMes),
+        cleanedMes: currentMes && currentMes !== sourceMes && currentCleanedMes === currentMes ? currentMes : cleanedMes,
         hasStoredPair: false,
     };
 }
@@ -949,7 +1011,7 @@ export function getDiffComparisonForMessage(index) {
     if (!Array.isArray(chat) || !Number.isInteger(index) || index < 0 || index >= chat.length) {
         return null;
     }
-    const pair = resolveDiffCachePair(chat[index]);
+    const pair = resolveDiffCachePair(index, chat[index]);
     if (!pair) return null;
     return {
         ...pair,
@@ -968,7 +1030,7 @@ export function refreshDiffCacheIfStale(index) {
     const signature = computeMessageSignature(msg);
     const state = runtimeState.diffMessageStates.get(index);
     const cache = sanitizeCacheEntry(runtimeState.diffSnippetsCache.get(index));
-    const { sourceMes, cleanedMes, hasStoredPair } = resolveDiffCachePair(msg);
+    const { sourceMes, cleanedMes, hasStoredPair } = resolveDiffCachePair(index, msg);
     const shouldHaveCurrentDiff = hasStoredPair
         ? extractDiffDisplayText(sourceMes) !== extractDiffDisplayText(cleanedMes)
         : sourceHasCurrentDiff(sourceMes);
@@ -985,6 +1047,7 @@ export function refreshDiffCacheIfStale(index) {
         fullDiff: diffResult.fullDiff || '',
         signature,
     }, {
+        preserveExistingRealDiff: true,
         persist: false,
     });
     return true;

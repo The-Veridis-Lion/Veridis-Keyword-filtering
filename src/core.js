@@ -3,7 +3,7 @@ import { logger } from './log.js';
 import { buildSimpleWildcardPattern, compileRegexTarget, mergeScopeTagsWithBuiltins } from './utils.js';
 import { buildChineseVariantPattern, getChineseTextVariantLengths, getZhVariantCompatOptions, isZhDictionaryReady } from './zhConversion.js';
 import { deepCleanObjectSync } from './cleanse.js';
-import { buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
+import { buildDiffSnippetsFromPair, buildDiffSnippetsFromText, computeMessageSignature, ensureMessageDiffButton, getCapturedDiffRawSource, getLatestTrackableDiffIndices, hasRealDiffCache, injectDiffButtons, isAssistantMessage, markDiffComparisonPending, syncTrackedIndicesToLatestAssistantMessages, writeReadyDiffCache, clearTrackedDiffEntry } from './diff.js';
 import { getMessageDomNode, purifyDOM } from './dom.js';
 import { clearMessageDiffMeta, getMessageDiffBranchKey, getMessageDiffMeta, isMessageFinalizedForCurrentBranch, setCurrentSwipeText, writeMessageDiffMeta } from './messageMeta.js';
 import { getMaxHostChatSaveDefers, getRecommendedChatSaveDelay, getSillyTavernContextSnapshot, isBaiBaiToolkitInstalled, isLoreFrameInstalled, isTauriTavernHost, markHostChatDirtyFromIndex, runPreferredSaveChat, shouldDelayChatSaveForHost } from './platform.js';
@@ -397,7 +397,7 @@ function haveMatchingScopeTagRanges(leftRanges, rightRanges) {
     return leftRanges.every((range, index) => range.startTag === rightRanges[index]?.startTag);
 }
 
-function mergeProtectedScopeUpdatesIntoSource(sourceMes, previousCleanedMes, currentMes) {
+export function mergeProtectedScopeUpdatesIntoSource(sourceMes, previousCleanedMes, currentMes) {
     if (getScopeTagMode() !== 'protect') return '';
     if (!sourceMes || !previousCleanedMes || !currentMes || previousCleanedMes === currentMes) return '';
 
@@ -772,12 +772,16 @@ export function resolveLatestTrackableMessageIndex(payload) {
     return -1;
 }
 
-function resolveMessageDiffSource(msg, explicitSource) {
+function resolveMessageDiffSource(msg, explicitSource, index = -1) {
     const currentMes = typeof msg?.mes === 'string' ? msg.mes : '';
     if (typeof explicitSource === 'string') return explicitSource;
 
     const diffMeta = getMessageDiffMeta(msg);
     if (diffMeta?.lastCleanedMes && currentMes === diffMeta.lastCleanedMes) {
+        const originalMes = typeof diffMeta.originalMes === 'string' ? diffMeta.originalMes : '';
+        const originalCleanedMes = applyScopedReplacements(originalMes);
+        const sourceWithScopeUpdates = mergeProtectedScopeUpdatesIntoSource(originalMes, originalCleanedMes, currentMes);
+        if (sourceWithScopeUpdates) return sourceWithScopeUpdates;
         return diffMeta.originalMes;
     }
     if (diffMeta?.originalMes && diffMeta?.lastCleanedMes) {
@@ -785,7 +789,44 @@ function resolveMessageDiffSource(msg, explicitSource) {
         if (sourceWithScopeUpdates) return sourceWithScopeUpdates;
     }
 
+    const capturedSource = getCapturedDiffRawSource(index, msg);
+    if (capturedSource) return capturedSource;
+
     return currentMes;
+}
+
+function buildDiffResultForMessagePair(sourceMes, currentMes) {
+    const diffResult = buildDiffSnippetsFromText(sourceMes);
+    if (typeof currentMes !== 'string' || !currentMes || currentMes === sourceMes) {
+        return { sourceMes, diffResult };
+    }
+    if (diffResult.cleanedText === sourceMes) {
+        const currentDiffResult = buildDiffSnippetsFromText(currentMes);
+        if (currentDiffResult.cleanedText !== currentMes) {
+            return { sourceMes: currentMes, diffResult: currentDiffResult };
+        }
+        return { sourceMes, diffResult };
+    }
+
+    const currentCleanedAgain = applyScopedReplacements(currentMes);
+    const sourceWithScopeUpdates = mergeProtectedScopeUpdatesIntoSource(sourceMes, diffResult.cleanedText, currentCleanedAgain);
+    if (sourceWithScopeUpdates) {
+        const updatedDiffResult = currentCleanedAgain === currentMes
+            ? buildDiffSnippetsFromPair(sourceWithScopeUpdates, currentMes)
+            : buildDiffSnippetsFromText(sourceWithScopeUpdates);
+        return { sourceMes: sourceWithScopeUpdates, diffResult: updatedDiffResult };
+    }
+
+    if (currentCleanedAgain !== currentMes) {
+        if (currentMes !== sourceMes) {
+            const currentDiffResult = buildDiffSnippetsFromText(currentMes);
+            return { sourceMes: currentMes, diffResult: currentDiffResult };
+        }
+        return { sourceMes, diffResult };
+    }
+
+    const pairDiffResult = buildDiffSnippetsFromPair(sourceMes, currentMes);
+    return { sourceMes, diffResult: pairDiffResult };
 }
 
 function computeDiffSourceSignature(msg, sourceMes) {
@@ -830,11 +871,13 @@ export function cleanseMessageDataAtIndex(index, options = {}) {
     }
 
     const currentMes = typeof msg.mes === 'string' ? msg.mes : '';
-    const sourceMes = resolveMessageDiffSource(msg, options.diffSourceMes);
+    let sourceMes = resolveMessageDiffSource(msg, options.diffSourceMes, index);
 
     let changed = false;
 
-    const diffResult = buildDiffSnippetsFromText(sourceMes);
+    const pairResult = buildDiffResultForMessagePair(sourceMes, currentMes);
+    sourceMes = pairResult.sourceMes;
+    const { diffResult } = pairResult;
     const mainCache = {
         snippets: Array.from(new Set(diffResult.snippets || [])),
         fullDiff: diffResult.fullDiff || '',
@@ -1025,8 +1068,10 @@ function processGlobalCleanseMessage(msg, index, latestDiffIndices, skipUser, op
     const isReverted = msg?.__bl_is_reverted === true;
 
     if (!isReverted && typeof msg?.mes === 'string') {
-        const sourceMes = assistant ? resolveMessageDiffSource(msg) : msg.mes;
-        const { cleanedText, snippets: mesSnippets, fullDiff } = buildDiffSnippetsFromText(sourceMes);
+        let sourceMes = assistant ? resolveMessageDiffSource(msg, undefined, index) : msg.mes;
+        const pairResult = buildDiffResultForMessagePair(sourceMes, msg.mes);
+        sourceMes = pairResult.sourceMes;
+        const { cleanedText, snippets: mesSnippets, fullDiff } = pairResult.diffResult;
         mainCache = {
             snippets: Array.from(new Set(mesSnippets)),
             fullDiff,
